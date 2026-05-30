@@ -76,6 +76,11 @@ ZIP="$(ls -t ~/Projects/paseo/packages/desktop/release/*.zip 2>/dev/null | head 
 [ -n "$ZIP" ] && [ -f "$ZIP" ] || { echo "❌ 找不到 Windows zip (先完成桌面端打包)"; exit 1; }
 VER=$(basename "$ZIP" | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' | head -1); VER=${VER:-unknown}
 
+# 只保留最近 2 个打包 zip，更旧的连同其 blockmap 一起删除，避免 release/ 越积越多
+ls -t ~/Projects/paseo/packages/desktop/release/*.zip 2>/dev/null | tail -n +3 | while read -r old; do
+  rm -f "${old%.zip}".zip "${old%.zip}".zip.blockmap "${old%.zip}".exe.blockmap
+done
+
 IP=$(vm_ip)
 EXIST=$(listen_pid "$PORT")
 
