@@ -1,0 +1,65 @@
+[tracking]
+enabled = true
+history_days = 90
+
+[display]
+colors = true
+emoji = true
+max_width = 120
+
+[filters]
+ignore_dirs = [
+    ".git",
+    "node_modules",
+    "target",
+    "__pycache__",
+    ".venv",
+    "vendor",
+]
+ignore_files = [
+    "*.lock",
+    "*.min.js",
+    "*.min.css",
+]
+
+[tee]
+enabled = true
+mode = "failures"
+max_files = 20
+max_file_size = 1048576
+
+[telemetry]
+enabled = false
+
+[hooks]
+exclude_commands = []
+# 长跑/后台构建类命令走原始透传,绕开 rtk 的"缓冲-过滤-一次性吐出",
+# 避免后台轮询期间输出抽风/被上限截断。
+transparent_prefixes = [
+    "npm run build",
+    "npm run build:client",
+    "npm run build:server",
+    "npm run build:app-deps",
+    "npm run build:main",
+    "npm run dev",
+    "npm run dev:app",
+    "npm run dev:desktop",
+    "npm run watch",
+    "cargo build",
+    "cargo run",
+    "cargo watch",
+    "expo start",
+    # 三端打包长构建(见 dwyanewang/打包流程.md):gradle ~17min、electron-builder、expo prebuild/export
+    "./gradlew",
+    "gradlew",
+    "npx expo",
+    "npx cross-env",
+    "npx electron-builder",
+]
+
+[limits]
+grep_max_results = 200
+grep_max_per_file = 25
+status_max_files = 15
+status_max_untracked = 10
+passthrough_max_chars = 2000
