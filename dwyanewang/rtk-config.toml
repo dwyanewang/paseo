@@ -41,6 +41,7 @@ transparent_prefixes = [
     "npm run build:server",
     "npm run build:app-deps",
     "npm run build:main",
+    "npm run build:terminal-webview",
     "npm run dev",
     "npm run dev:app",
     "npm run dev:desktop",
