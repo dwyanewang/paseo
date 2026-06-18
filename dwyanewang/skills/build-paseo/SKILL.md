@@ -32,7 +32,6 @@ version: 1.0.0
 
 - **不重启 6767 主 daemon**（会杀掉正在跑的 agent，包括自己）。
 - **环境变量每个构建 shell 都要显式 export**（`JAVA_HOME`/`ANDROID_HOME`/`PATH`，mise 没在 shell 激活）；shell state 不跨 Bash 调用，所以 export 与构建命令要写在**同一条**命令里。
-- **rtk 透传要就位**：`cp dwyanewang/rtk-config.toml ~/.config/rtk/config.toml`，`rtk hook check "./gradlew assembleRelease"` 回 `No rewrite` 即生效。
 - **长构建放后台**（gradle ~5–17min、electron-builder、expo export）；后台任务完成会自动通知，**不要主动轮询/定时唤醒**，等通知即可。
 - **校验产物看 `ls -lh` 的 mtime 是不是本次**，别只信 exit code；用 `&&` 串命令、别用结尾 `echo` 兜底退出码（会把失败洗成成功）。
 - **Windows expo export 用 bash 原生赋值**：`PASEO_WEB_PLATFORM=electron npx expo export`，**别用裸 `cross-env`**（不在 PATH，exit 127）。
