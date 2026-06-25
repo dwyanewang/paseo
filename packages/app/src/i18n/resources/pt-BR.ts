@@ -1193,6 +1193,11 @@ export const ptBR: TranslationResources = {
       worktree: "Novo worktree",
       label: "Isolamento",
     },
+    branchMode: {
+      label: "Branch existente",
+      branchOff: "Criar branch",
+      checkout: "Usar este branch",
+    },
     fields: {
       project: "Projeto",
       base: "Base",
@@ -1202,6 +1207,8 @@ export const ptBR: TranslationResources = {
     errors: {
       hostDisconnected: "Host não está conectado",
       createWorktreeFailed: "Falha ao criar worktree",
+      branchAlreadyCheckedOut:
+        "Esse branch já está em uso em outro lugar. Use Criar branch para criar uma cópia, ou libere o branch primeiro.",
       composerStateRequired: "O estado do composer é obrigatório",
       selectModel: "Selecione um modelo",
     },

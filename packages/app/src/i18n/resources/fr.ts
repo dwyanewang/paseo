@@ -1202,6 +1202,11 @@ export const fr: TranslationResources = {
       worktree: "Nouveau worktree",
       label: "Isolation",
     },
+    branchMode: {
+      label: "Branche existante",
+      branchOff: "Créer une branche",
+      checkout: "Utiliser cette branche",
+    },
     fields: {
       project: "Projet",
       base: "Base",
@@ -1211,6 +1216,8 @@ export const fr: TranslationResources = {
     errors: {
       hostDisconnected: "Hostn'est pas connecté",
       createWorktreeFailed: "Échec de la création de l'arbre de travail",
+      branchAlreadyCheckedOut:
+        "Cette branche est déjà extraite ailleurs. Utilisez « Créer une branche » pour créer une copie, ou libérez d'abord la branche.",
       composerStateRequired: "L'état du compositeur est requis",
       selectModel: "Sélectionnez un modèle",
     },

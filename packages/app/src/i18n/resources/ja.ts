@@ -1180,6 +1180,11 @@ export const ja: TranslationResources = {
       worktree: "新しいワークツリー",
       label: "分離方法",
     },
+    branchMode: {
+      label: "既存ブランチ",
+      branchOff: "ブランチを作成",
+      checkout: "このブランチを使用",
+    },
     fields: {
       project: "プロジェクト",
       base: "ベース",
@@ -1189,6 +1194,8 @@ export const ja: TranslationResources = {
     errors: {
       hostDisconnected: "ホストが接続されていません",
       createWorktreeFailed: "ワークツリーの作成に失敗しました",
+      branchAlreadyCheckedOut:
+        "そのブランチは別の場所で既にチェックアウトされています。「ブランチを作成」でコピーを作成するか、先にブランチを解放してください。",
       composerStateRequired: "コンポーザーの状態が必要です",
       selectModel: "モデルを選択してください",
     },

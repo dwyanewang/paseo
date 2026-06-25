@@ -48,6 +48,42 @@ describe("pickerItemToCheckoutRequest", () => {
     });
   });
 
+  it("keeps a branch row on branch-off when the mode is explicit", () => {
+    const item: PickerItem = {
+      kind: "branch",
+      name: "dev",
+      refName: "refs/heads/dev",
+      accessibilityLabel: "dev, local branch",
+    };
+    expect(pickerItemToCheckoutRequest(item, "branch-off")).toEqual({
+      action: "branch-off",
+      refName: "refs/heads/dev",
+    });
+  });
+
+  it("maps a branch row to checkout when the mode is checkout", () => {
+    const item: PickerItem = {
+      kind: "branch",
+      name: "dev",
+      refName: "refs/heads/dev",
+      accessibilityLabel: "dev, local branch",
+    };
+    expect(pickerItemToCheckoutRequest(item, "checkout")).toEqual({
+      action: "checkout",
+      refName: "refs/heads/dev",
+    });
+  });
+
+  it("ignores the branch mode for github-pr rows (PRs always check out)", () => {
+    const item: PickerItem = { kind: "github-pr", item: prItem };
+    expect(pickerItemToCheckoutRequest(item, "branch-off")).toEqual({
+      action: "checkout",
+      refName: "feature/picker",
+      checkoutSource: { kind: "change_request", forge: "github", number: 42 },
+      githubPrNumber: 42,
+    });
+  });
+
   it("maps a github-pr row to checkout using the head ref and pr number", () => {
     const item: PickerItem = {
       kind: "github-pr",
