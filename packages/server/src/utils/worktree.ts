@@ -38,6 +38,7 @@ import {
   writePaseoWorktreeRuntimeMetadata,
 } from "./worktree-metadata.js";
 import { runGitCommand } from "./run-git-command.js";
+import { resolveRepositoryDefaultBranch } from "./checkout-git.js";
 import { spawnProcess } from "./spawn.js";
 import { resolvePaseoHome } from "../server/paseo-home.js";
 import { createExternalProcessEnv } from "../server/paseo-env.js";
@@ -1355,7 +1356,7 @@ async function resolveWorktreeSourcePlan({
 
       return {
         branchName: source.branchName,
-        metadataBaseRefName: source.branchName,
+        metadataBaseRefName: await resolveCheckoutBranchBaseRefName(cwd),
         changeRequestLookupTarget: createPaseoWorktreeChangeRequestHint({
           headRef: source.branchName,
           localBranchName: source.branchName,
@@ -1426,6 +1427,16 @@ async function resolveWorktreeSourcePlan({
       };
     }
   }
+}
+
+async function resolveCheckoutBranchBaseRefName(cwd: string): Promise<string> {
+  const defaultBaseBranch = await resolveRepositoryDefaultBranch(cwd);
+  if (!defaultBaseBranch) {
+    throw new Error(
+      "Base branch is required when creating a Paseo worktree, but the repository default branch could not be resolved",
+    );
+  }
+  return defaultBaseBranch;
 }
 
 async function configureWorktreePushRemote(options: {
