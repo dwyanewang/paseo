@@ -1,7 +1,6 @@
 ---
 name: build-paseo
 description: 一键执行 Paseo 三端本地打包（服务端 / 安卓 APK / Windows x64 zip）并起下载服务。动手前先读仓库内 dwyanewang/打包流程.md、踩坑记录.md，再严格按流程逐步执行。触发：用户输入 /build-paseo，或自然语言说"打包"、"打包 paseo"、"打 APK"、"打 Windows 桌面端"、"按流程打包"、"三端打包"等。
-version: 1.0.0
 ---
 
 # Build Paseo 三端本地打包
