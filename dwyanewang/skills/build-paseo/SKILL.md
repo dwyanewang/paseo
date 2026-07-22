@@ -23,9 +23,11 @@ description: 一键执行 Paseo 三端本地打包（服务端 / 安卓 APK / Wi
 
 ## 执行顺序（细节看打包流程.md）
 
-环境变量 → **拉代码（fork 同步上游 → 合并 rw-main）** → 重生成 terminal-webview → 服务端 → 安卓 APK → Windows x64 zip → 收尾还原 webview → 起 serve-dist 下载服务。
+环境变量 → **拉代码（同步上游 → 按清单重建 rw-main）** → 重生成 terminal-webview → 服务端 → 安卓 APK → Windows x64 zip → 收尾还原 webview → 起 serve-dist 下载服务。
 
 > **跳过拉代码（自测常用）**：用户明确说"不拉取最新代码""不同步上游代码"（或"不更新代码""用当前代码打包"等同义表达）时，**跳过拉代码这步**（打包流程.md 第 1 节），从重生成 terminal-webview 直接开始，其余流程不变。
+
+同步代码时严格执行 `打包流程.md` 第 1 节：`main` 只做上游镜像，运行 `dwyanewang/rebuild-rw-main.sh --push` 从清单整体生成个人发行分支。**禁止继续把 main 或 rebase 后的 PR 分支追加合并到旧 rw-main。** 若重建脚本报告分支冲突，停止打包，先在源 PR 分支完成 rebase、冲突解决和测试。
 
 **每步成功（校验产物）再进行下一步。**
 
