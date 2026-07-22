@@ -23,11 +23,29 @@ description: 一键执行 Paseo 三端本地打包（服务端 / 安卓 APK / Wi
 
 ## 执行顺序（细节看打包流程.md）
 
-环境变量 → **拉代码（同步上游 → 按清单重建 rw-main）** → 重生成 terminal-webview → 服务端 → 安卓 APK → Windows x64 zip → 收尾还原 webview → 起 serve-dist 下载服务。
+环境变量 → **拉代码（同步上游 → 自动维护清单 → 重建 rw-main）** → 重生成 terminal-webview → 服务端 → 安卓 APK → Windows x64 zip → 收尾还原 webview → 起 serve-dist 下载服务。
 
 > **跳过拉代码（自测常用）**：用户明确说"不拉取最新代码""不同步上游代码"（或"不更新代码""用当前代码打包"等同义表达）时，**跳过拉代码这步**（打包流程.md 第 1 节），从重生成 terminal-webview 直接开始，其余流程不变。
 
-同步代码时严格执行 `打包流程.md` 第 1 节：`main` 只做上游镜像，运行 `dwyanewang/rebuild-rw-main.sh --push` 从清单整体生成个人发行分支。**禁止继续把 main 或 rebase 后的 PR 分支追加合并到旧 rw-main。** 若重建脚本报告分支冲突，停止打包，先在源 PR 分支完成 rebase、冲突解决和测试。
+## rw-main 清单自动维护
+
+完整同步模式下，在重建前运行 `dwyanewang/sync-rw-main-branches.sh`：
+
+- 自动检查 `rw-main-branches.txt` 中带 `PR #编号` 的条目。PR 已合入且本地 `main` 已包含其 merge commit 时，自动删除该条目。
+- **不自动发现或加入所有开放 PR**。只有用户在本次指令中明确指定的新 PR/分支才长期加入清单，避免把 #1578 等有意排除的分支带回发行版。
+- 用户说“把 PR #2345 加入 rw-main 清单”时传 `--add-pr 2345`；说“把 feat/example 作为长期个人分支加入清单”时传 `--add-branch feat/example`。多个参数严格保持用户给出的顺序。
+- `--add-pr` 会从 `getpaseo/paseo` 解析源分支并要求 PR 归 `dwyanewang` 所有；`--add-branch` 作为无 PR 的长期个人分支处理。
+- 若清单发生变化，运行 `npm run format`，确认只有清单发生预期变化，然后提交 `chore(build): sync rw-main branches` 并正常推送 `origin/chore/build-paseo`；无变化则不提交。
+- 用户同时要求“新增 PR/分支”和“不拉取/不同步”时，停止并说明两者冲突：长期新增必须走完整同步、清单提交和 rw-main 重建，不能直接从当前代码开始打包。
+
+可直接使用的描述：
+
+```text
+/build-paseo，把 PR #2345 加入 rw-main 清单后执行完整三端打包
+/build-paseo，把 feat/example 作为长期个人分支加入清单，然后完整打包
+```
+
+同步代码时严格执行 `打包流程.md` 第 1 节：`main` 只做上游镜像，先同步清单，再运行 `dwyanewang/rebuild-rw-main.sh --push` 从清单整体生成个人发行分支。**禁止继续把 main 或 rebase 后的 PR 分支追加合并到旧 rw-main。** 若清单同步或重建脚本失败，停止打包；分支冲突应先在源 PR 分支完成 rebase、冲突解决和测试。
 
 **每步成功（校验产物）再进行下一步。**
 
@@ -44,4 +62,4 @@ description: 一键执行 Paseo 三端本地打包（服务端 / 安卓 APK / Wi
 
 ## 完成后汇报
 
-三端产物（路径 + 体积 + mtime）+ serve-dist 打印的下载地址。打包是执行构建、**不改源码**，无需加载写代码相关规范。
+清单增删及对应提交（若有）+ 三端产物（路径 + 体积 + mtime）+ serve-dist 打印的下载地址。除版本化清单维护外，打包不修改或提交产品源码。
