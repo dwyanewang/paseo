@@ -4,3 +4,4 @@
 feat/worktree-checkout-branch # PR #1721
 feat/file-editor-hardening # PR #2277
 feat/codeup-forge # Personal Codeup support
+fix/provider-session-init-leaks # Personal branch
