@@ -168,6 +168,9 @@ for branch_name in "${integration_branches[@]}"; do
   merge_branch "$branch_name"
 done
 
+printf '%s\n' 'Refreshing generated workspace declarations...'
+npm run build:client
+
 printf '%s\n' 'Running repository checks...'
 npm run format:check
 npm run typecheck
