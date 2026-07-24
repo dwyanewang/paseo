@@ -74,7 +74,14 @@ APK=~/Projects/paseo/packages/app/android/app/build/outputs/apk/release/app-rele
 ZIP="$(ls -t ~/Projects/paseo/packages/desktop/release/*.zip 2>/dev/null | head -1)"   # 按修改时间取最新，避免 release/ 残留旧版本 zip 被字母序选中
 [ -f "$APK" ] || { echo "❌ 找不到 APK: $APK (先完成安卓打包)"; exit 1; }
 [ -n "$ZIP" ] && [ -f "$ZIP" ] || { echo "❌ 找不到 Windows zip (先完成桌面端打包)"; exit 1; }
-VER=$(basename "$ZIP" | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' | head -1); VER=${VER:-unknown}
+zip_basename=$(basename "$ZIP")
+case "$zip_basename" in
+  Paseo-Setup-*-x64.zip)
+    VER=${zip_basename#Paseo-Setup-}
+    VER=${VER%-x64.zip}
+    ;;
+  *) VER=unknown ;;
+esac
 
 # 只保留最近 2 个打包 zip，更旧的连同其 blockmap 一起删除，避免 release/ 越积越多
 ls -t ~/Projects/paseo/packages/desktop/release/*.zip 2>/dev/null | tail -n +3 | while read -r old; do
