@@ -175,6 +175,7 @@ export interface WorktreeRootOptions {
 
 export interface WorktreeCheckoutRef {
   remoteName?: string;
+  remoteUrl?: string;
   remoteRef: string;
 }
 
@@ -1487,7 +1488,7 @@ async function fetchWorktreeCheckoutRefs(options: {
     lastResult = await runGitCommand(
       [
         "fetch",
-        checkoutRef.remoteName ?? "origin",
+        checkoutRef.remoteUrl ?? checkoutRef.remoteName ?? "origin",
         `+${checkoutRef.remoteRef}:refs/heads/${options.localBranchName}`,
         "--force",
       ],
@@ -1502,7 +1503,10 @@ async function fetchWorktreeCheckoutRefs(options: {
     }
   }
   const attemptedRefs = options.checkoutRefs
-    .map((checkoutRef) => `${checkoutRef.remoteName ?? "origin"} ${checkoutRef.remoteRef}`)
+    .map(
+      (checkoutRef) =>
+        `${checkoutRef.remoteUrl ?? checkoutRef.remoteName ?? "origin"} ${checkoutRef.remoteRef}`,
+    )
     .join(", ");
   throw new Error(
     `Unable to fetch change request refs for worktree branch ${options.localBranchName}: ${attemptedRefs}${lastResult?.stderr ? `\n${lastResult.stderr}` : ""}`,

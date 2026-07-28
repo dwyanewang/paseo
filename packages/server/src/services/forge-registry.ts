@@ -1,5 +1,6 @@
 import { getForgeDefinition } from "@getpaseo/protocol/forge-manifest";
 import { normalizeHost } from "@getpaseo/protocol/git-remote";
+import { createCodeupService } from "./codeup-service.js";
 import { createGitHubService, probeGitHubHost } from "./github-service.js";
 import type { ForgeService } from "./forge-service.js";
 import { createGiteaService, resolveGiteaFamilyForge } from "./gitea-service.js";
@@ -149,6 +150,13 @@ export const defaultForgeRegistry = new ForgeRegistry([
       createService: createGitLabService,
       matchesHost: matchesCloudHost("gitlab"),
       probeHost: probeGitLabHost,
+    },
+  ],
+  [
+    "codeup",
+    {
+      createService: createCodeupService,
+      matchesHost: matchesCloudHost("codeup"),
     },
   ],
   [

@@ -42,6 +42,8 @@ export interface PullRequestCheckoutTarget {
 
 export interface PullRequestCheckoutRef {
   remoteName?: string;
+  /** Direct fetch URL for cross-repository heads that are not exposed on origin. */
+  remoteUrl?: string;
   remoteRef: string;
 }
 
