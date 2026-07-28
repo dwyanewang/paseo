@@ -169,6 +169,7 @@ for branch_name in "${integration_branches[@]}"; do
 done
 
 printf '%s\n' 'Refreshing generated workspace declarations...'
+npm run build --workspace=@getpaseo/relay
 npm run build:client
 
 printf '%s\n' 'Running repository checks...'
