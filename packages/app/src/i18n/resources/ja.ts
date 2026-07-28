@@ -965,6 +965,7 @@ export const ja: TranslationResources = {
         },
       },
       forgeSetup: {
+        updateHost: "{{brand}} の機能を使うには、このホストを更新してください。",
         installCli: "{{brand}} の機能を使うには {{cli}} CLI をインストールしてください。",
         signIn: "{{brand}} の機能を使うには {{command}} を実行してください。",
         generic: "このホストで {{brand}} をセットアップすると、その機能を使えます。",

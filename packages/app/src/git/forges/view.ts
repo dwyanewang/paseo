@@ -1,5 +1,6 @@
 import type { ClientForgeViewModule } from "@/git/client-forge-module";
 import { codebergForgeView } from "./codeberg.view";
+import { codeupForgeView } from "./codeup.view";
 import { forgejoForgeView } from "./forgejo.view";
 import { giteaForgeView } from "./gitea.view";
 import { githubForgeView } from "./github.view";
@@ -13,6 +14,7 @@ import { gitlabForgeView } from "./gitlab.view";
 export const CLIENT_FORGE_VIEW_MODULES: readonly ClientForgeViewModule[] = [
   githubForgeView,
   gitlabForgeView,
+  codeupForgeView,
   giteaForgeView,
   forgejoForgeView,
   codebergForgeView,

@@ -946,6 +946,7 @@ export const zhCN: TranslationResources = {
         },
       },
       forgeSetup: {
+        updateHost: "更新此 Host 以使用 {{brand}} 功能。",
         installCli: "安装 {{cli}} CLI 以使用 {{brand}} 功能。",
         signIn: "运行 {{command}} 以使用 {{brand}} 功能。",
         generic: "在此主机上设置 {{brand}} 以使用其功能。",

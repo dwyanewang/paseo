@@ -963,6 +963,7 @@ export const en = {
         },
       },
       forgeSetup: {
+        updateHost: "Update this host to use {{brand}} features.",
         installCli: "Install the {{cli}} CLI to use {{brand}} features.",
         signIn: "Run {{command}} to use {{brand}} features.",
         generic: "Set up {{brand}} on this host to use its features.",

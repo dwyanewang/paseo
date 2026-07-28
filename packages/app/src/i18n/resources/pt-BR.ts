@@ -976,6 +976,7 @@ export const ptBR: TranslationResources = {
         },
       },
       forgeSetup: {
+        updateHost: "Atualize este host para usar os recursos do {{brand}}.",
         installCli: "Instale a CLI {{cli}} para usar os recursos do {{brand}}.",
         signIn: "Execute {{command}} para usar os recursos do {{brand}}.",
         generic: "Configure o {{brand}} neste host para usar seus recursos.",

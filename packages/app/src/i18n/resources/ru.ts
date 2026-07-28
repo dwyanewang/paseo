@@ -976,6 +976,7 @@ export const ru: TranslationResources = {
         },
       },
       forgeSetup: {
+        updateHost: "Обновите этот хост, чтобы использовать возможности {{brand}}.",
         installCli: "Установите CLI {{cli}}, чтобы использовать возможности {{brand}}.",
         signIn: "Выполните {{command}}, чтобы использовать возможности {{brand}}.",
         generic: "Настройте {{brand}} на этом хосте, чтобы использовать его функции.",
