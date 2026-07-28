@@ -28,6 +28,7 @@ describe("forgeForHost", () => {
   it("maps public registered forge hosts without resolver-specific branches", () => {
     expect(forgeForHost("github.com")).toBe("github");
     expect(forgeForHost("gitlab.com")).toBe("gitlab");
+    expect(forgeForHost("codeup.aliyun.com")).toBe("codeup");
     expect(forgeForHost("gitea.com")).toBe("gitea");
     expect(forgeForHost("codeberg.org")).toBe("codeberg");
   });
@@ -167,6 +168,20 @@ describe("createForgeResolver", () => {
       forge: "codeberg",
       host: "codeberg.org",
     });
+  });
+
+  it("resolves a Codeup cloud remote without probing the host", async () => {
+    const probeForge = vi.fn(async () => null);
+    const resolver = createForgeResolver({
+      resolveRemoteUrl: async () => "git@codeup.aliyun.com:org/team/repo.git",
+      probeForge,
+    });
+
+    await expect(resolver.resolve("/codeup")).resolves.toMatchObject({
+      forge: "codeup",
+      host: "codeup.aliyun.com",
+    });
+    expect(probeForge).not.toHaveBeenCalled();
   });
 
   it("does not classify an overlapping gitea-forgejo hostname without a probe", async () => {
