@@ -68,13 +68,21 @@ export function applyCheckoutStatusUpdateFromEvent({
     ? normalizeCheckoutPrStatusPayload(payload.prStatus)
     : undefined;
   const cachePayload = prStatus ? { ...payload, prStatus } : payload;
-  queryClient.setQueryData(checkoutStatusQueryKey(serverId, payload.cwd), cachePayload);
+  const statusQueryKey = checkoutStatusQueryKey(serverId, payload.cwd);
+  const previousStatus = queryClient.getQueryData<CheckoutStatusPayload>(statusQueryKey);
+  const checkoutIdentityChanged =
+    previousStatus !== undefined &&
+    (previousStatus.isGit !== payload.isGit ||
+      previousStatus.currentBranch !== payload.currentBranch);
+  queryClient.setQueryData(statusQueryKey, cachePayload);
   void queryClient.invalidateQueries({
     queryKey: checkoutCommitsQueryKey(serverId, payload.cwd),
   });
-  // Draft command results are long-lived, but project skills are read from the checkout.
-  // A checkout update can therefore make the cached skill list stale.
-  void invalidateDraftAgentCommandsForCwd({ queryClient, serverId, cwd: payload.cwd });
+  // Draft command results are long-lived, but project skills are branch-scoped. Ignore
+  // working-tree updates so an active autocomplete query does not repeatedly rediscover skills.
+  if (checkoutIdentityChanged) {
+    void invalidateDraftAgentCommandsForCwd({ queryClient, serverId, cwd: payload.cwd });
+  }
   expireStaleDiffModeOverrides({
     serverId,
     cwd: payload.cwd,

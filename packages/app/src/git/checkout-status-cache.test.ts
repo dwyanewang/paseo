@@ -191,7 +191,7 @@ describe("applyCheckoutStatusUpdateFromEvent", () => {
     ).toBe(false);
   });
 
-  it("invalidates draft command caches for the updated checkout", () => {
+  it("invalidates draft command caches when the checkout branch changes", () => {
     const queryClient = createQueryClient();
     const draftCommandsKey = draftAgentCommandsQueryKey({
       serverId,
@@ -203,6 +203,7 @@ describe("applyCheckoutStatusUpdateFromEvent", () => {
     });
     queryClient.setQueryData(draftCommandsKey, []);
     queryClient.setQueryData(otherDraftCommandsKey, []);
+    queryClient.setQueryData(checkoutStatusQueryKey(serverId, cwd), checkoutStatus());
 
     applyCheckoutStatusUpdateFromEvent({
       queryClient,
@@ -212,6 +213,24 @@ describe("applyCheckoutStatusUpdateFromEvent", () => {
 
     expect(queryClient.getQueryState(draftCommandsKey)?.isInvalidated).toBe(true);
     expect(queryClient.getQueryState(otherDraftCommandsKey)?.isInvalidated).toBe(false);
+  });
+
+  it("keeps draft command caches fresh for a working-tree status update", () => {
+    const queryClient = createQueryClient();
+    const draftCommandsKey = draftAgentCommandsQueryKey({
+      serverId,
+      draftConfig: { provider: "codex", cwd },
+    });
+    queryClient.setQueryData(draftCommandsKey, []);
+    queryClient.setQueryData(checkoutStatusQueryKey(serverId, cwd), checkoutStatus());
+
+    applyCheckoutStatusUpdateFromEvent({
+      queryClient,
+      serverId,
+      message: checkoutStatusUpdate(checkoutStatus({ isDirty: true, requestId: "push-2" })),
+    });
+
+    expect(queryClient.getQueryState(draftCommandsKey)?.isInvalidated).toBe(false);
   });
 
   it("writes the PR status cache when prStatus is present, and skips it otherwise", () => {
