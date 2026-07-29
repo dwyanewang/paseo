@@ -1,4 +1,5 @@
 import type { Query, QueryClient } from "@tanstack/react-query";
+import { invalidateDraftAgentCommandsForCwd } from "@/hooks/agent-commands-query";
 import { prPanePipelineQueryKind, prPaneTimelineQueryKind } from "./pull-request-panel/query-keys";
 
 interface CheckoutQueryIdentity {
@@ -70,6 +71,11 @@ export async function invalidateCheckoutGitQueriesForClient(
     }),
     queryClient.invalidateQueries({
       predicate: checkoutQueryPredicate(prPanePipelineQueryKind, identity),
+    }),
+    invalidateDraftAgentCommandsForCwd({
+      queryClient,
+      serverId: identity.serverId,
+      cwd: identity.cwd,
     }),
   ]);
 }

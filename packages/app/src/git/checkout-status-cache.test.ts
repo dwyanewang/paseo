@@ -7,6 +7,7 @@ import {
   checkoutPrStatusQueryKey,
   checkoutStatusQueryKey,
 } from "@/git/query-keys";
+import { draftAgentCommandsQueryKey } from "@/hooks/agent-commands-query";
 import {
   prPanePipelineQueryKey,
   prPaneTimelineQueryKey,
@@ -188,6 +189,29 @@ describe("applyCheckoutStatusUpdateFromEvent", () => {
     expect(
       queryClient.getQueryState(checkoutCommitsQueryKey(serverId, "/repo2"))?.isInvalidated,
     ).toBe(false);
+  });
+
+  it("invalidates draft command caches for the updated checkout", () => {
+    const queryClient = createQueryClient();
+    const draftCommandsKey = draftAgentCommandsQueryKey({
+      serverId,
+      draftConfig: { provider: "codex", cwd },
+    });
+    const otherDraftCommandsKey = draftAgentCommandsQueryKey({
+      serverId,
+      draftConfig: { provider: "codex", cwd: "/repo2" },
+    });
+    queryClient.setQueryData(draftCommandsKey, []);
+    queryClient.setQueryData(otherDraftCommandsKey, []);
+
+    applyCheckoutStatusUpdateFromEvent({
+      queryClient,
+      serverId,
+      message: checkoutStatusUpdate(checkoutStatus({ currentBranch: "feature/skills" })),
+    });
+
+    expect(queryClient.getQueryState(draftCommandsKey)?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(otherDraftCommandsKey)?.isInvalidated).toBe(false);
   });
 
   it("writes the PR status cache when prStatus is present, and skips it otherwise", () => {

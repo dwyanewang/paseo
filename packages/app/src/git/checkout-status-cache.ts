@@ -7,6 +7,7 @@ import {
   checkoutStatusQueryKey,
   invalidatePrPaneTimelineForCheckout,
 } from "@/git/query-keys";
+import { invalidateDraftAgentCommandsForCwd } from "@/hooks/agent-commands-query";
 import { type CheckoutPrStatusPayload, normalizeCheckoutPrStatusPayload } from "@/git/pr-status";
 import { expireStaleDiffModeOverrides } from "@/review/store";
 
@@ -71,6 +72,9 @@ export function applyCheckoutStatusUpdateFromEvent({
   void queryClient.invalidateQueries({
     queryKey: checkoutCommitsQueryKey(serverId, payload.cwd),
   });
+  // Draft command results are long-lived, but project skills are read from the checkout.
+  // A checkout update can therefore make the cached skill list stale.
+  void invalidateDraftAgentCommandsForCwd({ queryClient, serverId, cwd: payload.cwd });
   expireStaleDiffModeOverrides({
     serverId,
     cwd: payload.cwd,

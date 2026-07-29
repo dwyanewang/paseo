@@ -1,4 +1,5 @@
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
+import type { QueryClient } from "@tanstack/react-query";
 import { normalizeWorkspacePath } from "@/utils/workspace-identity";
 
 export const AGENT_COMMANDS_QUERY_ROOT = "agentCommands";
@@ -44,6 +45,34 @@ export function draftAgentCommandsQueryKey(input: {
     "features",
     draftConfig.featureValues ?? null,
   ] as const;
+}
+
+export function isDraftAgentCommandsQueryForCwd(input: {
+  queryKey: readonly unknown[];
+  serverId: string;
+  cwd: string;
+}): boolean {
+  return (
+    input.queryKey[0] === AGENT_COMMANDS_QUERY_ROOT &&
+    input.queryKey[1] === input.serverId &&
+    input.queryKey[2] === "draft" &&
+    input.queryKey[5] === normalizeAgentCommandsCwd(input.cwd)
+  );
+}
+
+export async function invalidateDraftAgentCommandsForCwd(input: {
+  queryClient: QueryClient;
+  serverId: string;
+  cwd: string;
+}): Promise<void> {
+  await input.queryClient.invalidateQueries({
+    predicate: (query) =>
+      isDraftAgentCommandsQueryForCwd({
+        queryKey: query.queryKey,
+        serverId: input.serverId,
+        cwd: input.cwd,
+      }),
+  });
 }
 
 export function agentCommandsQueryKey(input: {
