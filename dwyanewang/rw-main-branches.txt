@@ -5,5 +5,4 @@ feat/worktree-checkout-branch # PR #1721
 feat/codeup-forge # PR #2507
 refactor/provider-history-read # PR #2388
 fix/android-keyboard-covers-input # PR #2467
-fix/desktop-chat-layout # Personal branch
 fix/project-skill-cache-invalidation # Personal branch
