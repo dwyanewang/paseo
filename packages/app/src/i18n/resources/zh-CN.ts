@@ -1737,6 +1737,15 @@ export const zhCN: TranslationResources = {
       tooLargeToDisplay: "此文件过大，无法显示",
       failedToLoad: "加载文件失败",
       failedToLoadPreview: "加载文件预览失败",
+      closePreview: "关闭文件预览",
+      closePreviewHint: "关闭此文件并返回其父标签",
+      image: {
+        accessibilityLabel: "图片预览：{{fileName}}",
+        accessibilityHint: "双指捏合或双击可缩放，长按可打开图片操作。",
+        copy: "复制图片",
+        copying: "正在复制图片...",
+        copyFailed: "复制图片失败",
+      },
       editor: {
         fileSize: "文件大小 {{size}}",
         lines: "{{count}} 行",

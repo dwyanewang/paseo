@@ -1790,6 +1790,16 @@ export const ptBR: TranslationResources = {
       tooLargeToDisplay: "Este arquivo é grande demais para exibir",
       failedToLoad: "Falha ao carregar arquivo",
       failedToLoadPreview: "Falha ao carregar prévia do arquivo",
+      closePreview: "Fechar prévia do arquivo",
+      closePreviewHint: "Fecha este arquivo e volta para a aba principal",
+      image: {
+        accessibilityLabel: "Prévia da imagem: {{fileName}}",
+        accessibilityHint:
+          "Faça o gesto de pinça ou toque duas vezes para ampliar. Mantenha pressionado para ver as ações da imagem.",
+        copy: "Copiar imagem",
+        copying: "Copiando imagem...",
+        copyFailed: "Falha ao copiar imagem",
+      },
       editor: {
         fileSize: "Tamanho {{size}}",
         lines: "{{count}} linhas",

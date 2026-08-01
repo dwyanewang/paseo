@@ -1775,6 +1775,15 @@ export const ja: TranslationResources = {
       tooLargeToDisplay: "このファイルは大きすぎて表示できません",
       failedToLoad: "ファイルの読み込みに失敗しました",
       failedToLoadPreview: "ファイルプレビューの読み込みに失敗しました",
+      closePreview: "ファイルプレビューを閉じる",
+      closePreviewHint: "このファイルを閉じて親タブに戻ります",
+      image: {
+        accessibilityLabel: "画像プレビュー：{{fileName}}",
+        accessibilityHint: "ピンチまたはダブルタップで拡大できます。長押しで画像操作を開きます。",
+        copy: "画像をコピー",
+        copying: "画像をコピー中...",
+        copyFailed: "画像をコピーできませんでした",
+      },
       editor: {
         fileSize: "ファイルサイズ {{size}}",
         lines: "{{count}} 行",
