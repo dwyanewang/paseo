@@ -6,3 +6,4 @@ feat/codeup-forge # PR #2507
 refactor/provider-history-read # PR #2388
 fix/android-keyboard-covers-input # PR #2467
 fix/project-skill-cache-invalidation # Personal branch
+feat/mobile-file-preview # Personal branch
