@@ -85,6 +85,7 @@ bash "$paseo_chore_root/dwyanewang/rebuild-rw-main.sh" \
 - **Windows zip 固定快速压缩**：electron-builder 命令带 `ELECTRON_BUILDER_COMPRESSION_LEVEL=3`，仍使用标准 zip 目标；若它导致问题，去掉变量回退默认压缩。
 - **收尾还原 terminal-webview**：三端打完 `git checkout -- packages/app/src/terminal/webview/terminal-emulator-webview-html.ts`，保持工作区干净（生成产物，别提交）。
 - **打包成功后起下载服务**：从控制面运行 `bash "$paseo_chore_root/dwyanewang/serve-dist.sh"`（端口 8800，3h 后自动停服清理，重跑重置 3h）。`rw-main` 不再携带该脚本；脚本会从固定 build root 读取产物。物理机浏览器拉取，地址以脚本输出为准。
+- **Tailscale 是可选直连通道**：`serve-dist.sh` 会优先探测已登录的原生 Tailscale，其次复用已授权的 `paseo-tailscale-download` Docker 容器；容器存在但停止时自动启动，并在服务输出中给出 Tailnet 地址。首次安装/网页登录不是打包 gate，未就绪只保留 LAN 下载地址，不能让构建失败。
 
 ## 完成后汇报
 

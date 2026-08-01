@@ -12,11 +12,13 @@
 #   bash serve-dist.sh stop           # 停服 + 清理
 #
 # 物理机浏览器访问:  http://<VM_IP>:<端口>/   (VM_IP 见脚本输出)
+# 已完成一次 Tailscale 授权时，也会自动打印私有直连地址。
 
 set -uo pipefail
 
 DIST=/tmp/paseo-dist
 LOG=/tmp/paseo-http.log
+TAILSCALE_CONTAINER=paseo-tailscale-download
 
 # 在指定端口监听的 python PID
 listen_pid() { ss -ltnp 2>/dev/null | grep -E ":${1} " | grep -oP 'pid=\K[0-9]+' | head -1; }
@@ -55,6 +57,40 @@ vm_ip() {
   local ip
   ip=$(ip -4 addr show 2>/dev/null | grep -oP 'inet \K[0-9.]+' | grep -v '^127\.' | grep -v '^198\.18\.' | head -1)
   echo "${ip:-<VM_IP>}"
+}
+
+# 优先复用原生 Tailscale；本机未安装时，复用已授权的下载容器。
+# Tailscale 是可选分发通道，绝不能让它阻断本地/LAN 下载服务。
+tailnet_ip() {
+  local ip running purpose _
+
+  if command -v tailscale >/dev/null 2>&1; then
+    ip=$(tailscale ip -4 2>/dev/null | head -1)
+    [ -n "$ip" ] && { echo "$ip"; return 0; }
+  fi
+
+  command -v docker >/dev/null 2>&1 || return 1
+  purpose=$(docker inspect --format '{{index .Config.Labels "com.paseo.purpose"}}' "$TAILSCALE_CONTAINER" 2>/dev/null) || return 1
+  [ "$purpose" = artifact-download ] || return 1
+  running=$(docker inspect --format '{{.State.Running}}' "$TAILSCALE_CONTAINER" 2>/dev/null) || return 1
+  [ "$running" = true ] || docker start "$TAILSCALE_CONTAINER" >/dev/null 2>&1 || return 1
+
+  for _ in 1 2 3 4 5; do
+    ip=$(docker exec "$TAILSCALE_CONTAINER" tailscale --socket=/tmp/tailscaled.sock ip -4 2>/dev/null | head -1)
+    [ -n "$ip" ] && { echo "$ip"; return 0; }
+    sleep 1
+  done
+  return 1
+}
+
+show_access_urls() {
+  local port="$1" tailnet
+  echo " 物理机浏览器访问:  http://${IP}:${port}/"
+  if tailnet=$(tailnet_ip); then
+    echo " Tailscale 私有直连: http://${tailnet}:${port}/"
+  else
+    echo " Tailscale: 未就绪（不影响局域网下载）"
+  fi
 }
 
 # ---- 子命令 ----
@@ -97,7 +133,8 @@ if [ "$KEEP" = 1 ] && [ -n "$EXIST" ]; then
   refresh_files
   echo "============================================"
   echo " ♻️  已【沿用】端口 ${PORT} 的服务并刷新为最新产物${rem}"
-  echo " 版本: $VER   访问: http://${IP}:${PORT}/"
+  echo " 版本: $VER"
+  show_access_urls "$PORT"
   echo "============================================"
   exit 0
 fi
@@ -118,7 +155,7 @@ echo "============================================"
 echo " ✅ paseo 下载服务已启动"
 echo " 版本: $VER   端口: $PORT"
 echo " 存活: ${TTL}s ($((TTL/3600))h$(( (TTL%3600)/60 ))m)，到点自动停服并清理"
-echo " 物理机浏览器访问:  http://${IP}:${PORT}/"
+show_access_urls "$PORT"
 echo "   - paseo-android-${VER}.apk"
 echo "   - paseo-desktop-win-x64-${VER}.zip"
 echo " 提前停服:  bash $(basename "$0") stop"
