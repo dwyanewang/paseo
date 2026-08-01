@@ -2093,6 +2093,11 @@ export function NewWorkspaceScreen({
             worktreeAction,
           )
         : undefined;
+      const isCheckoutTargetMissing =
+        createsWorktree && worktreeAction === "checkout" && !checkoutRequest;
+      if (isCheckoutTargetMissing) {
+        throw new Error(t("newWorkspace.refPicker.chooseStart"));
+      }
       const normalizedWorkspace = supportsWorkspaceMultiplicity
         ? await createMultiplicityWorkspace({
             client: connectedClient,

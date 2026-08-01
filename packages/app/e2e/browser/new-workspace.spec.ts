@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { buildHostWorkspaceRoute } from "@/utils/host-routes";
@@ -749,6 +750,42 @@ test.describe("New workspace flow", () => {
       expect(branchInfo.currentBranch).toBe(path.basename(createdWorkspace.workspaceDirectory));
       expect(branchInfo.hasAncestor(tempRepo.branchHeads.main)).toBe(true);
       expect(branchInfo.hasAncestor(tempRepo.branchHeads.dev)).toBe(true);
+    } finally {
+      await tempRepo.cleanup();
+    }
+  });
+
+  test("Check out requires a target when the project has a detached HEAD", async ({ page }) => {
+    const tempRepo = await createTempGitRepo("new-workspace-detached-head-");
+
+    try {
+      execFileSync("git", ["checkout", "--detach", "HEAD"], {
+        cwd: tempRepo.path,
+        stdio: "ignore",
+      });
+      const openedProject = await openProjectViaDaemon(client, tempRepo.path);
+      localWorkspaceIds.add(openedProject.workspaceId);
+      const workspaceIdsBefore = (
+        await client.fetchWorkspaces({ filter: { projectId: openedProject.projectId } })
+      ).entries.map((workspace) => workspace.id);
+
+      await gotoAppShell(page);
+      await waitForSidebarHydration(page);
+      await openNewWorkspaceComposer(page, {
+        projectKey: openedProject.projectKey,
+        projectDisplayName: openedProject.projectDisplayName,
+      });
+      await selectWorkspaceMode(page, "checkout");
+      await submitNewWorkspaceWithoutPrompt(page);
+
+      await expect(page).toHaveURL(/\/new(?:\?.*)?$/u);
+      await expect(
+        page.getByText("Choose where to start from", { exact: true }).last(),
+      ).toBeVisible();
+      const workspaceIdsAfter = (
+        await client.fetchWorkspaces({ filter: { projectId: openedProject.projectId } })
+      ).entries.map((workspace) => workspace.id);
+      expect(workspaceIdsAfter).toEqual(workspaceIdsBefore);
     } finally {
       await tempRepo.cleanup();
     }
