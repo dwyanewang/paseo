@@ -29,10 +29,10 @@ description: 一键执行 Paseo 三端本地打包（服务端 / 安卓 APK / Wi
 
 ## 固定 worktree 拓扑
 
-- `/home/yangfei/Projects/paseo` 固定签出 `rw-main`，只在这里重建发行分支和生成三端产物；不要再切到 `main` 或 `chore/build-paseo`。
-- `chore/build-paseo` 在独立 worktree 维护清单、脚本和文档；功能分支也各用自己的 worktree。所有 worktree 共享 Git refs，但各自保留独立源码、`dist`、`node_modules` 和构建缓存。
-- 同步 `main` 时从 chore worktree 安全快进共享的本地 `main` ref；清单修改在 chore worktree 提交，随后回到固定主目录执行 `rebuild-rw-main.sh --push`。
-- 开始前确认主目录确实为干净的 `rw-main`，chore 和清单内功能分支的 worktree 也都干净。不要为方便而在一个 worktree 内来回切分支，否则会重新制造“当前源码 + 上一分支 dist”的假错误。
+- `/home/yangfei/Projects/paseo` 是专用构建 worktree，正常应停留在 `rw-main` 并保留 Android/Gradle/Electron 缓存。若开始时处于其他分支，只要工作区干净且不是 detached HEAD，重建脚本会安全切换并在成功后停留于 `rw-main`；有改动则立即停止，不 stash、不覆盖。
+- `chore/build-paseo` 是唯一构建控制面，只维护清单、脚本和文档，**不再合并进 `rw-main`**。功能分支也各用自己的 worktree；所有 worktree 共享 Git refs，但各自保留源码、`dist`、`node_modules` 和构建缓存。
+- 同步 `main` 时先查它是否已被某个 worktree 签出：已签出就在那个干净 worktree 执行 `merge --ff-only upstream/main`，未签出才从 chore worktree 用 `branch -f` 安全快进共享 ref；无法快进或对应 worktree 有改动时停止并报告路径。
+- 清单修改和脚本调用都在 chore worktree 发起，但候选合并、仓库检查和分支切换必须通过 `--build-root /home/yangfei/Projects/paseo` 在专用构建 worktree 执行。开始前确认 chore、build root 和清单内功能分支的 worktree 都干净。
 
 ## rw-main 清单自动维护
 
@@ -52,7 +52,15 @@ description: 一键执行 Paseo 三端本地打包（服务端 / 安卓 APK / Wi
 /build-paseo，把 feat/example 作为长期个人分支加入清单，然后完整打包
 ```
 
-同步代码时严格执行 `打包流程.md` 第 1 节：`main` 只做上游镜像，先在 chore worktree 同步清单，再在固定主目录运行 `dwyanewang/rebuild-rw-main.sh --push`，从清单整体生成个人发行分支。脚本输出 `No-op:` 表示现有 merge 链与全部输入完全一致；默认可复用，`--dry-run` 仍强制完整验证。**禁止继续把 main 或 rebase 后的 PR 分支追加合并到旧 rw-main。**
+同步代码时严格执行 `打包流程.md` 第 1 节：`main` 只做上游镜像，先在 chore worktree 同步清单，再从 chore worktree 调用：
+
+```bash
+bash "$paseo_chore_root/dwyanewang/rebuild-rw-main.sh" \
+  --build-root /home/yangfei/Projects/paseo \
+  --push
+```
+
+`rw-main` 只由 `main` 和清单内功能分支组成。脚本输出 `No-op:` 表示现有产品 merge 链与全部输入完全一致；默认可复用，`--dry-run` 仍强制完整验证。从非 `rw-main` 分支进入时会无条件运行 `npm install`；原本已在 `rw-main` 时，仅当 package、lockfile、`patches/**` 或 postinstall 补丁脚本变化才安装。**禁止继续把 chore、main 或 rebase 后的 PR 分支追加合并到旧 rw-main。**
 
 `rw-main` 重建是重型构建的 readiness gate。merge、format、typecheck、lint 任一失败时，禁止继续服务端、Android 或 Windows：
 
@@ -76,7 +84,7 @@ description: 一键执行 Paseo 三端本地打包（服务端 / 安卓 APK / Wi
 - **Windows 只打 zip**（`--win zip`），不打 nsis。
 - **Windows zip 固定快速压缩**：electron-builder 命令带 `ELECTRON_BUILDER_COMPRESSION_LEVEL=3`，仍使用标准 zip 目标；若它导致问题，去掉变量回退默认压缩。
 - **收尾还原 terminal-webview**：三端打完 `git checkout -- packages/app/src/terminal/webview/terminal-emulator-webview-html.ts`，保持工作区干净（生成产物，别提交）。
-- **打包成功后起下载服务**：`bash dwyanewang/serve-dist.sh`（端口 8800，3h 后自动停服清理，重跑重置 3h）。物理机浏览器拉取，地址以脚本输出为准。
+- **打包成功后起下载服务**：从控制面运行 `bash "$paseo_chore_root/dwyanewang/serve-dist.sh"`（端口 8800，3h 后自动停服清理，重跑重置 3h）。`rw-main` 不再携带该脚本；脚本会从固定 build root 读取产物。物理机浏览器拉取，地址以脚本输出为准。
 
 ## 完成后汇报
 
