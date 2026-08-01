@@ -73,6 +73,16 @@ async function createWorktreeCoreWithPriority(
       githubPrNumber: input.githubPrNumber,
       worktreeSlug: requestedWorktreeSlug,
     };
+  } else if (input.action === "branch-off") {
+    const worktreeSlug = requestedWorktreeSlug ?? normalizeWorktreeSlug(createNameId());
+    intentInput = {
+      action: "branch-off",
+      refName: input.refName,
+      branchName: requestedBranchName,
+      checkoutSource: input.checkoutSource,
+      githubPrNumber: input.githubPrNumber,
+      worktreeSlug,
+    };
   } else if (input.checkoutSource !== undefined || input.githubPrNumber !== undefined) {
     intentInput = {
       checkoutSource: input.checkoutSource,
@@ -99,7 +109,8 @@ async function createWorktreeCoreWithPriority(
   let normalizedSlug: string;
 
   switch (intent.kind) {
-    case "branch-off": {
+    case "branch-off":
+    case "branch-off-change-request": {
       normalizedSlug = requestedWorktreeSlug ?? normalizeWorktreeSlug(intent.branchName);
       break;
     }

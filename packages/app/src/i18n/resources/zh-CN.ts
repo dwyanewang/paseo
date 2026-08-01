@@ -1155,12 +1155,13 @@ export const zhCN: TranslationResources = {
     isolation: {
       local: "本地",
       worktree: "新建 worktree",
-      label: "隔离",
+      label: "Workspace 模式",
     },
     branchMode: {
       label: "现有分支",
       branchOff: "新建分支",
-      checkout: "使用该分支",
+      checkout: "检出",
+      updateHost: "更新 host 后即可从当前选择新建分支。",
     },
     fields: {
       project: "项目",

@@ -180,6 +180,15 @@ export interface WorktreeCheckoutRef {
 
 export type WorktreeSource =
   | { kind: "branch-off"; baseBranch: string; branchName: string }
+  | {
+      kind: "branch-off-change-request";
+      forge: string;
+      changeRequestNumber: number;
+      headRef: string;
+      baseRefName: string;
+      checkoutRefs: WorktreeCheckoutRef[];
+      branchName: string;
+    }
   | { kind: "checkout-branch"; branchName: string }
   | {
       kind: "checkout-change-request";
@@ -1329,6 +1338,20 @@ async function resolveWorktreeSourcePlan({
         addArguments: ["-b", newBranchName, "--no-track", base],
       };
     }
+    case "branch-off-change-request": {
+      validateWorktreeBranchName(source.branchName);
+      const localBranchName = await resolveUniqueLocalBranchName(cwd, source.branchName);
+      await fetchWorktreeCheckoutRefs({
+        cwd,
+        localBranchName,
+        checkoutRefs: source.checkoutRefs,
+      });
+      return {
+        branchName: localBranchName,
+        metadataBaseRefName: normalizeRequiredBaseBranch(source.baseRefName),
+        addArguments: [localBranchName],
+      };
+    }
     case "checkout-branch": {
       await validateGitBranchName(cwd, source.branchName);
       if (!(await localBranchExists(cwd, source.branchName))) {
@@ -1370,8 +1393,7 @@ async function resolveWorktreeSourcePlan({
       await validateGitBranchName(cwd, localBranchCandidate);
       const localBranchName = await resolveUniqueLocalBranchName(cwd, localBranchCandidate);
       const normalizedBaseRefName = normalizeRequiredBaseBranch(source.baseRefName);
-      const changeRequestNumber =
-        source.kind === "checkout-github-pr" ? source.githubPrNumber : source.changeRequestNumber;
+      const changeRequestNumber = getChangeRequestNumber(source);
       await fetchWorktreeCheckoutRefs({
         cwd,
         localBranchName,
@@ -1427,6 +1449,13 @@ async function resolveWorktreeSourcePlan({
       };
     }
   }
+}
+
+function getChangeRequestNumber(
+  source: Extract<WorktreeSource, { kind: "checkout-change-request" | "checkout-github-pr" }>,
+): number {
+  if (source.kind === "checkout-github-pr") return source.githubPrNumber;
+  return source.changeRequestNumber;
 }
 
 async function resolveCheckoutBranchBaseRefName(cwd: string): Promise<string> {

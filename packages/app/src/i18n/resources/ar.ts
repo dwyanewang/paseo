@@ -1166,12 +1166,13 @@ export const ar: TranslationResources = {
     isolation: {
       local: "محلي",
       worktree: "شجرة عمل جديدة",
-      label: "العزل",
+      label: "وضع مساحة العمل",
     },
     branchMode: {
       label: "فرع موجود",
-      branchOff: "إنشاء فرع",
-      checkout: "استخدام هذا الفرع",
+      branchOff: "فرع جديد",
+      checkout: "التبديل إلى الفرع",
+      updateHost: "حدّث المضيف لإنشاء فرع جديد من التحديد الحالي.",
     },
     fields: {
       project: "المشروع",
@@ -1183,7 +1184,7 @@ export const ar: TranslationResources = {
       hostDisconnected: "Host غير متصل",
       createWorktreeFailed: "فشل في إنشاء شجرة العمل",
       branchAlreadyCheckedOut:
-        "هذا الفرع مسحوب بالفعل في مكان آخر. استخدم إنشاء فرع لإنشاء نسخة، أو حرِّر الفرع أولًا.",
+        "هذا الفرع مسحوب بالفعل في مكان آخر. استخدم فرع جديد لإنشاء نسخة، أو حرِّر الفرع أولًا.",
       composerStateRequired: "حالة الملحن مطلوبة",
       selectModel: "اختر نموذجا",
     },

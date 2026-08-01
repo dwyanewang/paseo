@@ -1175,12 +1175,13 @@ export const en = {
     isolation: {
       local: "Local",
       worktree: "New worktree",
-      label: "Isolation",
+      label: "Workspace mode",
     },
     branchMode: {
       label: "Existing branch",
-      branchOff: "Branch off",
-      checkout: "Use this branch",
+      branchOff: "New branch",
+      checkout: "Check out",
+      updateHost: "Update the host to create a new branch from this selection.",
     },
     fields: {
       project: "Project",
@@ -1192,7 +1193,7 @@ export const en = {
       hostDisconnected: "Host is not connected",
       createWorktreeFailed: "Failed to create worktree",
       branchAlreadyCheckedOut:
-        "That branch is already checked out elsewhere. Use Branch off to create a copy, or free the branch first.",
+        "That branch is already checked out elsewhere. Use New branch to create a copy, or free the branch first.",
       composerStateRequired: "Composer state is required",
       selectModel: "Select a model",
     },

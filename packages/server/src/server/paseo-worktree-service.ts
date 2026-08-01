@@ -252,7 +252,11 @@ function maybeMarkFirstAgentBranchAutoNameEligible(options: {
   createdWorktree: Awaited<ReturnType<typeof createWorktreeCore>>;
 }): void {
   const { createdWorktree } = options;
-  if (!createdWorktree.created || createdWorktree.intent.kind !== "branch-off") {
+  if (
+    !createdWorktree.created ||
+    (createdWorktree.intent.kind !== "branch-off" &&
+      createdWorktree.intent.kind !== "branch-off-change-request")
+  ) {
     return;
   }
 
@@ -267,6 +271,7 @@ function resolveIntentBaseBranch(intent: WorktreeCreationIntent): string | null 
   switch (intent.kind) {
     case "branch-off":
       return normalizeBaseRefName(intent.baseBranch);
+    case "branch-off-change-request":
     case "checkout-change-request":
       return normalizeBaseRefName(intent.baseRefName);
     case "checkout-github-pr":

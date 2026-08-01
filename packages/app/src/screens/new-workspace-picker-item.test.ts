@@ -32,23 +32,10 @@ describe("branchPickerOptionId", () => {
 
 describe("pickerItemToCheckoutRequest", () => {
   it("returns undefined for no selection (null)", () => {
-    expect(pickerItemToCheckoutRequest(null)).toBeUndefined();
+    expect(pickerItemToCheckoutRequest(null, "branch-off")).toBeUndefined();
   });
 
   it("maps a branch row to branch-off with its exact ref", () => {
-    const item: PickerItem = {
-      kind: "branch",
-      name: "dev",
-      refName: "refs/heads/dev",
-      accessibilityLabel: "dev, local branch",
-    };
-    expect(pickerItemToCheckoutRequest(item)).toEqual({
-      action: "branch-off",
-      refName: "refs/heads/dev",
-    });
-  });
-
-  it("keeps a branch row on branch-off when the mode is explicit", () => {
     const item: PickerItem = {
       kind: "branch",
       name: "dev",
@@ -74,10 +61,10 @@ describe("pickerItemToCheckoutRequest", () => {
     });
   });
 
-  it("ignores the branch mode for github-pr rows (PRs always check out)", () => {
+  it("maps a github-pr row to branch-off using its authoritative checkout source", () => {
     const item: PickerItem = { kind: "github-pr", item: prItem };
     expect(pickerItemToCheckoutRequest(item, "branch-off")).toEqual({
-      action: "checkout",
+      action: "branch-off",
       refName: "feature/picker",
       checkoutSource: { kind: "change_request", forge: "github", number: 42 },
       githubPrNumber: 42,
@@ -89,7 +76,7 @@ describe("pickerItemToCheckoutRequest", () => {
       kind: "github-pr",
       item: prItem,
     };
-    expect(pickerItemToCheckoutRequest(item)).toEqual({
+    expect(pickerItemToCheckoutRequest(item, "checkout")).toEqual({
       action: "checkout",
       refName: "feature/picker",
       checkoutSource: { kind: "change_request", forge: "github", number: 42 },
@@ -108,7 +95,7 @@ describe("pickerItemToCheckoutRequest", () => {
         headRefName: "orphan",
       },
     };
-    expect(pickerItemToCheckoutRequest(item)).toEqual({
+    expect(pickerItemToCheckoutRequest(item, "checkout")).toEqual({
       action: "checkout",
       refName: "orphan",
       checkoutSource: { kind: "change_request", forge: "github", number: 7 },
@@ -127,7 +114,7 @@ describe("pickerItemToCheckoutRequest", () => {
         url: "https://gitlab.example.com/acme/repo/-/merge_requests/21",
       },
     };
-    expect(pickerItemToCheckoutRequest(item)).toEqual({
+    expect(pickerItemToCheckoutRequest(item, "checkout")).toEqual({
       action: "checkout",
       refName: "feature/picker",
       checkoutSource: {
@@ -339,7 +326,7 @@ describe("buildPickerOptionData", () => {
       baseItem,
     });
     const selected = data.itemById.get(data.selectedOptionId) ?? null;
-    expect(pickerItemToCheckoutRequest(selected)).toEqual({
+    expect(pickerItemToCheckoutRequest(selected, "branch-off")).toEqual({
       action: "branch-off",
       refName: "refs/heads/main",
     });

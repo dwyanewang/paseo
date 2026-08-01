@@ -65,11 +65,7 @@ export async function resolveWorktreeCreationIntent(
   deps: ResolveWorktreeCreationIntentDeps,
 ): Promise<WorktreeCreationIntent> {
   if (input.action === "branch-off") {
-    return {
-      kind: "branch-off",
-      baseBranch: input.refName?.trim() || (await resolveDefaultBranch(repoRoot, deps)),
-      branchName: input.branchName ?? input.worktreeSlug ?? "worktree",
-    };
+    return resolveBranchOffIntent(input, repoRoot, deps);
   }
 
   if (input.action === "checkout") {
@@ -126,6 +122,38 @@ interface PrCheckoutIntentParams {
   changeRequestNumber: number;
   repoRoot: string;
   deps: ResolveWorktreeCreationIntentDeps;
+}
+
+async function resolveBranchOffIntent(
+  input: ResolveWorktreeCreationIntentInput,
+  repoRoot: string,
+  deps: ResolveWorktreeCreationIntentDeps,
+): Promise<WorktreeCreationIntent> {
+  const changeRequest = resolveInputChangeRequest(input);
+  if (!changeRequest) {
+    return {
+      kind: "branch-off",
+      baseBranch: input.refName?.trim() || (await resolveDefaultBranch(repoRoot, deps)),
+      branchName: input.branchName ?? input.worktreeSlug ?? "worktree",
+    };
+  }
+
+  assertCheckoutSourceMatchesResolvedForge(changeRequest, deps);
+  const checkoutIntent = await resolvePrCheckoutIntent({
+    refName: input.refName,
+    changeRequestNumber: changeRequest.number,
+    repoRoot,
+    deps,
+  });
+  return {
+    kind: "branch-off-change-request",
+    forge: checkoutIntent.forge,
+    changeRequestNumber: checkoutIntent.changeRequestNumber,
+    headRef: checkoutIntent.headRef,
+    baseRefName: checkoutIntent.baseRefName,
+    checkoutRefs: checkoutIntent.checkoutRefs ?? [],
+    branchName: input.branchName ?? input.worktreeSlug ?? "worktree",
+  };
 }
 
 function resolveInputChangeRequest(

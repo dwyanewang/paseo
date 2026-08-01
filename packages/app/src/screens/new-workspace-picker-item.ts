@@ -178,7 +178,7 @@ export function defaultBasePickerItem(status: BaseRefCheckoutStatus): PickerItem
   };
 }
 
-// How a new worktree is created from an existing plain branch:
+// How a new worktree is created from the selected branch or change request:
 // - "branch-off" (default): cut a fresh branch based on it, so commits land on
 //   the copy and the original branch stays untouched.
 // - "checkout": check the branch out directly, so commits land on the real
@@ -188,7 +188,7 @@ export type BranchWorktreeMode = "branch-off" | "checkout";
 
 export function pickerItemToCheckoutRequest(
   item: PickerItem | null,
-  branchMode: BranchWorktreeMode = "branch-off",
+  branchMode: BranchWorktreeMode,
 ): PickerCheckoutRequest | undefined {
   if (!item) return undefined;
   switch (item.kind) {
@@ -198,7 +198,7 @@ export function pickerItemToCheckoutRequest(
       const headRefName = item.item.headRefName?.trim();
       const forge = item.item.forge ?? "github";
       return {
-        action: "checkout",
+        action: branchMode,
         ...(headRefName ? { refName: headRefName } : {}),
         checkoutSource: {
           kind: "change_request",

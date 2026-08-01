@@ -566,6 +566,62 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
       expect(mergeBase).toBe(devTip);
     });
 
+    test("branches off an authoritative GitHub PR ref into an independent branch", async () => {
+      const { tempDir, repoDir, paseoHome } = createGitHubPrRemoteRepo();
+      cleanupPaths.push(tempDir);
+      const prHead = execFileSync("git", ["ls-remote", "origin", "refs/pull/123/head"], {
+        cwd: repoDir,
+        stdio: "pipe",
+      })
+        .toString()
+        .split("\t")[0];
+      const originalMain = execFileSync("git", ["rev-parse", "main"], {
+        cwd: repoDir,
+        stdio: "pipe",
+      })
+        .toString()
+        .trim();
+
+      const result = await createCoreWorktree(
+        {
+          cwd: repoDir,
+          worktreeSlug: "follow-up-pr-123",
+          action: "branch-off",
+          checkoutSource: { kind: "change_request", forge: "github", number: 123 },
+          paseoHome,
+          runSetup: false,
+        },
+        createCoreDeps(),
+      );
+      const localHead = execFileSync("git", ["rev-parse", "HEAD"], {
+        cwd: result.worktree.worktreePath,
+        stdio: "pipe",
+      })
+        .toString()
+        .trim();
+      const metadata = readPaseoWorktreeMetadata(result.worktree.worktreePath);
+
+      expect(result.intent).toEqual({
+        kind: "branch-off-change-request",
+        forge: "github",
+        changeRequestNumber: 123,
+        headRef: "pr-123",
+        baseRefName: "main",
+        checkoutRefs: [{ remoteName: "origin", remoteRef: "refs/pull/123/head" }],
+        branchName: "follow-up-pr-123",
+      });
+      expect(result.worktree.branchName).toBe("follow-up-pr-123");
+      expect(localHead).toBe(prHead);
+      expect(
+        execFileSync("git", ["rev-parse", "main"], { cwd: repoDir, stdio: "pipe" })
+          .toString()
+          .trim(),
+      ).toBe(originalMain);
+      expect(getBranchUpstream(result.worktree.worktreePath)).toBeNull();
+      expect(metadata).toMatchObject({ baseRefName: "main" });
+      expect(metadata?.changeRequestLookupTarget).toBeUndefined();
+    });
+
     test("checks out an explicit existing branch", async () => {
       const { tempDir, repoDir, paseoHome } = createGitRepoWithDevBranch();
       cleanupPaths.push(tempDir);
@@ -1147,6 +1203,59 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
         currentBranch: "daemon-shutdown-diagnostics-1",
         pullRequestLookupTarget: null,
       });
+    });
+
+    test("branches off a fork PR without tracking or pushing to its head branch", async () => {
+      const { tempDir, repoDir, headRemoteDir, paseoHome } = createForkGitHubPrRemoteRepo();
+      cleanupPaths.push(tempDir);
+      const github = {
+        ...createGitHubServiceStub(),
+        getPullRequestCheckoutTarget: async () => ({
+          number: 526,
+          baseRefName: "main",
+          headRefName: "main",
+          headOwnerLogin: "therainisme",
+          headRepositorySshUrl: headRemoteDir,
+          headRepositoryUrl: headRemoteDir,
+          isCrossRepository: true,
+        }),
+      };
+
+      const result = await createCoreWorktree(
+        {
+          cwd: repoDir,
+          worktreeSlug: "maintainer-follow-up",
+          action: "branch-off",
+          refName: "main",
+          checkoutSource: { kind: "change_request", forge: "github", number: 526 },
+          paseoHome,
+          runSetup: false,
+        },
+        createCoreDeps({ github }),
+      );
+      const readme = readFileSync(path.join(result.worktree.worktreePath, "README.md"), "utf8");
+      const metadata = readPaseoWorktreeMetadata(result.worktree.worktreePath);
+
+      expect(result.intent).toEqual({
+        kind: "branch-off-change-request",
+        forge: "github",
+        changeRequestNumber: 526,
+        headRef: "main",
+        baseRefName: "main",
+        checkoutRefs: [{ remoteName: "origin", remoteRef: "refs/pull/526/head" }],
+        branchName: "maintainer-follow-up",
+      });
+      expect(result.worktree.branchName).toBe("maintainer-follow-up");
+      expect(readme.replace(/\r\n/g, "\n")).toBe("fork pr main branch\n");
+      expect(getBranchUpstream(result.worktree.worktreePath)).toBeNull();
+      expect(
+        getGitConfigValue(
+          result.worktree.worktreePath,
+          `branch.${result.worktree.branchName}.pushRemote`,
+        ),
+      ).toBeNull();
+      expect(getGitConfigValue(result.worktree.worktreePath, "remote.paseo-pr-526.url")).toBeNull();
+      expect(metadata?.changeRequestLookupTarget).toBeUndefined();
     });
 
     test("checks out a fork PR whose head branch collides with local main", async () => {

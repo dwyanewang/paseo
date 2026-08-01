@@ -1182,12 +1182,13 @@ export const ru: TranslationResources = {
     isolation: {
       local: "Локально",
       worktree: "Новый worktree",
-      label: "Изоляция",
+      label: "Режим рабочего пространства",
     },
     branchMode: {
       label: "Существующая ветка",
-      branchOff: "Создать ветку",
-      checkout: "Использовать эту ветку",
+      branchOff: "Новая ветка",
+      checkout: "Переключиться",
+      updateHost: "Обновите хост, чтобы создать новую ветку из текущего выбора.",
     },
     fields: {
       project: "Проект",
@@ -1199,7 +1200,7 @@ export const ru: TranslationResources = {
       hostDisconnected: "Хост не подключён",
       createWorktreeFailed: "Не удалось создать worktree.",
       branchAlreadyCheckedOut:
-        "Эта ветка уже извлечена в другом месте. Используйте «Создать ветку», чтобы создать копию, или сначала освободите ветку.",
+        "Эта ветка уже извлечена в другом месте. Используйте «Новая ветка», чтобы создать копию, или сначала освободите ветку.",
       composerStateRequired: "Редактор сообщения ещё не готов.",
       selectModel: "Выберите модель",
     },

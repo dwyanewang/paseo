@@ -117,7 +117,10 @@ import {
 } from "./new-workspace-picker-item";
 import {
   clearPickerPrAttachmentForTargetChange,
+  effectivePickerWorktreeAction,
   initialPickerSelectionState,
+  isNewWorkspaceWorktreeActionSupported,
+  isPickerWorktreeActionSupported,
   reducePickerSelection,
   syncPickerPrAttachment,
 } from "./new-workspace-picker-state";
@@ -211,10 +214,11 @@ function MetaChevron(): ReactElement {
 
 const metaChevron = <MetaChevron />;
 
+type WorkspaceMode = "local" | BranchWorktreeMode;
 // Stable reference so the keyboard-action handler doesn't re-register each render.
 const PROJECT_PICK_ACTIONS: readonly KeyboardActionId[] = ["workspace.project.pick"];
 // Height of a single picker-trigger badge. The Base-row spacer reserves exactly
-// this so toggling Isolation to Local hides the row without shifting the form.
+// this so switching the workspace mode to Local hides the row without shifting the form.
 const BADGE_HEIGHT = 28;
 
 function RefPickerBadgeContent({
@@ -418,9 +422,10 @@ function PickerOptionItem({
   );
 }
 
-function IsolationOptionItem({
+function WorkspaceModeOptionItem({
   optionId,
   label,
+  description,
   selected,
   active,
   disabled,
@@ -430,6 +435,7 @@ function IsolationOptionItem({
 }: {
   optionId: string;
   label: string;
+  description?: string;
   selected: boolean;
   active: boolean;
   disabled: boolean;
@@ -440,63 +446,16 @@ function IsolationOptionItem({
   const leadingSlot = useMemo(
     () => (
       <View style={styles.rowIconBox}>
-        {optionId === "worktree" ? (
-          <GitBranch size={iconSize} color={iconColor} />
-        ) : (
-          <Folder size={iconSize} color={iconColor} />
-        )}
+        <WorkspaceModeIcon mode={optionId} color={iconColor} size={iconSize} />
       </View>
     ),
     [optionId, iconSize, iconColor],
   );
   return (
     <ComboboxItem
-      testID={`workspace-create-isolation-${optionId}`}
+      testID={`workspace-create-mode-${optionId}`}
       label={label}
-      selected={selected}
-      active={active}
-      disabled={disabled}
-      onPress={onPress}
-      leadingSlot={leadingSlot}
-    />
-  );
-}
-
-function BranchModeOptionItem({
-  optionId,
-  label,
-  selected,
-  active,
-  disabled,
-  onPress,
-  iconColor,
-  iconSize,
-}: {
-  optionId: string;
-  label: string;
-  selected: boolean;
-  active: boolean;
-  disabled: boolean;
-  onPress: () => void;
-  iconColor: string;
-  iconSize: number;
-}) {
-  const leadingSlot = useMemo(
-    () => (
-      <View style={styles.rowIconBox}>
-        {optionId === "checkout" ? (
-          <GitCommitHorizontal size={iconSize} color={iconColor} />
-        ) : (
-          <GitBranchPlus size={iconSize} color={iconColor} />
-        )}
-      </View>
-    ),
-    [optionId, iconSize, iconColor],
-  );
-  return (
-    <ComboboxItem
-      testID={`workspace-create-branch-mode-${optionId}`}
-      label={label}
+      description={description}
       selected={selected}
       active={active}
       disabled={disabled}
@@ -565,6 +524,7 @@ function NewWorkspacePickerOption({
   onPress,
   itemById,
   isPending,
+  changeRequestBranchOffDisabled,
 }: {
   option: ComboboxOptionType;
   selected: boolean;
@@ -572,6 +532,7 @@ function NewWorkspacePickerOption({
   onPress: () => void;
   itemById: Map<string, PickerItem>;
   isPending: boolean;
+  changeRequestBranchOffDisabled: boolean;
 }) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
@@ -582,10 +543,12 @@ function NewWorkspacePickerOption({
   const testID = isBranch
     ? `new-workspace-ref-picker-branch-${item.name}`
     : `new-workspace-ref-picker-pr-${item.item.number}`;
-  const description =
-    !isBranch && item.item.baseRefName
-      ? t("newWorkspace.refPicker.intoBase", { baseRef: item.item.baseRefName })
-      : undefined;
+  let description: string | undefined;
+  if (!isBranch && changeRequestBranchOffDisabled) {
+    description = t("newWorkspace.branchMode.updateHost");
+  } else if (!isBranch && item.item.baseRefName) {
+    description = t("newWorkspace.refPicker.intoBase", { baseRef: item.item.baseRefName });
+  }
 
   return (
     <PickerOptionItem
@@ -594,7 +557,7 @@ function NewWorkspacePickerOption({
       description={description}
       selected={selected}
       active={active}
-      disabled={isPending}
+      disabled={isPending || (!isBranch && changeRequestBranchOffDisabled)}
       onPress={onPress}
       isBranch={isBranch}
       trailingLabel={isBranch ? item.divergenceLabel : undefined}
@@ -673,14 +636,15 @@ function newWorkspaceHostOptionTestID(serverId: string): string {
   return `new-workspace-host-picker-option-${serverId}`;
 }
 
-function IsolationPickerTrigger({
+function WorkspaceModePickerTrigger({
   pickerAnchorRef,
   onPress,
   disabled,
   badgePressableStyle,
-  isolation,
+  mode,
   label,
   tooltipLabel,
+  accessibilityLabel,
   iconColor,
   iconSize,
 }: {
@@ -688,9 +652,10 @@ function IsolationPickerTrigger({
   onPress: () => void;
   disabled: boolean;
   badgePressableStyle: React.ComponentProps<typeof Pressable>["style"];
-  isolation: "local" | "worktree";
+  mode: WorkspaceMode;
   label: string;
   tooltipLabel: string;
+  accessibilityLabel: string;
   iconColor: string;
   iconSize: number;
 }) {
@@ -700,19 +665,15 @@ function IsolationPickerTrigger({
         <ComboboxTrigger
           chevron={metaChevron}
           ref={pickerAnchorRef}
-          testID="workspace-create-isolation-trigger"
+          testID="workspace-create-mode-trigger"
           onPress={onPress}
           disabled={disabled}
           style={badgePressableStyle}
           accessibilityRole="button"
-          accessibilityLabel="Workspace isolation"
+          accessibilityLabel={accessibilityLabel}
         >
           <View style={styles.badgeIconBox}>
-            {isolation === "worktree" ? (
-              <GitBranch size={iconSize} color={iconColor} />
-            ) : (
-              <Folder size={iconSize} color={iconColor} />
-            )}
+            <WorkspaceModeIcon mode={mode} color={iconColor} size={iconSize} />
           </View>
           <Text style={styles.badgeText} numberOfLines={1}>
             {label}
@@ -726,47 +687,10 @@ function IsolationPickerTrigger({
   );
 }
 
-function BranchModePickerTrigger({
-  pickerAnchorRef,
-  onPress,
-  disabled,
-  badgePressableStyle,
-  branchMode,
-  label,
-  iconColor,
-  iconSize,
-}: {
-  pickerAnchorRef: React.RefObject<View | null>;
-  onPress: () => void;
-  disabled: boolean;
-  badgePressableStyle: React.ComponentProps<typeof Pressable>["style"];
-  branchMode: BranchWorktreeMode;
-  label: string;
-  iconColor: string;
-  iconSize: number;
-}) {
-  return (
-    <ComboboxTrigger
-      ref={pickerAnchorRef}
-      testID="workspace-create-branch-mode-trigger"
-      onPress={onPress}
-      disabled={disabled}
-      style={badgePressableStyle}
-      accessibilityRole="button"
-      accessibilityLabel="Branch mode"
-    >
-      <View style={styles.badgeIconBox}>
-        {branchMode === "checkout" ? (
-          <GitCommitHorizontal size={iconSize} color={iconColor} />
-        ) : (
-          <GitBranchPlus size={iconSize} color={iconColor} />
-        )}
-      </View>
-      <Text style={styles.badgeText} numberOfLines={1}>
-        {label}
-      </Text>
-    </ComboboxTrigger>
-  );
+function WorkspaceModeIcon({ mode, color, size }: { mode: string; color: string; size: number }) {
+  if (mode === "checkout") return <GitCommitHorizontal size={size} color={color} />;
+  if (mode === "branch-off") return <GitBranchPlus size={size} color={color} />;
+  return <Folder size={size} color={color} />;
 }
 
 // Wraps a single argument control in the mobile vertical stack. On desktop the
@@ -816,13 +740,8 @@ function useWorkspaceIsolation(input: {
   };
 }
 
-function isolationLabel(t: TFunction, isolation: "local" | "worktree"): string {
-  return isolation === "worktree"
-    ? t("newWorkspace.isolation.worktree")
-    : t("newWorkspace.isolation.local");
-}
-
-function branchModeLabel(t: TFunction, mode: BranchWorktreeMode): string {
+function workspaceModeLabel(t: TFunction, mode: WorkspaceMode): string {
+  if (mode === "local") return t("newWorkspace.isolation.local");
   return mode === "checkout"
     ? t("newWorkspace.branchMode.checkout")
     : t("newWorkspace.branchMode.branchOff");
@@ -835,15 +754,6 @@ function getContentStyle(input: { isCompact: boolean; insetBottom: number }) {
   return [styles.content, styles.contentCentered];
 }
 
-// The branch-mode control applies only to an explicitly chosen plain branch
-// while the ref picker is showing (i.e. a worktree is being created). PR
-// selections already check out, and the no-selection default branches off.
-function shouldShowBranchModeControl(
-  showRefPicker: boolean,
-  selectedItem: PickerItem | null,
-): boolean {
-  return showRefPicker && selectedItem?.kind === "branch";
-}
 function normalizeBranchDetails(
   data: { branchDetails?: BranchPickerDetail[]; branches?: string[] } | undefined,
 ): BranchPickerDetail[] {
@@ -1448,7 +1358,7 @@ interface NewWorkspaceFormStackInput {
     onSelect: (id: string) => void;
   };
   isolation: FormPickerControl & {
-    effectiveIsolation: "local" | "worktree";
+    mode: WorkspaceMode;
     options: ComboboxOptionType[];
     onSelect: (id: string) => void;
     renderOption: RefPickerRenderOption;
@@ -1473,30 +1383,22 @@ interface NewWorkspaceFormStackInput {
     profiles: readonly TerminalProfile[];
     disabled: boolean;
   };
-  branchMode: FormPickerControl & {
-    mode: BranchWorktreeMode;
-    options: ComboboxOptionType[];
-    onSelect: (id: string) => void;
-    renderOption: RefPickerRenderOption;
-  };
 }
 
 function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactElement {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
-  const { isCompact, isPending, project, host, isolation, base, launch, branchMode } = input;
+  const { isCompact, isPending, project, host, isolation, base, launch } = input;
 
   const selectedHostLabel =
     host.allHosts.find((h) => h.serverId === host.selectedServerId)?.label ?? "Host";
   const showHostControl = host.allHosts.length > 1;
-  const isolationTriggerLabel = isolationLabel(t, isolation.effectiveIsolation);
+  const showWorkspaceModeControl = isolation.canCreateWorktree || base.showRefPicker;
+  const workspaceModeTriggerLabel = workspaceModeLabel(t, isolation.mode);
   const addProjectAction = useMemo(
     () => <AddProjectPickerAction onPress={project.onAddProject} />,
     [project.onAddProject],
   );
-  const branchModeTriggerLabel = branchModeLabel(t, branchMode.mode);
-  const showBranchModeControl = shouldShowBranchModeControl(base.showRefPicker, base.selectedItem);
-
   const badgePressableStyle = useCallback(
     ({ pressed, hovered }: PressableStateCallbackType & { hovered?: boolean }) => [
       styles.badge,
@@ -1589,22 +1491,23 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
     </View>
   ) : null;
 
-  const isolationControl = isolation.canCreateWorktree ? (
+  const isolationControl = showWorkspaceModeControl ? (
     <View style={desktopControlStyle}>
-      <IsolationPickerTrigger
+      <WorkspaceModePickerTrigger
         pickerAnchorRef={isolation.anchorRef}
         onPress={isolation.open}
         disabled={isPending}
         badgePressableStyle={badgePressableStyle}
-        isolation={isolation.effectiveIsolation}
-        label={isolationTriggerLabel}
+        mode={isolation.mode}
+        label={workspaceModeTriggerLabel}
         tooltipLabel={t("newWorkspace.tooltips.isolation")}
+        accessibilityLabel={t("newWorkspace.isolation.label")}
         iconColor={theme.colors.foregroundMuted}
         iconSize={theme.iconSize.sm}
       />
       <Combobox
         options={isolation.options}
-        value={isolation.effectiveIsolation}
+        value={isolation.mode}
         onSelect={isolation.onSelect}
         title={t("newWorkspace.isolation.label")}
         open={isolation.openState}
@@ -1658,32 +1561,6 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
       badgePressableStyle={badgePressableStyle}
     />
   );
-  const branchModeControl = showBranchModeControl ? (
-    <View>
-      <BranchModePickerTrigger
-        pickerAnchorRef={branchMode.anchorRef}
-        onPress={branchMode.open}
-        disabled={isPending}
-        badgePressableStyle={badgePressableStyle}
-        branchMode={branchMode.mode}
-        label={branchModeTriggerLabel}
-        iconColor={theme.colors.foregroundMuted}
-        iconSize={theme.iconSize.sm}
-      />
-      <Combobox
-        options={branchMode.options}
-        value={branchMode.mode}
-        onSelect={branchMode.onSelect}
-        title={t("newWorkspace.branchMode.label")}
-        open={branchMode.openState}
-        onOpenChange={branchMode.onOpenChange}
-        desktopPlacement="bottom-start"
-        anchorRef={branchMode.anchorRef}
-        renderOption={branchMode.renderOption}
-      />
-    </View>
-  ) : null;
-
   return isCompact ? (
     <View testID="new-workspace-ref-picker-row" style={styles.formStack}>
       <FormRow>{projectControl}</FormRow>
@@ -1695,10 +1572,6 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
         <View style={styles.baseSpacer} />
       )}
       {baseControl ? <FormRow>{baseControl}</FormRow> : <View style={styles.baseSpacer} />}
-      {/* The branch-mode row appears only when an existing plain branch is the
-          chosen start, so it has no reserved spacer — selecting a branch is a
-          deliberate action and the contextual control sits below the Base row. */}
-      {branchModeControl ? <FormRow>{branchModeControl}</FormRow> : null}
       <FormRow>{launchControl}</FormRow>
     </View>
   ) : (
@@ -1707,7 +1580,6 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
       {hostControl}
       {isolationControl}
       {baseControl}
-      {branchModeControl}
       <View style={styles.launchSpacer} />
       {launchControl}
     </View>
@@ -1748,6 +1620,8 @@ export function NewWorkspaceScreen({
   // COMPAT(workspaceMultiplicity): added in v0.1.97, drop the gate when floor >= v0.1.97
   const supportsWorkspaceMultiplicity = useHostFeature(selectedServerId, "workspaceMultiplicity");
   const supportsForgeSearch = useHostFeature(selectedServerId, "forgeSearch");
+  // COMPAT(changeRequestBranchOff): added in v0.2.5, remove after 2027-01-31.
+  const supportsChangeRequestBranchOff = useHostFeature(selectedServerId, "changeRequestBranchOff");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [createdWorkspace, setCreatedWorkspace] = useState<ReturnType<
     typeof normalizeWorkspaceDescriptor
@@ -1762,11 +1636,6 @@ export function NewWorkspaceScreen({
   const pickerAnchorRef = useRef<View>(null);
   const projectPickerAnchorRef = useRef<View>(null);
   const isolationPickerAnchorRef = useRef<View>(null);
-  const branchModePickerAnchorRef = useRef<View>(null);
-  // Direct-checkout vs branch-off for an explicitly chosen plain branch. Default
-  // stays "branch-off" so the flow is backward-compatible; "checkout" is opt-in.
-  const [branchMode, setBranchMode] = useState<BranchWorktreeMode>("branch-off");
-  const [branchModePickerOpen, setBranchModePickerOpen] = useState(false);
   const hostPickerAnchorRef = useRef<View | null>(null);
   const isDraftHandoffActive = useIsNewWorkspaceDraftHandoffActive({ draftId, selectedServerId });
 
@@ -1858,17 +1727,24 @@ export function NewWorkspaceScreen({
     initialPickerSelectionState,
   );
   const selectedItem = pickerSelection.selectedItem;
+  const worktreeAction = effectivePickerWorktreeAction(pickerSelection);
 
   const handleGithubPrDetected = useCallback(() => {
     dispatchPickerSelection({ type: "pr-detected" });
   }, []);
 
-  const handleGithubPrAutoAttach = useCallback((item: ForgeSearchItem) => {
-    dispatchPickerSelection({
-      type: "pr-added",
-      item: { kind: "github-pr", item },
-    });
-  }, []);
+  const handleGithubPrAutoAttach = useCallback(
+    (item: ForgeSearchItem) => {
+      const pickerItem = { kind: "github-pr" as const, item };
+      const action = pickerSelection.actionOverride ?? "checkout";
+      if (!isPickerWorktreeActionSupported(action, pickerItem, supportsChangeRequestBranchOff)) {
+        dispatchPickerSelection({ type: "pr-auto-selection-cancelled" });
+        return;
+      }
+      dispatchPickerSelection({ type: "pr-added", item: pickerItem });
+    },
+    [pickerSelection.actionOverride, supportsChangeRequestBranchOff],
+  );
 
   const withConnectedClient = useCallback(() => {
     if (!client || !isConnected) {
@@ -1895,6 +1771,7 @@ export function NewWorkspaceScreen({
       supportsMultiplicity: supportsWorkspaceMultiplicity,
       worktreeSupport,
     });
+  const workspaceMode: WorkspaceMode = showRefPicker ? worktreeAction : "local";
 
   const branchSuggestionsQuery = useQuery({
     queryKey: [
@@ -1958,21 +1835,23 @@ export function NewWorkspaceScreen({
   }, [itemById, selectedOptionId]);
   const selectPickerItem = useCallback(
     (item: PickerItem) => {
+      const action =
+        pickerSelection.actionOverride ?? (item.kind === "github-pr" ? "checkout" : "branch-off");
+      if (!isPickerWorktreeActionSupported(action, item, supportsChangeRequestBranchOff)) {
+        return;
+      }
       const nextAttachments = syncPickerPrAttachment({
         attachments: chatDraft.attachments,
         item,
       });
 
       dispatchPickerSelection({ type: "picker-selected", item });
-      // Each fresh ref pick resets to the safe default; "checkout" is opt-in and
-      // must be re-chosen for the newly selected branch.
-      setBranchMode("branch-off");
       if (nextAttachments !== chatDraft.attachments) {
         chatDraft.setAttachments(nextAttachments);
       }
       setPickerOpen(false);
     },
-    [chatDraft],
+    [chatDraft, pickerSelection.actionOverride, supportsChangeRequestBranchOff],
   );
 
   const handleSelectOption = useCallback(
@@ -2055,31 +1934,36 @@ export function NewWorkspaceScreen({
     setIsolationPickerOpen(nextOpen);
   }, []);
 
-  const openBranchModePicker = useCallback(() => {
-    setBranchModePickerOpen(true);
-  }, []);
-
-  const handleBranchModePickerOpenChange = useCallback((nextOpen: boolean) => {
-    setBranchModePickerOpen(nextOpen);
-  }, []);
-
-  // "New worktree" is omitted entirely (not disabled) when the project isn't a
-  // git checkout, since worktree isolation is impossible there.
-  const isolationOptions = useMemo<ComboboxOptionType[]>(() => {
-    const localOption = { id: "local", label: isolationLabel(t, "local") };
-    if (!canCreateWorktree) return [localOption];
-    return [localOption, { id: "worktree", label: isolationLabel(t, "worktree") }];
+  const workspaceModeOptions = useMemo<ComboboxOptionType[]>(() => {
+    const worktreeOptions = [
+      { id: "branch-off", label: workspaceModeLabel(t, "branch-off") },
+      { id: "checkout", label: workspaceModeLabel(t, "checkout") },
+    ];
+    return canCreateWorktree
+      ? [{ id: "local", label: workspaceModeLabel(t, "local") }, ...worktreeOptions]
+      : worktreeOptions;
   }, [canCreateWorktree, t]);
 
-  const handleSelectIsolationOption = useCallback(
+  const handleSelectWorkspaceMode = useCallback(
     (id: string) => {
-      setIsolation(id === "worktree" ? "worktree" : "local");
+      if (id === "local") {
+        setIsolation("local");
+        setIsolationPickerOpen(false);
+        return;
+      }
+
+      const action = id === "checkout" ? "checkout" : "branch-off";
+      if (!isPickerWorktreeActionSupported(action, selectedItem, supportsChangeRequestBranchOff)) {
+        return;
+      }
+      setIsolation("worktree");
+      dispatchPickerSelection({ type: "workspace-mode-selected", mode: action });
       setIsolationPickerOpen(false);
     },
-    [setIsolation],
+    [selectedItem, setIsolation, supportsChangeRequestBranchOff],
   );
 
-  const renderIsolationOption = useCallback(
+  const renderWorkspaceModeOption = useCallback(
     ({
       option,
       selected,
@@ -2091,61 +1975,34 @@ export function NewWorkspaceScreen({
       active: boolean;
       onPress: () => void;
     }) => {
+      const changeRequestBranchOffDisabled =
+        option.id === "branch-off" &&
+        selectedItem?.kind === "github-pr" &&
+        !supportsChangeRequestBranchOff;
       return (
-        <IsolationOptionItem
+        <WorkspaceModeOptionItem
           optionId={option.id}
           label={option.label}
+          description={
+            changeRequestBranchOffDisabled ? t("newWorkspace.branchMode.updateHost") : undefined
+          }
           selected={selected}
           active={active}
-          disabled={isPending}
+          disabled={isPending || changeRequestBranchOffDisabled}
           onPress={onPress}
           iconColor={theme.colors.foregroundMuted}
           iconSize={theme.iconSize.sm}
         />
       );
     },
-    [isPending, theme.colors.foregroundMuted, theme.iconSize.sm],
-  );
-
-  const branchModeOptions = useMemo<ComboboxOptionType[]>(
-    () => [
-      { id: "branch-off", label: branchModeLabel(t, "branch-off") },
-      { id: "checkout", label: branchModeLabel(t, "checkout") },
+    [
+      isPending,
+      selectedItem,
+      supportsChangeRequestBranchOff,
+      t,
+      theme.colors.foregroundMuted,
+      theme.iconSize.sm,
     ],
-    [t],
-  );
-
-  const handleSelectBranchModeOption = useCallback((id: string) => {
-    setBranchMode(id === "checkout" ? "checkout" : "branch-off");
-    setBranchModePickerOpen(false);
-  }, []);
-
-  const renderBranchModeOption = useCallback(
-    ({
-      option,
-      selected,
-      active,
-      onPress,
-    }: {
-      option: ComboboxOptionType;
-      selected: boolean;
-      active: boolean;
-      onPress: () => void;
-    }) => {
-      return (
-        <BranchModeOptionItem
-          optionId={option.id}
-          label={option.label}
-          selected={selected}
-          active={active}
-          disabled={isPending}
-          onPress={onPress}
-          iconColor={theme.colors.foregroundMuted}
-          iconSize={theme.iconSize.sm}
-        />
-      );
-    },
-    [isPending, theme.colors.foregroundMuted, theme.iconSize.sm],
   );
 
   const handleClearDraft = useCallback(() => {
@@ -2203,6 +2060,17 @@ export function NewWorkspaceScreen({
       if (createdWorkspace) {
         return createdWorkspace;
       }
+      if (
+        !isNewWorkspaceWorktreeActionSupported({
+          supportsWorkspaceMultiplicity,
+          effectiveIsolation,
+          action: worktreeAction,
+          item: selectedItem,
+          supportsChangeRequestBranchOff,
+        })
+      ) {
+        throw new Error(t("newWorkspace.branchMode.updateHost"));
+      }
       if (!selectedProject) {
         throw new Error("Choose a project");
       }
@@ -2222,7 +2090,7 @@ export function NewWorkspaceScreen({
       const checkoutRequest = checkoutStatusForCreate
         ? pickerItemToCheckoutRequest(
             selectedItem ?? defaultBasePickerItem(checkoutStatusForCreate),
-            branchMode,
+            worktreeAction,
           )
         : undefined;
       const normalizedWorkspace = supportsWorkspaceMultiplicity
@@ -2256,7 +2124,6 @@ export function NewWorkspaceScreen({
       return normalizedWorkspace;
     },
     [
-      branchMode,
       buildCreateWorktreeInput,
       createdWorkspace,
       effectiveIsolation,
@@ -2266,9 +2133,11 @@ export function NewWorkspaceScreen({
       selectedProject,
       selectedServerId,
       selectedSourceDirectory,
+      supportsChangeRequestBranchOff,
       supportsWorkspaceMultiplicity,
       t,
       withConnectedClient,
+      worktreeAction,
     ],
   );
 
@@ -2383,8 +2252,17 @@ export function NewWorkspaceScreen({
       selected: boolean;
       active: boolean;
       onPress: () => void;
-    }) => <NewWorkspacePickerOption {...props} itemById={itemById} isPending={isPending} />,
-    [isPending, itemById],
+    }) => (
+      <NewWorkspacePickerOption
+        {...props}
+        itemById={itemById}
+        isPending={isPending}
+        changeRequestBranchOffDisabled={
+          pickerSelection.actionOverride === "branch-off" && !supportsChangeRequestBranchOff
+        }
+      />
+    ),
+    [isPending, itemById, pickerSelection.actionOverride, supportsChangeRequestBranchOff],
   );
 
   const renderProjectOption = useCallback(
@@ -2471,12 +2349,12 @@ export function NewWorkspaceScreen({
     isolation: {
       anchorRef: isolationPickerAnchorRef,
       open: openIsolationPicker,
-      effectiveIsolation,
-      options: isolationOptions,
-      onSelect: handleSelectIsolationOption,
+      mode: workspaceMode,
+      options: workspaceModeOptions,
+      onSelect: handleSelectWorkspaceMode,
       openState: isolationPickerOpen,
       onOpenChange: handleIsolationPickerOpenChange,
-      renderOption: renderIsolationOption,
+      renderOption: renderWorkspaceModeOption,
       canCreateWorktree,
     },
     base: {
@@ -2501,16 +2379,6 @@ export function NewWorkspaceScreen({
       onChange: setManualLaunchTarget,
       profiles: terminalProfiles,
       disabled: isPending,
-    },
-    branchMode: {
-      anchorRef: branchModePickerAnchorRef,
-      open: openBranchModePicker,
-      mode: branchMode,
-      options: branchModeOptions,
-      onSelect: handleSelectBranchModeOption,
-      openState: branchModePickerOpen,
-      onOpenChange: handleBranchModePickerOpenChange,
-      renderOption: renderBranchModeOption,
     },
   });
 
