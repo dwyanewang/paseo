@@ -23,9 +23,16 @@ description: 一键执行 Paseo 三端本地打包（服务端 / 安卓 APK / Wi
 
 ## 执行顺序（细节看打包流程.md）
 
-环境变量 → **拉代码（同步上游 → 自动维护清单 → 重建 rw-main）** → 重生成 terminal-webview → 服务端 → 安卓 APK → Windows x64 zip → 收尾还原 webview → 起 serve-dist 下载服务。
+环境变量 → **拉代码（同步上游 → 自动维护清单 → 重建并验证 rw-main）** → 重生成 terminal-webview → 服务端 → 安卓 APK → Windows x64 zip → 收尾还原 webview → 起 serve-dist 下载服务。
 
 > **跳过拉代码（自测常用）**：用户明确说"不拉取最新代码""不同步上游代码"（或"不更新代码""用当前代码打包"等同义表达）时，**跳过拉代码这步**（打包流程.md 第 1 节），从重生成 terminal-webview 直接开始，其余流程不变。
+
+## 固定 worktree 拓扑
+
+- `/home/yangfei/Projects/paseo` 固定签出 `rw-main`，只在这里重建发行分支和生成三端产物；不要再切到 `main` 或 `chore/build-paseo`。
+- `chore/build-paseo` 在独立 worktree 维护清单、脚本和文档；功能分支也各用自己的 worktree。所有 worktree 共享 Git refs，但各自保留独立源码、`dist`、`node_modules` 和构建缓存。
+- 同步 `main` 时从 chore worktree 安全快进共享的本地 `main` ref；清单修改在 chore worktree 提交，随后回到固定主目录执行 `rebuild-rw-main.sh --push`。
+- 开始前确认主目录确实为干净的 `rw-main`，chore 和清单内功能分支的 worktree 也都干净。不要为方便而在一个 worktree 内来回切分支，否则会重新制造“当前源码 + 上一分支 dist”的假错误。
 
 ## rw-main 清单自动维护
 
@@ -45,7 +52,14 @@ description: 一键执行 Paseo 三端本地打包（服务端 / 安卓 APK / Wi
 /build-paseo，把 feat/example 作为长期个人分支加入清单，然后完整打包
 ```
 
-同步代码时严格执行 `打包流程.md` 第 1 节：`main` 只做上游镜像，先同步清单，再运行 `dwyanewang/rebuild-rw-main.sh --push` 从清单整体生成个人发行分支。脚本输出 `No-op:` 表示现有 merge 链与全部输入完全一致；默认可复用，`--dry-run` 仍强制完整验证。**禁止继续把 main 或 rebase 后的 PR 分支追加合并到旧 rw-main。** 若清单同步或重建脚本失败，停止打包；分支冲突应先在源 PR 分支完成 rebase、冲突解决和测试。
+同步代码时严格执行 `打包流程.md` 第 1 节：`main` 只做上游镜像，先在 chore worktree 同步清单，再在固定主目录运行 `dwyanewang/rebuild-rw-main.sh --push`，从清单整体生成个人发行分支。脚本输出 `No-op:` 表示现有 merge 链与全部输入完全一致；默认可复用，`--dry-run` 仍强制完整验证。**禁止继续把 main 或 rebase 后的 PR 分支追加合并到旧 rw-main。**
+
+`rw-main` 重建是重型构建的 readiness gate。merge、format、typecheck、lint 任一失败时，禁止继续服务端、Android 或 Windows：
+
+- 同一 workspace 内的源码 import 报“没有导出的成员”、helper 改名或参数不匹配，属于分支组合不兼容，**不是 `dist` 陈旧**。根据报错文件和 Git 归属定位源功能分支，在它自己的 worktree rebase 最新 `main`、修正、定向验证并 `--force-with-lease` 推送后，再重建 `rw-main`。
+- 只有错误实际跨 workspace 解析生成声明（例如 client 读取 `packages/relay/dist/*.d.ts`）时，才按拥有方运行 `build:client` 或 `build:server`。不要看到 typecheck 失败就盲目重建整套声明。
+- 本地 app Playwright 定向测试一律显式清空继承的主 daemon 密码：`PASEO_PASSWORD= npm run test:e2e --workspace=@getpaseo/app -- <spec>`。`.env.test` 没有该键并不会删除父进程已有变量。
+- 不在临时候选或 `rw-main` 上直接修补产品源码。源分支修复通过后重新运行原子重建。
 
 完整重建且未执行 `npm install` 时，服务端按权威流程复用重建阶段的 relay/protocol/client 声明，只补 highlight、server、CLI；no-op、重装依赖或状态不确定时运行完整 `build:server`。同轮 Windows 阶段只补 two-way-audio，单独从 Windows 开始则运行完整 `build:app-deps`。
 
@@ -54,6 +68,7 @@ description: 一键执行 Paseo 三端本地打包（服务端 / 安卓 APK / Wi
 ## 铁律（最容易翻车的点，逐条照做）
 
 - **不重启 6767 主 daemon**（会杀掉正在跑的 agent，包括自己）。
+- **本地 app Playwright 定向测试必须带 `PASEO_PASSWORD=`**，隔离 daemon 不应继承 6767 主环境的密码。
 - **环境变量每个构建 shell 都要显式 export**（`JAVA_HOME`/`ANDROID_HOME`/`PATH`，mise 没在 shell 激活）；shell state 不跨 Bash 调用，所以 export 与构建命令要写在**同一条**命令里。
 - **长构建放后台**（gradle ~5–17min、electron-builder、expo export）；后台任务完成会自动通知，**不要主动轮询/定时唤醒**，等通知即可。
 - **校验产物看 `ls -lh` 的 mtime 是不是本次**，别只信 exit code；用 `&&` 串命令、别用结尾 `echo` 兜底退出码（会把失败洗成成功）。
@@ -65,4 +80,4 @@ description: 一键执行 Paseo 三端本地打包（服务端 / 安卓 APK / Wi
 
 ## 完成后汇报
 
-清单增删及对应提交（若有）+ 三端产物（路径 + 体积 + mtime）+ serve-dist 打印的下载地址。除版本化清单维护外，打包不修改或提交产品源码。
+清单增删及对应提交（若有）+ 三端产物（路径 + 体积 + mtime）+ serve-dist 打印的下载地址。耗时从用户发起 `$build-paseo` 起算并报告真实墙钟；可以补充分阶段数据，但不得用热缓存阶段或剔除排障后的合计代替总时间。除版本化清单维护和源功能分支的必要兼容修复外，不在打包 worktree 修改或提交产品源码。
