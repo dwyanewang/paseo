@@ -8,7 +8,9 @@ Usage: bash dwyanewang/rebuild-rw-main.sh [--dry-run] [--push]
 
 Rebuild rw-main from main, chore/build-paseo, and the branches listed in
 dwyanewang/rw-main-branches.txt. The target branch is moved only after every
-merge and repository check succeeds.
+merge and repository check succeeds. When the existing merge chain already
+matches every input exactly, the default mode reuses it without rerunning the
+repository checks.
 
   --dry-run  Build and verify a temporary candidate without moving rw-main.
   --push     Update origin/rw-main with an exact force-with-lease after checks.
@@ -124,6 +126,39 @@ for branch_name in "${integration_branches[@]}"; do
   require_clean_worktree "$branch_name"
 done
 
+merge_branches=("$packaging_branch" "${integration_branches[@]}")
+
+target_matches_inputs() {
+  local current_commit branch_head
+  local merge_index
+  local -a commit_and_parents
+
+  git show-ref --verify --quiet "refs/heads/$target_branch" || return 1
+  current_commit=$(git rev-parse "$target_branch")
+
+  for ((merge_index = ${#merge_branches[@]} - 1; merge_index >= 0; merge_index--)); do
+    read -r -a commit_and_parents < <(git rev-list --parents -n 1 "$current_commit")
+    [[ ${#commit_and_parents[@]} -eq 3 ]] || return 1
+    branch_head=$(git rev-parse "${merge_branches[$merge_index]}")
+    [[ "${commit_and_parents[2]}" == "$branch_head" ]] || return 1
+    current_commit=${commit_and_parents[1]}
+  done
+
+  [[ "$current_commit" == "$base_head" ]]
+}
+
+push_target_ref() {
+  local source_ref=$1
+  local remote_expected=
+  if git show-ref --verify --quiet "refs/remotes/origin/$target_branch"; then
+    remote_expected=$(git rev-parse "refs/remotes/origin/$target_branch")
+  fi
+  git push \
+    "--force-with-lease=refs/heads/$target_branch:$remote_expected" \
+    origin \
+    "$source_ref:refs/heads/$target_branch"
+}
+
 printf 'Base: %s (%s)\n' "$base_branch" "$(git rev-parse --short "$base_branch")"
 printf 'Packaging: %s (%s)\n' "$packaging_branch" "$(git rev-parse --short "$packaging_branch")"
 for branch_name in "${integration_branches[@]}"; do
@@ -131,6 +166,23 @@ for branch_name in "${integration_branches[@]}"; do
   printf 'Integration: %s (%s; behind %s, ahead %s)\n' \
     "$branch_name" "$(git rev-parse --short "$branch_name")" "$behind" "$ahead"
 done
+
+if ((!dry_run)) && target_matches_inputs; then
+  target_head=$(git rev-parse "$target_branch")
+  printf 'No-op: %s already matches every input (%s).\n' \
+    "$target_branch" "$(git rev-parse --short "$target_branch")"
+  if ((push_target)); then
+    remote_head=$(git rev-parse --verify "refs/remotes/origin/$target_branch" 2>/dev/null || true)
+    if [[ "$remote_head" == "$target_head" ]]; then
+      printf '%s\n' 'origin/rw-main already matches; remote unchanged.'
+    else
+      push_target_ref "$target_branch"
+      printf '%s\n' 'Updated origin/rw-main with force-with-lease.'
+    fi
+  fi
+  git switch --quiet "$target_branch"
+  exit 0
+fi
 
 candidate_created=0
 completed=0
@@ -195,15 +247,7 @@ if git show-ref --verify --quiet "refs/heads/$target_branch"; then
 fi
 
 if ((push_target)); then
-  if git show-ref --verify --quiet "refs/remotes/origin/$target_branch"; then
-    remote_expected=$(git rev-parse "refs/remotes/origin/$target_branch")
-  else
-    remote_expected=
-  fi
-  git push \
-    "--force-with-lease=refs/heads/$target_branch:$remote_expected" \
-    origin \
-    "$candidate_branch:refs/heads/$target_branch"
+  push_target_ref "$candidate_branch"
 fi
 
 git branch -f "$target_branch" "$candidate_head" >/dev/null

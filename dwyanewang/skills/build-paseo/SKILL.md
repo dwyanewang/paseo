@@ -45,7 +45,9 @@ description: 一键执行 Paseo 三端本地打包（服务端 / 安卓 APK / Wi
 /build-paseo，把 feat/example 作为长期个人分支加入清单，然后完整打包
 ```
 
-同步代码时严格执行 `打包流程.md` 第 1 节：`main` 只做上游镜像，先同步清单，再运行 `dwyanewang/rebuild-rw-main.sh --push` 从清单整体生成个人发行分支。**禁止继续把 main 或 rebase 后的 PR 分支追加合并到旧 rw-main。** 若清单同步或重建脚本失败，停止打包；分支冲突应先在源 PR 分支完成 rebase、冲突解决和测试。
+同步代码时严格执行 `打包流程.md` 第 1 节：`main` 只做上游镜像，先同步清单，再运行 `dwyanewang/rebuild-rw-main.sh --push` 从清单整体生成个人发行分支。脚本输出 `No-op:` 表示现有 merge 链与全部输入完全一致；默认可复用，`--dry-run` 仍强制完整验证。**禁止继续把 main 或 rebase 后的 PR 分支追加合并到旧 rw-main。** 若清单同步或重建脚本失败，停止打包；分支冲突应先在源 PR 分支完成 rebase、冲突解决和测试。
+
+完整重建且未执行 `npm install` 时，服务端按权威流程复用重建阶段的 relay/protocol/client 声明，只补 highlight、server、CLI；no-op、重装依赖或状态不确定时运行完整 `build:server`。同轮 Windows 阶段只补 two-way-audio，单独从 Windows 开始则运行完整 `build:app-deps`。
 
 **每步成功（校验产物）再进行下一步。**
 
@@ -57,6 +59,7 @@ description: 一键执行 Paseo 三端本地打包（服务端 / 安卓 APK / Wi
 - **校验产物看 `ls -lh` 的 mtime 是不是本次**，别只信 exit code；用 `&&` 串命令、别用结尾 `echo` 兜底退出码（会把失败洗成成功）。
 - **Windows expo export 用 bash 原生赋值**：`PASEO_WEB_PLATFORM=electron npx expo export`，**别用裸 `cross-env`**（不在 PATH，exit 127）。
 - **Windows 只打 zip**（`--win zip`），不打 nsis。
+- **Windows zip 固定快速压缩**：electron-builder 命令带 `ELECTRON_BUILDER_COMPRESSION_LEVEL=3`，仍使用标准 zip 目标；若它导致问题，去掉变量回退默认压缩。
 - **收尾还原 terminal-webview**：三端打完 `git checkout -- packages/app/src/terminal/webview/terminal-emulator-webview-html.ts`，保持工作区干净（生成产物，别提交）。
 - **打包成功后起下载服务**：`bash dwyanewang/serve-dist.sh`（端口 8800，3h 后自动停服清理，重跑重置 3h）。物理机浏览器拉取，地址以脚本输出为准。
 
