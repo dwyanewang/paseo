@@ -85,12 +85,14 @@ load_owned_state() {
 }
 
 owned_server_is_running() {
-  local pgid index
+  local pgid sid index
   local -a argv
   load_owned_state || return 1
   kill -0 "$STATE_PID" 2>/dev/null || return 1
   pgid=$(ps -o pgid= -p "$STATE_PID" 2>/dev/null | tr -d ' ') || return 1
   [[ "$pgid" == "$STATE_PID" ]] || return 1
+  sid=$(ps -o sid= -p "$STATE_PID" 2>/dev/null | tr -d ' ') || return 1
+  [[ "$sid" == "$STATE_PID" ]] || return 1
   mapfile -d '' -t argv <"/proc/$STATE_PID/cmdline" || return 1
   for ((index = 0; index + 1 < ${#argv[@]}; index++)); do
     [[ "${argv[$index]}" == "$SCRIPT_PATH" && "${argv[$((index + 1))]}" == __serve ]] && return 0
@@ -98,18 +100,37 @@ owned_server_is_running() {
   return 1
 }
 
+owned_session_pids() {
+  ps -eo pid=,sid= | awk -v sid="$1" '$2 == sid { print $1 }'
+}
+
 stop_owned_server() {
-  local pid
+  local pid session_stopped=0
+  local -a session_pids
   owned_server_is_running || return 1
   pid=$STATE_PID
-  kill -TERM -- "-$pid" 2>/dev/null || true
+  mapfile -t session_pids < <(owned_session_pids "$pid")
+  ((${#session_pids[@]} > 0)) || die "受管下载服务会话为空；保留状态以便安全排查"
+  kill -TERM "${session_pids[@]}" 2>/dev/null || true
   for _ in {1..30}; do
-    kill -0 "$pid" 2>/dev/null || break
+    if [[ -z "$(owned_session_pids "$pid")" ]]; then
+      session_stopped=1
+      break
+    fi
     sleep 0.1
   done
-  if kill -0 "$pid" 2>/dev/null; then
-    kill -KILL -- "-$pid" 2>/dev/null || true
+  if ((session_stopped == 0)); then
+    mapfile -t session_pids < <(owned_session_pids "$pid")
+    ((${#session_pids[@]} > 0)) && kill -KILL "${session_pids[@]}" 2>/dev/null || true
+    for _ in {1..30}; do
+      if [[ -z "$(owned_session_pids "$pid")" ]]; then
+        session_stopped=1
+        break
+      fi
+      sleep 0.1
+    done
   fi
+  ((session_stopped == 1)) || die "受管下载服务会话未退出；保留状态以便安全排查"
   rm -f -- "$STATE_FILE"
   rm -rf -- "$DIST"
   STOPPED_PID=$pid
