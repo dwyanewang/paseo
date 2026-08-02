@@ -4,7 +4,7 @@
 
 feat/worktree-checkout-branch # PR #1721 # reviewed-main:048b82f2a7b3ecc9b62bc5b817729f4ca2741863 # reviewed-head:440696521fc229e23d9edbddbda53185a1b788ae
 feat/codeup-forge # PR #2507 # reviewed-main:048b82f2a7b3ecc9b62bc5b817729f4ca2741863 # reviewed-head:75cceca71b17ac48a811b8613cadb4f922cf3681
-refactor/provider-history-read # PR #2388 # reviewed-main:048b82f2a7b3ecc9b62bc5b817729f4ca2741863 # reviewed-head:44a3be365e7c34570faf203aaae9c4a6365a0c21
+refactor/provider-history-read # PR #2388 # reviewed-main:048b82f2a7b3ecc9b62bc5b817729f4ca2741863 # reviewed-head:4cb16cbbee4f7a7a055986a1211fe88f8ea77fc5
 fix/android-keyboard-covers-input # PR #2467 # reviewed-main:048b82f2a7b3ecc9b62bc5b817729f4ca2741863 # reviewed-head:d3bf6170357a639a9682f6ef3c7d89ecb08744bc
 fix/project-skill-cache-invalidation # Personal branch # reviewed-main:048b82f2a7b3ecc9b62bc5b817729f4ca2741863 # reviewed-head:a96430f86793ac78b0536156461678d931a9987c
 feat/mobile-file-preview # Personal branch # reviewed-main:048b82f2a7b3ecc9b62bc5b817729f4ca2741863 # reviewed-head:1812fce658d514e6564509df69b095c991043357
