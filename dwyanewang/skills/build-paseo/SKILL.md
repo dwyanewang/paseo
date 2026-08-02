@@ -23,7 +23,7 @@ description: 一键执行 Paseo 三端本地打包（服务端 / 安卓 APK / Wi
 
 ## 执行顺序（细节看打包流程.md）
 
-环境变量 → **拉代码（同步上游 → 自动维护清单 → 重建并验证 rw-main）** → 重生成 terminal-webview → 服务端 → 安卓 APK → Windows x64 zip → 收尾还原 webview → 起 serve-dist 下载服务。
+激活仓库 mise 环境 → **拉代码（同步上游 → 自动维护清单 → 重建并验证 rw-main）** → `prepare-build` 清除精确旧产物并写本轮标记 → 重生成 terminal-webview → 服务端 → 安卓 APK → Windows x64 zip → 收尾还原 webview → 起 serve-dist 下载服务。
 
 > **跳过拉代码（自测常用）**：用户明确说"不拉取最新代码""不同步上游代码"（或"不更新代码""用当前代码打包"等同义表达）时，**跳过拉代码这步**（打包流程.md 第 1 节），从重生成 terminal-webview 直接开始，其余流程不变。
 
@@ -39,10 +39,14 @@ description: 一键执行 Paseo 三端本地打包（服务端 / 安卓 APK / Wi
 完整同步模式下，在重建前运行 `dwyanewang/sync-rw-main-branches.sh`：
 
 - 自动检查 `rw-main-branches.txt` 中带 `PR #编号` 的条目。PR 已合入且本地 `main` 已包含其 merge commit 时，自动删除该条目。
+- 每个清单项都带 `reviewed-main:<SHA>` 与 `reviewed-head:<SHA>`，分别记录该分支上次审查时的上游 main 和功能分支 head。各分支基线独立；`main`、任一分支 head 前进或本次新增功能分支时，脚本按项列出自己的 main/head 审查区间、PR、独有/等价补丁和路径重叠证据，然后以退出码 `3` 暂停；这不是脚本故障。
+- 收到退出码 `3` 后必须逐项浏览报告中的全部提交主题和路径。新分支从自己的 `merge-base(main, branch)` 开始；已有分支从自己的 `reviewed-main` 开始，分支 head 变化还要检查 `reviewed-head..当前 head`。任何可能覆盖同一用户能力的提交都继续查看 PR 说明和完整 diff。路径或 patch 等价只用于优先检查，不能证明语义相同或不同。
+- 明确未吸收的分支保留；明确完整吸收的分支在确认命令中传 `--remove-branch <分支>`；部分吸收时先在该功能分支 worktree rebase 最新 `main`、删除重复部分并定向验证/推送，再重新审查。结论不明确时询问用户，禁止确认或继续重建。
+- 审查结束后传 `--accept-main-review "$(git rev-parse main)"`，同步脚本会把每个保留项的两个坐标原子更新为当前 main/head。只接受当前 `main` 的完整 SHA；任一项的 main 或 head 未对齐时，`rebuild-rw-main.sh`（包括 `--dry-run`）会在 merge/npm 前拒绝执行。
 - **不自动发现或加入所有开放 PR**。只有用户在本次指令中明确指定的新 PR/分支才长期加入清单，避免把 #1578 等有意排除的分支带回发行版。
 - 用户说“把 PR #2345 加入 rw-main 清单”时传 `--add-pr 2345`；说“把 feat/example 作为长期个人分支加入清单”时传 `--add-branch feat/example`。多个参数严格保持用户给出的顺序。
 - `--add-pr` 会从 `getpaseo/paseo` 解析源分支并要求 PR 归 `dwyanewang` 所有；`--add-branch` 作为无 PR 的长期个人分支处理。
-- 若清单发生变化，运行 `npm run format`，确认只有清单发生预期变化，然后提交 `chore(build): sync rw-main branches` 并正常推送 `origin/chore/build-paseo`；无变化则不提交。
+- 若清单发生变化（包括只推进任一项的审查坐标），运行 `npm run format`，确认只有清单发生预期变化，然后提交 `chore(build): sync rw-main branches` 并正常推送 `origin/chore/build-paseo`。提交正文记录各分支审查区间，以及删除/修整项对应的上游提交或 PR；无变化则不提交。
 - 用户同时要求“新增 PR/分支”和“不拉取/不同步”时，停止并说明两者冲突：长期新增必须走完整同步、清单提交和 rw-main 重建，不能直接从当前代码开始打包。
 
 可直接使用的描述：
@@ -71,20 +75,20 @@ bash "$paseo_chore_root/dwyanewang/rebuild-rw-main.sh" \
 
 完整重建且未执行 `npm install` 时，服务端按权威流程复用重建阶段的 relay/protocol/client 声明，只补 highlight、server、CLI；no-op、重装依赖或状态不确定时运行完整 `build:server`。同轮 Windows 阶段只补 two-way-audio，单独从 Windows 开始则运行完整 `build:app-deps`。
 
-**每步成功（校验产物）再进行下一步。**
+**每步成功（校验产物）再进行下一步。** 任何非零退出立即停止，不得用结尾 `echo` 覆盖状态；生成 terminal-webview 前确认该文件原本干净，并安装 `EXIT` trap，使成功或失败都只还原这个生成文件。
 
 ## 铁律（最容易翻车的点，逐条照做）
 
 - **不重启 6767 主 daemon**（会杀掉正在跑的 agent，包括自己）。
 - **本地 app Playwright 定向测试必须带 `PASEO_PASSWORD=`**，隔离 daemon 不应继承 6767 主环境的密码。
-- **环境变量每个构建 shell 都要显式 export**（`JAVA_HOME`/`ANDROID_HOME`/`PATH`，mise 没在 shell 激活）；shell state 不跨 Bash 调用，所以 export 与构建命令要写在**同一条**命令里。
+- **环境从仓库 pin 获取**：进入 build root 后激活 mise，使用 `.tool-versions` 的 Java 21 / Android SDK 21.0 和 `.mise.toml` 的路径；不要硬编码 mise 安装目录。Windows 始终导出 `WINEPREFIX="$HOME/.local/share/paseo/wineprefix"`，不使用或删除默认 `~/.wine`。
 - **长构建放后台**（gradle ~5–17min、electron-builder、expo export）；后台任务完成会自动通知，**不要主动轮询/定时唤醒**，等通知即可。
-- **校验产物看 `ls -lh` 的 mtime 是不是本次**，别只信 exit code；用 `&&` 串命令、别用结尾 `echo` 兜底退出码（会把失败洗成成功）。
+- **构建前先运行** `bash "$paseo_chore_root/dwyanewang/serve-dist.sh" prepare-build`。它从根 `package.json` 锁定版本、删除精确目标 APK/zip 并记录起点；下载脚本只接受标记之后生成的这两个文件。仍查看体积/mtime，但不再靠“最新 zip”猜本轮产物。
 - **Windows expo export 用 bash 原生赋值**：`PASEO_WEB_PLATFORM=electron npx expo export`，**别用裸 `cross-env`**（不在 PATH，exit 127）。
 - **Windows 只打 zip**（`--win zip`），不打 nsis。
 - **Windows zip 固定快速压缩**：electron-builder 命令带 `ELECTRON_BUILDER_COMPRESSION_LEVEL=3`，仍使用标准 zip 目标；若它导致问题，去掉变量回退默认压缩。
-- **收尾还原 terminal-webview**：三端打完 `git checkout -- packages/app/src/terminal/webview/terminal-emulator-webview-html.ts`，保持工作区干净（生成产物，别提交）。
-- **打包成功后起下载服务**：从控制面运行 `bash "$paseo_chore_root/dwyanewang/serve-dist.sh"`（端口 8800，3h 后自动停服清理，重跑重置 3h）。`rw-main` 不再携带该脚本；脚本会从固定 build root 读取产物。物理机浏览器拉取，地址以脚本输出为准。
+- **收尾还原 terminal-webview**：打包前要求该文件无既有改动；随后用 `EXIT` trap 执行精确的 `git restore --worktree -- packages/app/src/terminal/webview/terminal-emulator-webview-html.ts`，中途失败也必须清理，且不还原其他文件。
+- **打包成功后起下载服务**：从控制面运行 `bash "$paseo_chore_root/dwyanewang/serve-dist.sh"`（端口 8800，3h 后自动停服清理，重跑重置 3h）。脚本拒绝 6767 和非法 PORT/TTL，只管理状态文件中身份匹配的自有进程；未知端口占用时停止并报告，绝不杀进程。`rw-main` 不携带该脚本；物理机地址以输出为准。
 - **Tailscale 是可选直连通道**：`serve-dist.sh` 会优先探测已登录的原生 Tailscale，其次复用已授权的 `paseo-tailscale-download` Docker 容器；容器存在但停止时自动启动，并在服务输出中给出 Tailnet 地址。首次安装/网页登录不是打包 gate，未就绪只保留 LAN 下载地址，不能让构建失败。
 
 ## 完成后汇报

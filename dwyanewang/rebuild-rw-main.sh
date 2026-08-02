@@ -157,6 +157,39 @@ while IFS= read -r line || [[ -n "$line" ]]; do
   [[ "$entry" != "$base_branch" && "$entry" != "$packaging_branch" ]] ||
     fail "manifest must not include the base or packaging branch: $entry"
   git show-ref --verify --quiet "refs/heads/$entry" || fail "missing local branch from manifest: $entry"
+
+  if [[ "$line" =~ \#[[:space:]]*reviewed-main:([0-9a-f]{40})([[:space:]]|$) ]]; then
+    entry_reviewed_main=${BASH_REMATCH[1]}
+    matched_review_metadata=${BASH_REMATCH[0]}
+    review_metadata_remainder=${line#*"$matched_review_metadata"}
+    [[ ! "$review_metadata_remainder" =~ \#[[:space:]]*reviewed-main: ]] ||
+      fail "duplicate reviewed-main metadata for $entry"
+  elif [[ "$line" == *"reviewed-main:"* ]]; then
+    fail "malformed reviewed-main metadata for $entry"
+  else
+    fail "missing reviewed-main metadata for $entry"
+  fi
+
+  if [[ "$line" =~ \#[[:space:]]*reviewed-head:([0-9a-f]{40})([[:space:]]|$) ]]; then
+    entry_reviewed_head=${BASH_REMATCH[1]}
+    matched_review_metadata=${BASH_REMATCH[0]}
+    review_metadata_remainder=${line#*"$matched_review_metadata"}
+    [[ ! "$review_metadata_remainder" =~ \#[[:space:]]*reviewed-head: ]] ||
+      fail "duplicate reviewed-head metadata for $entry"
+  elif [[ "$line" == *"reviewed-head:"* ]]; then
+    fail "malformed reviewed-head metadata for $entry"
+  else
+    fail "missing reviewed-head metadata for $entry"
+  fi
+
+  git cat-file -e "$entry_reviewed_main^{commit}" 2>/dev/null ||
+    fail "reviewed-main commit for $entry does not exist: $entry_reviewed_main"
+  branch_head=$(git rev-parse "$entry")
+  [[ "$entry_reviewed_main" == "$base_head" ]] ||
+    fail "$entry has not been reviewed against $base_branch $base_head (manifest: $entry_reviewed_main); run sync-rw-main-branches.sh"
+  [[ "$entry_reviewed_head" == "$branch_head" ]] ||
+    fail "$entry head $branch_head has not completed semantic review (manifest: $entry_reviewed_head); run sync-rw-main-branches.sh"
+
   seen_branches[$entry]=1
   integration_branches+=("$entry")
 done < "$manifest_path"
