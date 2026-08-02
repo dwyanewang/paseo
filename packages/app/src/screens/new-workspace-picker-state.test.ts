@@ -313,7 +313,12 @@ describe("reducePickerSelection", () => {
   it("auto-follows the selected item kind until the workspace mode is touched", () => {
     const branchSelected = reducePickerSelection(initialPickerSelectionState, {
       type: "picker-selected",
-      item: { kind: "branch", name: "main" },
+      item: {
+        kind: "branch",
+        name: "main",
+        refName: "refs/heads/main",
+        accessibilityLabel: "main, local branch",
+      },
     });
     const prSelected = reducePickerSelection(branchSelected, {
       type: "picker-selected",
@@ -336,7 +341,12 @@ describe("reducePickerSelection", () => {
     });
     const branchSelected = reducePickerSelection(prSelected, {
       type: "picker-selected",
-      item: { kind: "branch", name: "main" },
+      item: {
+        kind: "branch",
+        name: "main",
+        refName: "refs/heads/main",
+        accessibilityLabel: "main, local branch",
+      },
     });
 
     expect(effectivePickerWorktreeAction(prSelected)).toBe("branch-off");
@@ -361,7 +371,12 @@ describe("reducePickerSelection", () => {
     });
     const selected = reducePickerSelection(pinned, {
       type: "picker-selected",
-      item: { kind: "branch", name: "main" },
+      item: {
+        kind: "branch",
+        name: "main",
+        refName: "refs/heads/main",
+        accessibilityLabel: "main, local branch",
+      },
     });
 
     expect(reducePickerSelection(selected, { type: "target-changed" })).toEqual(
@@ -370,7 +385,12 @@ describe("reducePickerSelection", () => {
   });
 
   it("requires the daemon capability only for branch-off change requests", () => {
-    const branch = { kind: "branch" as const, name: "main" };
+    const branch = {
+      kind: "branch" as const,
+      name: "main",
+      refName: "refs/heads/main",
+      accessibilityLabel: "main, local branch",
+    };
     const pr = { kind: "github-pr" as const, item: makePrItem(101, "A") };
 
     expect(isPickerWorktreeActionSupported("branch-off", branch, false)).toBe(true);
