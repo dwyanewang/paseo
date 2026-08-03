@@ -126,6 +126,10 @@ export default {
       softwareKeyboardLayoutMode: "resize",
       // Allow HTTP connections for local network hosts (required for release builds)
       usesCleartextTraffic: true,
+      blockedPermissions: [
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.READ_MEDIA_VISUAL_USER_SELECTED",
+      ],
       permissions: buildProfile.androidPermissions,
       package: variant.packageId,
       versionCode: nativeReleaseVersion.androidVersionCode,
