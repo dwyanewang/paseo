@@ -8,3 +8,4 @@ refactor/provider-history-read # PR #2388 # reviewed-main:5d15e40a2b057ec7775f98
 fix/android-keyboard-covers-input # PR #2467 # reviewed-main:5d15e40a2b057ec7775f9884861fb462e637a59d # reviewed-head:d3bf6170357a639a9682f6ef3c7d89ecb08744bc
 fix/project-skill-cache-invalidation # Personal branch # reviewed-main:5d15e40a2b057ec7775f9884861fb462e637a59d # reviewed-head:a96430f86793ac78b0536156461678d931a9987c
 feat/mobile-file-preview # Personal branch # reviewed-main:5d15e40a2b057ec7775f9884861fb462e637a59d # reviewed-head:1812fce658d514e6564509df69b095c991043357
+fix/windows-native-optional-dependencies # Personal branch # reviewed-main:5d15e40a2b057ec7775f9884861fb462e637a59d # reviewed-head:5781b4d87a6dd0904f0c270db453cca137559566
