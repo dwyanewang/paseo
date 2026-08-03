@@ -156,6 +156,13 @@ export default {
         },
       ],
       ...buildProfile.notificationPlugins,
+      [
+        "expo-media-library",
+        {
+          savePhotosPermission: "Allow $(PRODUCT_NAME) to save images to your photo library.",
+          granularPermissions: [],
+        },
+      ],
       "expo-audio",
       [
         "expo-gradle-jvmargs",

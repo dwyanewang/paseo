@@ -10,11 +10,14 @@ import {
 import { useToast } from "@/contexts/toast-context";
 import type { Theme } from "@/styles/theme";
 import * as Clipboard from "expo-clipboard";
-import { Copy, Download } from "lucide-react-native";
-import { useCallback, useEffect, useMemo, useState, type ComponentProps } from "react";
+import * as MediaLibrary from "expo-media-library";
+import * as Sharing from "expo-sharing";
+import { Copy, ImageDown, Share2 } from "lucide-react-native";
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Image,
+  Platform,
   StyleSheet,
   View,
   type AccessibilityActionEvent,
@@ -31,26 +34,45 @@ import {
   zoomImageAroundPoint,
   type ImagePreviewSize,
 } from "./image-preview-geometry";
+import {
+  savePreviewImage,
+  sharePreviewImage,
+  type ImagePreviewActionPort,
+} from "./image-preview-actions";
 
 export interface FileImagePreviewProps {
   uri: string;
   fileName: string;
   attachment: AttachmentMetadata | null;
-  onDownload: () => void;
 }
 
 const ThemedCopy = withUnistyles(Copy);
-const ThemedDownload = withUnistyles(Download);
+const ThemedSave = withUnistyles(ImageDown);
+const ThemedShare = withUnistyles(Share2);
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 const EMPTY_SIZE: ImagePreviewSize = { width: 0, height: 0 };
+const nativeImageActions: ImagePreviewActionPort = {
+  async requestSavePermission() {
+    return (await MediaLibrary.requestPermissionsAsync(true, [])).granted;
+  },
+  saveToPhotoLibrary: MediaLibrary.saveToLibraryAsync,
+  async share({ uri, mimeType, fileName }) {
+    if (!(await Sharing.isAvailableAsync())) {
+      throw new Error("Sharing is unavailable");
+    }
+    await Sharing.shareAsync(uri, { mimeType, dialogTitle: fileName });
+  },
+};
 
-export function FileImagePreview({ uri, fileName, attachment, onDownload }: FileImagePreviewProps) {
+export function FileImagePreview({ uri, fileName, attachment }: FileImagePreviewProps) {
   const { t } = useTranslation();
   const toast = useToast();
   const [menuOpen, setMenuOpen] = useState(false);
   const [copyStatus, setCopyStatus] = useState<ActionStatus>("idle");
+  const [saveStatus, setSaveStatus] = useState<ActionStatus>("idle");
   const [viewport, setViewport] = useState<ImagePreviewSize>(EMPTY_SIZE);
   const [image, setImage] = useState<ImagePreviewSize>(EMPTY_SIZE);
+  const shareTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const content = useMemo(() => containImageSize(image, viewport), [image, viewport]);
   const imageSource = useMemo(() => ({ uri }), [uri]);
 
@@ -72,6 +94,13 @@ export function FileImagePreview({ uri, fileName, attachment, onDownload }: File
     translateY.value = reset.translation.y;
     setImage(EMPTY_SIZE);
   }, [scale, translateX, translateY, uri]);
+
+  useEffect(
+    () => () => {
+      if (shareTimerRef.current) clearTimeout(shareTimerRef.current);
+    },
+    [],
+  );
 
   useEffect(() => {
     const translation = clampImageTranslation({
@@ -216,22 +245,66 @@ export function FileImagePreview({ uri, fileName, attachment, onDownload }: File
     }
   }, [attachment, copyStatus, t, toast]);
 
+  const handleSaveImage = useCallback(async () => {
+    if (saveStatus === "pending") return;
+    setSaveStatus("pending");
+    try {
+      const result = await savePreviewImage(uri, nativeImageActions);
+      if (result === "permission-denied") {
+        setSaveStatus("idle");
+        toast.error(t("panels.file.image.savePermissionDenied"));
+        return;
+      }
+      setSaveStatus("success");
+      setMenuOpen(false);
+      toast.show(t("panels.file.image.saved"), { variant: "success" });
+      setSaveStatus("idle");
+    } catch {
+      setSaveStatus("idle");
+      toast.error(t("panels.file.image.saveFailed"));
+    }
+  }, [saveStatus, t, toast, uri]);
+
+  const shareImage = useCallback(async () => {
+    try {
+      await sharePreviewImage(
+        { uri, mimeType: attachment?.mimeType ?? "image/*", fileName },
+        nativeImageActions,
+      );
+    } catch {
+      toast.error(t("panels.file.image.shareFailed"));
+    }
+  }, [attachment?.mimeType, fileName, t, toast, uri]);
+
+  const handleShareImage = useCallback(() => {
+    setMenuOpen(false);
+    if (shareTimerRef.current) clearTimeout(shareTimerRef.current);
+    shareTimerRef.current = setTimeout(
+      () => {
+        shareTimerRef.current = null;
+        void shareImage();
+      },
+      Platform.OS === "ios" ? 250 : 0,
+    );
+  }, [shareImage]);
+
   const handleAccessibilityAction = useCallback(
     (event: AccessibilityActionEvent) => {
       if (event.nativeEvent.actionName === "copyImage") {
         void handleCopyImage();
-      } else if (event.nativeEvent.actionName === "downloadImage") {
-        onDownload();
+      } else if (event.nativeEvent.actionName === "saveImage") {
+        void handleSaveImage();
+      } else if (event.nativeEvent.actionName === "shareImage") {
+        void shareImage();
       }
     },
-    [handleCopyImage, onDownload],
+    [handleCopyImage, handleSaveImage, shareImage],
   );
   const handleSelectCopyImage = useCallback(() => void handleCopyImage(), [handleCopyImage]);
+  const handleSelectSaveImage = useCallback(() => void handleSaveImage(), [handleSaveImage]);
   const copyLeading = useMemo(() => <ThemedCopy size={16} uniProps={mutedColorMapping} />, []);
-  const downloadLeading = useMemo(
-    () => <ThemedDownload size={16} uniProps={mutedColorMapping} />,
-    [],
-  );
+  const saveLeading = useMemo(() => <ThemedSave size={16} uniProps={mutedColorMapping} />, []);
+  const shareLeading = useMemo(() => <ThemedShare size={16} uniProps={mutedColorMapping} />, []);
 
   const imageFrameStyle = useMemo(
     () => ({ width: content.width, height: content.height }),
@@ -251,7 +324,8 @@ export function FileImagePreview({ uri, fileName, attachment, onDownload }: File
           accessibilityHint={t("panels.file.image.accessibilityHint")}
           accessibilityActions={[
             { name: "copyImage", label: t("panels.file.image.copy") },
-            { name: "downloadImage", label: t("workspace.fileActions.download") },
+            { name: "saveImage", label: t("panels.file.image.save") },
+            { name: "shareImage", label: t("workspace.fileActions.share") },
           ]}
           onAccessibilityAction={handleAccessibilityAction}
         >
@@ -288,8 +362,18 @@ export function FileImagePreview({ uri, fileName, attachment, onDownload }: File
           >
             {t("panels.file.image.copy")}
           </ContextMenuItem>
-          <ContextMenuItem leading={downloadLeading} onSelect={onDownload}>
-            {t("workspace.fileActions.download")}
+          <ContextMenuItem
+            closeOnSelect={false}
+            status={saveStatus}
+            pendingLabel={t("panels.file.image.saving")}
+            successLabel={t("panels.file.image.saved")}
+            leading={saveLeading}
+            onSelect={handleSelectSaveImage}
+          >
+            {t("panels.file.image.save")}
+          </ContextMenuItem>
+          <ContextMenuItem closeOnSelect={false} leading={shareLeading} onSelect={handleShareImage}>
+            {t("workspace.fileActions.share")}
           </ContextMenuItem>
         </ContextMenuContent>
       </ContextMenu>

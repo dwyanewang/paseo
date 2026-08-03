@@ -39,6 +39,10 @@ function fitsViewportWidth(element: HTMLElement): boolean {
   return element.scrollWidth === element.clientWidth;
 }
 
+function computedTransform(element: HTMLElement): string {
+  return getComputedStyle(element).transform;
+}
+
 async function replaceEditorText(page: Page, content: string): Promise<void> {
   await editor(page).fill(content);
 }
@@ -261,6 +265,54 @@ test.describe("CodeMirror workspace file editing", () => {
         page.getByTestId(`workspace-tab-menu-agent_${session.agentId}-trigger`),
       ).toBeVisible({ timeout: 10_000 });
       await expect(fileTabMenuTrigger).toHaveCount(0);
+    } finally {
+      await session.cleanup();
+    }
+  });
+
+  test("zooms and pans an image file on desktop", async ({ page }) => {
+    const target = "pixel.png";
+    const session = await seedAgentWithFileLink(target, `./${target}`);
+
+    try {
+      await writeFile(path.join(session.cwd, target), RED_PIXEL);
+      await page.setViewportSize({ width: 1280, height: 900 });
+      await openAgentRoute(page, session);
+      await page.locator(`a[href="./${target}"]`).click();
+
+      const viewer = page.getByTestId("workspace-file-image");
+      const zoomLevel = page.getByTestId("workspace-file-image-zoom-level");
+      const imageFrame = page.getByTestId("workspace-file-image-frame");
+      await expect(viewer).toBeVisible({ timeout: 30_000 });
+      await expect(zoomLevel).toHaveText("100%");
+
+      await viewer.hover();
+      await page.mouse.wheel(0, -300);
+      await expect
+        .poll(async () => Number.parseInt((await zoomLevel.textContent()) ?? "0", 10))
+        .toBeGreaterThan(100);
+
+      await viewer.dblclick();
+      await expect(zoomLevel).toHaveText("100%");
+      await page.getByTestId("workspace-file-image-zoom-in").click();
+      await page.getByTestId("workspace-file-image-zoom-in").click();
+      await expect(zoomLevel).toHaveText("200%");
+
+      const beforeDrag = await imageFrame.evaluate(computedTransform);
+      const viewerBox = await viewer.boundingBox();
+      if (!viewerBox) throw new Error("Expected image viewer bounds");
+      await page.mouse.move(viewerBox.x + viewerBox.width / 2, viewerBox.y + viewerBox.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(
+        viewerBox.x + viewerBox.width / 2 + 80,
+        viewerBox.y + viewerBox.height / 2,
+        { steps: 5 },
+      );
+      await page.mouse.up();
+      await expect.poll(() => imageFrame.evaluate(computedTransform)).not.toBe(beforeDrag);
+
+      await zoomLevel.click();
+      await expect(zoomLevel).toHaveText("100%");
     } finally {
       await session.cleanup();
     }
