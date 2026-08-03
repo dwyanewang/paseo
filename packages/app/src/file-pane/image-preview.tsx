@@ -13,11 +13,10 @@ import * as Clipboard from "expo-clipboard";
 import * as MediaLibrary from "expo-media-library";
 import * as Sharing from "expo-sharing";
 import { Copy, ImageDown, Share2 } from "lucide-react-native";
-import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from "react";
+import { useCallback, useEffect, useMemo, useState, type ComponentProps } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Image,
-  Platform,
   StyleSheet,
   View,
   type AccessibilityActionEvent,
@@ -72,7 +71,6 @@ export function FileImagePreview({ uri, fileName, attachment }: FileImagePreview
   const [saveStatus, setSaveStatus] = useState<ActionStatus>("idle");
   const [viewport, setViewport] = useState<ImagePreviewSize>(EMPTY_SIZE);
   const [image, setImage] = useState<ImagePreviewSize>(EMPTY_SIZE);
-  const shareTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const content = useMemo(() => containImageSize(image, viewport), [image, viewport]);
   const imageSource = useMemo(() => ({ uri }), [uri]);
 
@@ -94,13 +92,6 @@ export function FileImagePreview({ uri, fileName, attachment }: FileImagePreview
     translateY.value = reset.translation.y;
     setImage(EMPTY_SIZE);
   }, [scale, translateX, translateY, uri]);
-
-  useEffect(
-    () => () => {
-      if (shareTimerRef.current) clearTimeout(shareTimerRef.current);
-    },
-    [],
-  );
 
   useEffect(() => {
     const translation = clampImageTranslation({
@@ -277,15 +268,7 @@ export function FileImagePreview({ uri, fileName, attachment }: FileImagePreview
   }, [attachment?.mimeType, fileName, t, toast, uri]);
 
   const handleShareImage = useCallback(() => {
-    setMenuOpen(false);
-    if (shareTimerRef.current) clearTimeout(shareTimerRef.current);
-    shareTimerRef.current = setTimeout(
-      () => {
-        shareTimerRef.current = null;
-        void shareImage();
-      },
-      Platform.OS === "ios" ? 250 : 0,
-    );
+    void shareImage();
   }, [shareImage]);
 
   const handleAccessibilityAction = useCallback(
@@ -372,7 +355,7 @@ export function FileImagePreview({ uri, fileName, attachment }: FileImagePreview
           >
             {t("panels.file.image.save")}
           </ContextMenuItem>
-          <ContextMenuItem closeOnSelect={false} leading={shareLeading} onSelect={handleShareImage}>
+          <ContextMenuItem leading={shareLeading} onSelect={handleShareImage}>
             {t("workspace.fileActions.share")}
           </ContextMenuItem>
         </ContextMenuContent>
