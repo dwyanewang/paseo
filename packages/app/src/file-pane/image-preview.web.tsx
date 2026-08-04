@@ -1,7 +1,7 @@
 import type { AttachmentMetadata } from "@/attachments/types";
 import { Button } from "@/components/ui/button";
 import { Minus, Plus } from "lucide-react-native";
-import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Image, PanResponder, View, type LayoutChangeEvent, type ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
@@ -162,13 +162,6 @@ export function FileImagePreview({ uri, fileName }: FileImagePreviewProps) {
     const { width, height } = event.nativeEvent.layout;
     setViewport({ width, height });
   }, []);
-  const handleImageLoad = useCallback<NonNullable<ComponentProps<typeof Image>["onLoad"]>>(
-    (event) => {
-      const { width, height } = event.nativeEvent.source;
-      setImage({ width, height });
-    },
-    [],
-  );
   const handleZoomOut = useCallback(
     () => zoomAt(transformRef.current.scale - SCALE_STEP),
     [zoomAt],
@@ -218,17 +211,11 @@ export function FileImagePreview({ uri, fileName }: FileImagePreviewProps) {
               source={source}
               resizeMode="contain"
               style={styles.image}
-              onLoad={handleImageLoad}
               testID="workspace-file-image-content"
             />
           </View>
         ) : (
-          <Image
-            source={source}
-            resizeMode="contain"
-            style={styles.image}
-            onLoad={handleImageLoad}
-          />
+          <Image source={source} resizeMode="contain" style={styles.image} />
         )}
       </View>
       <View pointerEvents="box-none" style={styles.toolbarPosition}>
