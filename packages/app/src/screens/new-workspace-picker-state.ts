@@ -38,6 +38,13 @@ export function isPickerWorktreeActionSupported(
   return action !== "branch-off" || item?.kind !== "github-pr" || supportsChangeRequestBranchOff;
 }
 
+export function doesNewWorkspaceCreateWorktree(
+  supportsWorkspaceMultiplicity: boolean,
+  effectiveIsolation: "local" | "worktree",
+): boolean {
+  return !supportsWorkspaceMultiplicity || effectiveIsolation === "worktree";
+}
+
 export function isNewWorkspaceWorktreeActionSupported(input: {
   supportsWorkspaceMultiplicity: boolean;
   effectiveIsolation: "local" | "worktree";
@@ -45,8 +52,10 @@ export function isNewWorkspaceWorktreeActionSupported(input: {
   item: PickerItem | null;
   supportsChangeRequestBranchOff: boolean;
 }): boolean {
-  const createsWorktree =
-    !input.supportsWorkspaceMultiplicity || input.effectiveIsolation === "worktree";
+  const createsWorktree = doesNewWorkspaceCreateWorktree(
+    input.supportsWorkspaceMultiplicity,
+    input.effectiveIsolation,
+  );
   return (
     !createsWorktree ||
     isPickerWorktreeActionSupported(input.action, input.item, input.supportsChangeRequestBranchOff)

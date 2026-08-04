@@ -117,6 +117,7 @@ import {
 } from "./new-workspace-picker-item";
 import {
   clearPickerPrAttachmentForTargetChange,
+  doesNewWorkspaceCreateWorktree,
   effectivePickerWorktreeAction,
   initialPickerSelectionState,
   isNewWorkspaceWorktreeActionSupported,
@@ -1729,23 +1730,6 @@ export function NewWorkspaceScreen({
   const selectedItem = pickerSelection.selectedItem;
   const worktreeAction = effectivePickerWorktreeAction(pickerSelection);
 
-  const handleGithubPrDetected = useCallback(() => {
-    dispatchPickerSelection({ type: "pr-detected" });
-  }, []);
-
-  const handleGithubPrAutoAttach = useCallback(
-    (item: ForgeSearchItem) => {
-      const pickerItem = { kind: "github-pr" as const, item };
-      const action = pickerSelection.actionOverride ?? "checkout";
-      if (!isPickerWorktreeActionSupported(action, pickerItem, supportsChangeRequestBranchOff)) {
-        dispatchPickerSelection({ type: "pr-auto-selection-cancelled" });
-        return;
-      }
-      dispatchPickerSelection({ type: "pr-added", item: pickerItem });
-    },
-    [pickerSelection.actionOverride, supportsChangeRequestBranchOff],
-  );
-
   const withConnectedClient = useCallback(() => {
     if (!client || !isConnected) {
       throw new Error(t("newWorkspace.errors.hostDisconnected"));
@@ -1772,6 +1756,35 @@ export function NewWorkspaceScreen({
       worktreeSupport,
     });
   const workspaceMode: WorkspaceMode = showRefPicker ? worktreeAction : "local";
+  const handleGithubPrDetected = useCallback(() => {
+    dispatchPickerSelection({ type: "pr-detected" });
+  }, []);
+
+  const handleGithubPrAutoAttach = useCallback(
+    (item: ForgeSearchItem) => {
+      const pickerItem = { kind: "github-pr" as const, item };
+      const action = pickerSelection.actionOverride ?? "checkout";
+      if (
+        !isNewWorkspaceWorktreeActionSupported({
+          supportsWorkspaceMultiplicity,
+          effectiveIsolation,
+          action,
+          item: pickerItem,
+          supportsChangeRequestBranchOff,
+        })
+      ) {
+        dispatchPickerSelection({ type: "pr-auto-selection-cancelled" });
+        return;
+      }
+      dispatchPickerSelection({ type: "pr-added", item: pickerItem });
+    },
+    [
+      effectiveIsolation,
+      pickerSelection.actionOverride,
+      supportsChangeRequestBranchOff,
+      supportsWorkspaceMultiplicity,
+    ],
+  );
 
   const branchSuggestionsQuery = useQuery({
     queryKey: [
@@ -1837,7 +1850,15 @@ export function NewWorkspaceScreen({
     (item: PickerItem) => {
       const action =
         pickerSelection.actionOverride ?? (item.kind === "github-pr" ? "checkout" : "branch-off");
-      if (!isPickerWorktreeActionSupported(action, item, supportsChangeRequestBranchOff)) {
+      if (
+        !isNewWorkspaceWorktreeActionSupported({
+          supportsWorkspaceMultiplicity,
+          effectiveIsolation,
+          action,
+          item,
+          supportsChangeRequestBranchOff,
+        })
+      ) {
         return;
       }
       const nextAttachments = syncPickerPrAttachment({
@@ -1851,7 +1872,13 @@ export function NewWorkspaceScreen({
       }
       setPickerOpen(false);
     },
-    [chatDraft, pickerSelection.actionOverride, supportsChangeRequestBranchOff],
+    [
+      chatDraft,
+      effectiveIsolation,
+      pickerSelection.actionOverride,
+      supportsChangeRequestBranchOff,
+      supportsWorkspaceMultiplicity,
+    ],
   );
 
   const handleSelectOption = useCallback(
@@ -2263,11 +2290,20 @@ export function NewWorkspaceScreen({
         itemById={itemById}
         isPending={isPending}
         changeRequestBranchOffDisabled={
-          pickerSelection.actionOverride === "branch-off" && !supportsChangeRequestBranchOff
+          doesNewWorkspaceCreateWorktree(supportsWorkspaceMultiplicity, effectiveIsolation) &&
+          pickerSelection.actionOverride === "branch-off" &&
+          !supportsChangeRequestBranchOff
         }
       />
     ),
-    [isPending, itemById, pickerSelection.actionOverride, supportsChangeRequestBranchOff],
+    [
+      effectiveIsolation,
+      isPending,
+      itemById,
+      pickerSelection.actionOverride,
+      supportsChangeRequestBranchOff,
+      supportsWorkspaceMultiplicity,
+    ],
   );
 
   const renderProjectOption = useCallback(

@@ -192,6 +192,28 @@ describe("isNewWorkspaceWorktreeActionSupported", () => {
       }),
     ).toBe(true);
   });
+
+  it("allows a PR selection in Local after New branch was previously selected", () => {
+    const branchOff = reducePickerSelection(initialPickerSelectionState, {
+      type: "workspace-mode-selected",
+      mode: "branch-off",
+    });
+    const local = reducePickerSelection(branchOff, {
+      type: "workspace-mode-selected",
+      mode: "local",
+    });
+
+    expect(local.actionOverride).toBe("branch-off");
+    expect(
+      isNewWorkspaceWorktreeActionSupported({
+        supportsWorkspaceMultiplicity: true,
+        effectiveIsolation: "local",
+        action: effectivePickerWorktreeAction(local),
+        item: pr,
+        supportsChangeRequestBranchOff: false,
+      }),
+    ).toBe(true);
+  });
 });
 
 describe("clearPickerPrAttachmentForTargetChange", () => {
