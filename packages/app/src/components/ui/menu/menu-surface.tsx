@@ -361,10 +361,6 @@ function MenuSheetSurface({
     isEnabled: true,
     onClose: handleClose,
   });
-  const handleDismiss = useCallback(() => {
-    handleSheetDismiss();
-    menu.flushPendingSelect();
-  }, [handleSheetDismiss, menu]);
 
   const renderBackdrop = useCallback(
     (backdropProps: ComponentProps<typeof BottomSheetBackdrop>) => (
@@ -402,7 +398,7 @@ function MenuSheetSurface({
       // as the page it replaced, and a fixed sheet would either clip it or leave dead space.
       enableDynamicSizing
       onChange={handleSheetChange}
-      onDismiss={handleDismiss}
+      onDismiss={handleSheetDismiss}
       backdropComponent={renderBackdrop}
       enablePanDownToClose
       // `interactive` rather than `extend`, which is what every other sheet in the app uses.
