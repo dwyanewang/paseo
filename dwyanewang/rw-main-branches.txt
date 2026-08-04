@@ -7,5 +7,5 @@ feat/codeup-forge # PR #2507 # reviewed-main:74dea384566dee6e5458c107191c13bdc16
 refactor/provider-history-read # PR #2388 # reviewed-main:74dea384566dee6e5458c107191c13bdc16b9960 # reviewed-head:2ee6a29909c2271b600d7a08be9bb671516dcf51
 fix/android-keyboard-covers-input # PR #2467 # reviewed-main:74dea384566dee6e5458c107191c13bdc16b9960 # reviewed-head:d3bf6170357a639a9682f6ef3c7d89ecb08744bc
 fix/project-skill-cache-invalidation # Personal branch # reviewed-main:74dea384566dee6e5458c107191c13bdc16b9960 # reviewed-head:a96430f86793ac78b0536156461678d931a9987c
-feat/file-image-preview # Personal branch # reviewed-main:74dea384566dee6e5458c107191c13bdc16b9960 # reviewed-head:8e1a4ed7f1e3313dd835eab77eb1152926ffb3cc
+feat/file-image-preview # Personal branch # reviewed-main:74dea384566dee6e5458c107191c13bdc16b9960 # reviewed-head:6984c45869bc5286516e9a07e485b44cf91d21d6
 fix/windows-native-optional-dependencies # Personal branch # reviewed-main:74dea384566dee6e5458c107191c13bdc16b9960 # reviewed-head:a4d1b1f5063a9c8ffebc7c9f0f501e2e9a70f1bf
