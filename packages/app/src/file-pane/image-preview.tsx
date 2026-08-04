@@ -296,7 +296,7 @@ export function FileImagePreview({ uri, fileName, attachment }: FileImagePreview
 
   return (
     <View style={nativeStyles.container}>
-      <ContextMenu open={menuOpen} onOpenChange={setMenuOpen}>
+      <ContextMenu open={menuOpen} onOpenChange={setMenuOpen} compactMode="popover">
         <ContextMenuTrigger
           enabledOnMobile
           enabledOnWeb={false}
@@ -334,7 +334,7 @@ export function FileImagePreview({ uri, fileName, attachment }: FileImagePreview
             </View>
           </GestureDetector>
         </ContextMenuTrigger>
-        <ContextMenuContent align="center" mobileMode="dropdown" testID="file-image-actions-menu">
+        <ContextMenuContent align="center" testID="file-image-actions-menu">
           <ContextMenuItem
             closeOnSelect={false}
             disabled={!attachment}

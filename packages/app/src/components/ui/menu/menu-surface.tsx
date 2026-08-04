@@ -364,7 +364,7 @@ function MenuSheetSurface({
   const handleDismiss = useCallback(() => {
     handleSheetDismiss();
     menu.flushPendingSelect();
-  }, [handleSheetDismiss, menu.flushPendingSelect]);
+  }, [handleSheetDismiss, menu]);
 
   const renderBackdrop = useCallback(
     (backdropProps: ComponentProps<typeof BottomSheetBackdrop>) => (
