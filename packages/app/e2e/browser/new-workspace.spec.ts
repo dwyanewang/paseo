@@ -808,7 +808,7 @@ test.describe("New workspace flow", () => {
         projectKey: openedProject.projectKey,
         projectDisplayName: openedProject.projectDisplayName,
       });
-      await selectWorkspaceIsolation(page, "worktree");
+      await selectWorkspaceMode(page, "branch-off");
       return openedProject;
     }
 
