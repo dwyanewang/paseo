@@ -2,10 +2,3 @@
 # sync-rw-main-branches.sh removes merged PRs; new entries are explicit only.
 # Each entry records the main/head pair last semantically reviewed.
 
-feat/worktree-checkout-branch # PR #1721 # reviewed-main:dac255cb99597159b0970d9ad8aa4c29760607be # reviewed-head:3b00b6adc69ab5365c334ec45e799edcb1886fdb
-feat/codeup-forge # PR #2507 # reviewed-main:dac255cb99597159b0970d9ad8aa4c29760607be # reviewed-head:75cceca71b17ac48a811b8613cadb4f922cf3681
-refactor/provider-history-read # PR #2388 # reviewed-main:dac255cb99597159b0970d9ad8aa4c29760607be # reviewed-head:6b09a2d1fd6bab07cd10f17a02fe29eaf568d4e1
-fix/android-keyboard-covers-input # PR #2467 # reviewed-main:dac255cb99597159b0970d9ad8aa4c29760607be # reviewed-head:18e37041cc7a61a20ac3cae36da827b68dde9049
-fix/project-skill-cache-invalidation # Personal branch # reviewed-main:dac255cb99597159b0970d9ad8aa4c29760607be # reviewed-head:a96430f86793ac78b0536156461678d931a9987c
-feat/file-image-preview # Personal branch # reviewed-main:dac255cb99597159b0970d9ad8aa4c29760607be # reviewed-head:58ca7d1ca0db97414964857df598651a0959d805
-fix/windows-native-optional-dependencies # Personal branch # reviewed-main:dac255cb99597159b0970d9ad8aa4c29760607be # reviewed-head:a4d1b1f5063a9c8ffebc7c9f0f501e2e9a70f1bf
