@@ -2,3 +2,7 @@
 # sync-rw-main-branches.sh removes merged PRs; new entries are explicit only.
 # Each entry records the main/head pair last semantically reviewed.
 
+fix/project-skill-cache-invalidation # Personal branch # reviewed-main:0b624b5585123f1401d2178508340766b2b31d7d # reviewed-head:a96430f86793ac78b0536156461678d931a9987c
+feat/codeup-forge # Personal branch # reviewed-main:0b624b5585123f1401d2178508340766b2b31d7d # reviewed-head:75cceca71b17ac48a811b8613cadb4f922cf3681
+fix/android-keyboard-covers-input # Personal branch # reviewed-main:0b624b5585123f1401d2178508340766b2b31d7d # reviewed-head:18e37041cc7a61a20ac3cae36da827b68dde9049
+refactor/provider-history-read # Personal branch # reviewed-main:0b624b5585123f1401d2178508340766b2b31d7d # reviewed-head:d9a9dab11b4edc2c3668cf8de0251b18de8eaa96
