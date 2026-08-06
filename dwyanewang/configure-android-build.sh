@@ -4,15 +4,18 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: bash dwyanewang/configure-android-build.sh --build-root PATH [--metro-workers N]
+Usage: bash dwyanewang/configure-android-build.sh --build-root PATH [--metro-workers N] [--hermes-profile PROFILE]
 
 Configure the generated Android project for the local build-paseo workflow.
 Run this after every Expo prebuild. It keeps Metro's transform cache enabled
-and caps Metro itself at four workers by default; Gradle worker limits remain
-controlled by the later gradlew commands.
+and caps Metro itself at four workers by default. It also defaults local APKs
+to the local-balanced Hermes profile, which keeps -O runtime optimization but
+omits release source-map generation and composition. Gradle worker limits
+remain controlled by the later gradlew commands.
 
-  --build-root PATH  Dedicated Paseo build worktree (required).
-  --metro-workers N  Metro transform workers, 1..32 (default: 4).
+  --build-root PATH       Dedicated Paseo build worktree (required).
+  --metro-workers N       Metro transform workers, 1..32 (default: 4).
+  --hermes-profile NAME   local-balanced (default) or production.
 EOF
 }
 
@@ -23,6 +26,7 @@ fail() {
 
 build_root_arg=
 metro_workers=4
+hermes_profile=local-balanced
 while (($# > 0)); do
   case "$1" in
     --build-root)
@@ -34,6 +38,11 @@ while (($# > 0)); do
     --metro-workers)
       (($# >= 2)) || fail "missing value for --metro-workers"
       metro_workers=$2
+      shift 2
+      ;;
+    --hermes-profile)
+      (($# >= 2)) || fail "missing value for --hermes-profile"
+      hermes_profile=$2
       shift 2
       ;;
     --help | -h)
@@ -57,6 +66,10 @@ done
 metro_workers=$((10#$metro_workers))
 ((metro_workers >= 1 && metro_workers <= 32)) ||
   fail "Metro worker count must be in 1..32: $metro_workers"
+case "$hermes_profile" in
+  local-balanced | production) ;;
+  *) fail "Hermes profile must be local-balanced or production: $hermes_profile" ;;
+esac
 [[ -d "$build_root_arg" ]] || fail "build root is not a directory: $build_root_arg"
 build_root=$(realpath -e -- "$build_root_arg")
 
@@ -106,11 +119,14 @@ main().catch((error) => {
 });
 NODE
 
-node - "$app_gradle" "$metro_workers" <<'NODE'
+node - "$app_gradle" "$metro_workers" "$hermes_profile" <<'NODE'
 const fs = require("node:fs");
 
 const gradlePath = process.argv[2];
 const workers = process.argv[3];
+const hermesProfile = process.argv[4];
+const hermesFlags =
+  hermesProfile === "local-balanced" ? '["-O"]' : '["-O", "-output-source-map"]';
 const source = fs.readFileSync(gradlePath, "utf8");
 const assignmentStart = /^[ \t]*extraPackagerArgs\s*=/gm;
 const assignments = [...source.matchAll(assignmentStart)];
@@ -145,10 +161,43 @@ if (desiredCount !== 1) {
   throw new Error(`failed to produce exactly one optimized extraPackagerArgs assignment (found ${desiredCount})`);
 }
 
+const hermesAssignmentStart = /^[ \t]*hermesFlags\s*=/gm;
+const hermesAssignments = [...next.matchAll(hermesAssignmentStart)];
+if (hermesAssignments.length > 1) {
+  throw new Error(`expected at most one active hermesFlags assignment, found ${hermesAssignments.length}`);
+}
+
+const hermesAssignmentLine = /^([ \t]*)hermesFlags\s*=\s*\[[^\r\n]*\][ \t]*$/gm;
+const desiredHermesForIndent = (indent) => `${indent}hermesFlags = ${hermesFlags}`;
+if (hermesAssignments.length === 1) {
+  const lines = [...next.matchAll(hermesAssignmentLine)];
+  if (lines.length !== 1 || lines[0].index !== hermesAssignments[0].index) {
+    throw new Error("hermesFlags uses an unsupported multi-line or computed assignment");
+  }
+  next = next.replace(hermesAssignmentLine, (_line, indent) => desiredHermesForIndent(indent));
+} else {
+  const packagerLine = /^([ \t]*)extraPackagerArgs\s*=\s*\[[^\r\n]*\][ \t]*$/gm;
+  const packagerMatches = [...next.matchAll(packagerLine)];
+  if (packagerMatches.length !== 1) {
+    throw new Error(`expected one extraPackagerArgs assignment before adding hermesFlags, found ${packagerMatches.length}`);
+  }
+  const eol = next.includes("\r\n") ? "\r\n" : "\n";
+  next = next.replace(packagerLine, (line, indent) => `${line}${eol}${desiredHermesForIndent(indent)}`);
+}
+
+const activeHermesAssignments = [...next.matchAll(/^[ \t]*hermesFlags\s*=\s*(\[[^\r\n]*\])[ \t]*$/gm)];
+if (activeHermesAssignments.length !== 1 || activeHermesAssignments[0][1] !== hermesFlags) {
+  throw new Error(`failed to configure Hermes profile ${hermesProfile}`);
+}
+
 if (next === source) {
-  console.log(`✅ Android Metro already configured: cache kept, workers=${workers}`);
+  console.log(
+    `✅ Android build already configured: Metro cache kept, workers=${workers}; Hermes=${hermesProfile}`,
+  );
 } else {
   fs.writeFileSync(gradlePath, next);
-  console.log(`✅ Android Metro configured: cache kept, workers=${workers}`);
+  console.log(
+    `✅ Android build configured: Metro cache kept, workers=${workers}; Hermes=${hermesProfile}`,
+  );
 }
 NODE
