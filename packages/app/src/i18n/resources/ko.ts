@@ -961,6 +961,7 @@ export const ko: TranslationResources = {
         },
       },
       forgeSetup: {
+        updateHost: "{{brand}} 기능을 사용하려면 이 호스트를 업데이트하세요.",
         installCli: "{{brand}} 기능을 사용하려면 {{cli}} CLI를 설치하세요.",
         signIn: "{{brand}} 기능을 사용하려면 {{command}}를 실행하세요.",
         generic: "해당 기능을 사용하려면 이 호스트에 {{brand}}를 설정하세요.",
