@@ -43,10 +43,10 @@ try {
 `);
   let result = run(existing.root);
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /configured: cache kept, workers=4/);
+  assert.match(result.stdout, /configured: Metro cache kept, workers=8/);
   assert.match(
     readFileSync(existing.gradlePath, "utf8"),
-    /extraPackagerArgs = \["--reset-cache", "false", "--max-workers", "4"\]/,
+    /extraPackagerArgs = \["--reset-cache", "false", "--max-workers", "8"\]/,
   );
 
   result = run(existing.root);
