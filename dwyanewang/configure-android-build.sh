@@ -8,13 +8,13 @@ Usage: bash dwyanewang/configure-android-build.sh --build-root PATH [--metro-wor
 
 Configure the generated Android project for the local build-paseo workflow.
 Run this after every Expo prebuild. It keeps Metro's transform cache enabled
-and caps Metro itself at four workers by default. It also defaults local APKs
+and caps Metro itself at eight workers by default. It also defaults local APKs
 to the local-balanced Hermes profile, which keeps -O runtime optimization but
 omits release source-map generation and composition. Gradle worker limits
 remain controlled by the later gradlew commands.
 
   --build-root PATH       Dedicated Paseo build worktree (required).
-  --metro-workers N       Metro transform workers, 1..32 (default: 4).
+  --metro-workers N       Metro transform workers, 1..32 (default: 8).
   --hermes-profile NAME   local-balanced (default) or production.
 EOF
 }
@@ -25,7 +25,7 @@ fail() {
 }
 
 build_root_arg=
-metro_workers=4
+metro_workers=8
 hermes_profile=local-balanced
 while (($# > 0)); do
   case "$1" in

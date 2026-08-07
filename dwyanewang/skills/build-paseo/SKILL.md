@@ -82,7 +82,8 @@ bash "$paseo_chore_root/dwyanewang/rebuild-rw-main.sh" \
 - **不重启 6767 主 daemon**（会杀掉正在跑的 agent，包括自己）。
 - **本地 app Playwright 定向测试必须带 `PASEO_PASSWORD=`**，隔离 daemon 不应继承 6767 主环境的密码。
 - **环境从仓库 pin 获取**：进入 build root 后激活 mise，使用 `.tool-versions` 的 Java 21 / Android SDK 21.0 和 `.mise.toml` 的路径；不要硬编码 mise 安装目录。Windows 始终导出 `WINEPREFIX="$HOME/.local/share/paseo/wineprefix"`，不使用或删除默认 `~/.wine`。
-- **每次 Android prebuild 后运行** `configure-android-build.sh --build-root "$paseo_build_root" --metro-workers 4 --hermes-profile local-balanced`。它用 Expo 支持的后置 `--reset-cache false` 保留内容寻址的 Metro transform cache，并让个人本地 APK 保留 Hermes `-O` 优化但跳过 Source Map 生成/合并；不复用最终 bundle，也不跳过 Hermes。正式/EAS 构建不调用这个本地后置脚本，仍保留 Source Map。
+- **每次 Android prebuild 后运行** `configure-android-build.sh --build-root "$paseo_build_root" --metro-workers 8 --hermes-profile local-balanced`。它用 Expo 支持的后置 `--reset-cache false` 保留内容寻址的 Metro transform cache，并让个人本地 APK 保留 Hermes `-O` 优化但跳过 Source Map 生成/合并；不复用最终 bundle，也不跳过 Hermes。正式/EAS 构建不调用这个本地后置脚本，仍保留 Source Map。
+- **Android 继续分两段构建**：Metro/Hermes 段保持 Gradle `--max-workers=1`，避免 Hermes 与 NDK 内存峰值重叠；bundle 成功后，ARM64 原生编译与封包使用 `--parallel --max-workers=8`，利用当前 20 核 / 27 GB 构建机。
 - **长构建放后台**（gradle ~5–17min、electron-builder、expo export）；后台任务完成会自动通知，**不要主动轮询/定时唤醒**，等通知即可。
 - **构建前先运行** `bash "$paseo_chore_root/dwyanewang/serve-dist.sh" prepare-build`。它从根 `package.json` 锁定版本、删除精确目标 APK/zip 并记录起点；下载脚本只接受标记之后生成的这两个文件。仍查看体积/mtime，但不再靠“最新 zip”猜本轮产物。
 - **Windows expo export 用 bash 原生赋值**：`PASEO_WEB_PLATFORM=electron npx expo export`，**别用裸 `cross-env`**（不在 PATH，exit 127）。
