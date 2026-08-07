@@ -784,6 +784,34 @@ describe("ForgeService", () => {
     }
   });
 
+  it("matches the configured remote before Git applies insteadOf URL rewriting", async () => {
+    const repositoryUrl = "https://github.com/getpaseo/paseo.git";
+    const repository = createGitRepositoryWithRemotes([["origin", repositoryUrl]]);
+    execFileSync(
+      "git",
+      [
+        "-C",
+        repository.cwd,
+        "config",
+        "url.file:///local/github-mirror.git.insteadOf",
+        repositoryUrl,
+      ],
+      { stdio: "pipe" },
+    );
+    const runner = createRunner([repoViewJson(), pullRequestCheckoutTargetJson()]);
+    const service = createGitHubService({ runner: runner.runner });
+
+    try {
+      await expect(
+        service.getPullRequestCheckoutTarget?.({ cwd: repository.cwd, number: 526 }),
+      ).resolves.toMatchObject({
+        checkoutRefs: [{ remoteName: "origin", remoteRef: "refs/pull/526/head" }],
+      });
+    } finally {
+      repository.dispose();
+    }
+  });
+
   it("resolves a GitHub Enterprise SSH alias before matching the pull request base repository", async () => {
     const repository = createGitRepositoryWithRemotes([
       ["origin", "git@github-work:acme/repo.git"],

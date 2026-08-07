@@ -2395,9 +2395,11 @@ async function resolveGitHubBaseRepositoryRemote(options: {
   const matchingRemoteNames: string[] = [];
 
   for (const remoteName of remoteNames) {
-    const { stdout: urls } = await runGitCommand(["remote", "get-url", "--all", remoteName], {
-      cwd: options.cwd,
-    });
+    // `git remote get-url` applies url.*.insteadOf and can hide the forge identity.
+    const { stdout: urls } = await runGitCommand(
+      ["config", "--get-all", `remote.${remoteName}.url`],
+      { cwd: options.cwd },
+    );
     if (
       (
         await Promise.all(
