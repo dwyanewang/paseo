@@ -2,9 +2,9 @@
 # sync-rw-main-branches.sh removes merged PRs; new entries are explicit only.
 # Each entry records the main/head pair last semantically reviewed.
 
-fix/project-skill-cache-invalidation # Personal branch # reviewed-main:42bfd4e04c21ef9877c8d025cd0e2dd3cf170ab1 # reviewed-head:a96430f86793ac78b0536156461678d931a9987c
-feat/codeup-forge # Personal branch # reviewed-main:42bfd4e04c21ef9877c8d025cd0e2dd3cf170ab1 # reviewed-head:1936d5a4edbf6f43e30e4c12213057507f0ab5f9
-fix/android-keyboard-covers-input # Personal branch # reviewed-main:42bfd4e04c21ef9877c8d025cd0e2dd3cf170ab1 # reviewed-head:18e37041cc7a61a20ac3cae36da827b68dde9049
-refactor/provider-history-read # Personal branch # reviewed-main:42bfd4e04c21ef9877c8d025cd0e2dd3cf170ab1 # reviewed-head:3a9db6fb677a6ad96f53d08961d52822f6a56ec9
-fix/windows-native-optional-dependencies # Personal branch # reviewed-main:42bfd4e04c21ef9877c8d025cd0e2dd3cf170ab1 # reviewed-head:e241c3dcff95a546c3267098c93699026288999a
-fix/daemon-worker-hang # Personal branch # reviewed-main:42bfd4e04c21ef9877c8d025cd0e2dd3cf170ab1 # reviewed-head:e69bc70943c86a1327e54b9e4069aa72d0d5465b
+fix/project-skill-cache-invalidation # Personal branch # reviewed-main:292a9c4c8c4a970951d5010c3f122c8977a05cc3 # reviewed-head:a96430f86793ac78b0536156461678d931a9987c
+feat/codeup-forge # Personal branch # reviewed-main:292a9c4c8c4a970951d5010c3f122c8977a05cc3 # reviewed-head:1936d5a4edbf6f43e30e4c12213057507f0ab5f9
+fix/android-keyboard-covers-input # Personal branch # reviewed-main:292a9c4c8c4a970951d5010c3f122c8977a05cc3 # reviewed-head:18e37041cc7a61a20ac3cae36da827b68dde9049
+refactor/provider-history-read # Personal branch # reviewed-main:292a9c4c8c4a970951d5010c3f122c8977a05cc3 # reviewed-head:3a9db6fb677a6ad96f53d08961d52822f6a56ec9
+fix/windows-native-optional-dependencies # Personal branch # reviewed-main:292a9c4c8c4a970951d5010c3f122c8977a05cc3 # reviewed-head:e241c3dcff95a546c3267098c93699026288999a
+fix/daemon-worker-hang # Personal branch # reviewed-main:292a9c4c8c4a970951d5010c3f122c8977a05cc3 # reviewed-head:e69bc70943c86a1327e54b9e4069aa72d0d5465b
