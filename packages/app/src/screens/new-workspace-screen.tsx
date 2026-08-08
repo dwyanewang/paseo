@@ -1587,6 +1587,7 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
   );
 }
 
+// oxlint-disable-next-line complexity
 export function NewWorkspaceScreen({
   serverId,
   sourceDirectory: sourceDirectoryProp,
