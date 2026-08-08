@@ -195,8 +195,10 @@ peak_sampled_host_cpu_percent=0.000
 read_cgroup_value() {
   local path=$1
   local fallback=${2:-0}
-  if [[ -r "$path" ]]; then
-    read -r value <"$path"
+  local value
+  # Short commands can remove their transient cgroup between the readability
+  # check and open(2); treat that sampling race as a missing optional sample.
+  if [[ -r "$path" ]] && IFS= read -r value 2>/dev/null <"$path"; then
     printf '%s\n' "$value"
   else
     printf '%s\n' "$fallback"
