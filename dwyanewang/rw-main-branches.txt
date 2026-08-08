@@ -8,4 +8,4 @@ fix/android-keyboard-covers-input # PR #2467 # reviewed-main:cc5ce1038d9785e06d9
 refactor/provider-history-read # PR #2388 # reviewed-main:cc5ce1038d9785e06d9dd1c01095b37ddd4d6f5d # reviewed-head:3a9db6fb677a6ad96f53d08961d52822f6a56ec9
 fix/windows-native-optional-dependencies # PR #2817 # reviewed-main:cc5ce1038d9785e06d9dd1c01095b37ddd4d6f5d # reviewed-head:e241c3dcff95a546c3267098c93699026288999a
 fix/daemon-worker-hang # Personal branch # reviewed-main:cc5ce1038d9785e06d9dd1c01095b37ddd4d6f5d # reviewed-head:e69bc70943c86a1327e54b9e4069aa72d0d5465b
-feat/worktree-checkout-branch # PR #1721 # reviewed-main:cc5ce1038d9785e06d9dd1c01095b37ddd4d6f5d # reviewed-head:81ce448741be58bf49da58dc37334c8376517ec6
+feat/worktree-checkout-branch # PR #1721 # reviewed-main:cc5ce1038d9785e06d9dd1c01095b37ddd4d6f5d # reviewed-head:1cda09ca9acb2883b457162ad0c047849981c4b8
