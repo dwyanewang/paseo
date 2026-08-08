@@ -1,0 +1,183 @@
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { test } from "vitest";
+
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+function run(cwd, command, args, env = {}) {
+  return spawnSync(command, args, {
+    cwd,
+    encoding: "utf8",
+    env: { ...process.env, ...env },
+    timeout: 30_000,
+  });
+}
+
+function git(cwd, ...args) {
+  const result = run(cwd, "git", args);
+  assert.equal(result.status, 0, result.stderr);
+  return result.stdout.trim();
+}
+
+function createFixture({ advanceUpstream = false } = {}) {
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "paseo-prepare-rw-main-"));
+  const controlRoot = path.join(fixtureRoot, "control");
+  const buildRoot = path.join(fixtureRoot, "build");
+  const featureRoot = path.join(fixtureRoot, "feature-one");
+  const upstreamRoot = path.join(fixtureRoot, "upstream.git");
+  const originRoot = path.join(fixtureRoot, "origin.git");
+  const stateFile = path.join(fixtureRoot, "preflight.env");
+  const binRoot = path.join(fixtureRoot, "bin");
+  mkdirSync(controlRoot);
+  mkdirSync(binRoot);
+
+  git(controlRoot, "init", "-b", "main");
+  git(controlRoot, "config", "user.name", "Test User");
+  git(controlRoot, "config", "user.email", "test@example.com");
+  writeFileSync(path.join(controlRoot, "seed.txt"), "seed\n");
+  git(controlRoot, "add", "seed.txt");
+  git(controlRoot, "commit", "-m", "seed");
+  const reviewedMain = git(controlRoot, "rev-parse", "main");
+
+  let featureHead;
+  if (advanceUpstream) {
+    git(controlRoot, "switch", "-c", "feature/one");
+    writeFileSync(path.join(controlRoot, "feature.txt"), "feature\n");
+    git(controlRoot, "add", "feature.txt");
+    git(controlRoot, "commit", "-m", "feat: feature one");
+    featureHead = git(controlRoot, "rev-parse", "HEAD");
+    git(controlRoot, "switch", "main");
+  }
+
+  git(fixtureRoot, "clone", "--bare", controlRoot, upstreamRoot);
+  git(fixtureRoot, "clone", "--bare", controlRoot, originRoot);
+  git(controlRoot, "remote", "add", "upstream", upstreamRoot);
+  git(controlRoot, "remote", "add", "origin", originRoot);
+  git(controlRoot, "branch", "rw-main", "main");
+  git(controlRoot, "push", "origin", "rw-main:rw-main");
+  git(controlRoot, "worktree", "add", buildRoot, "rw-main");
+  if (advanceUpstream) {
+    git(controlRoot, "worktree", "add", featureRoot, "feature/one");
+  }
+
+  git(controlRoot, "switch", "-c", "chore/build-paseo");
+  const controlsRoot = path.join(controlRoot, "dwyanewang");
+  mkdirSync(controlsRoot);
+  for (const scriptName of [
+    "prepare-rw-main-for-build.sh",
+    "rebuild-rw-main.sh",
+    "sync-rw-main-branches.sh",
+  ]) {
+    copyFileSync(
+      path.join(repoRoot, "dwyanewang", scriptName),
+      path.join(controlsRoot, scriptName),
+    );
+  }
+  const manifest = advanceUpstream
+    ? `feature/one # Personal branch # reviewed-main:${reviewedMain} # reviewed-head:${featureHead}\n`
+    : "# Empty test manifest\n";
+  writeFileSync(path.join(controlsRoot, "rw-main-branches.txt"), manifest);
+  git(controlRoot, "add", "dwyanewang");
+  git(controlRoot, "commit", "-m", "chore: add build controls");
+
+  const ghPath = path.join(binRoot, "gh");
+  writeFileSync(ghPath, "#!/usr/bin/env bash\nexit 0\n");
+  chmodSync(ghPath, 0o755);
+
+  let upstreamMain = reviewedMain;
+  if (advanceUpstream) {
+    const updaterRoot = path.join(fixtureRoot, "upstream-updater");
+    git(fixtureRoot, "clone", upstreamRoot, updaterRoot);
+    git(updaterRoot, "config", "user.name", "Upstream User");
+    git(updaterRoot, "config", "user.email", "upstream@example.com");
+    writeFileSync(path.join(updaterRoot, "upstream.txt"), "upstream\n");
+    git(updaterRoot, "add", "upstream.txt");
+    git(updaterRoot, "commit", "-m", "feat: upstream change");
+    git(updaterRoot, "push", "origin", "main");
+    upstreamMain = git(updaterRoot, "rev-parse", "HEAD");
+  }
+
+  return {
+    buildRoot,
+    controlRoot,
+    env: { PATH: `${binRoot}:${process.env.PATH}` },
+    fixtureRoot,
+    reviewedMain,
+    stateFile,
+    upstreamMain,
+  };
+}
+
+function runPreflight(fixture, ...syncArgs) {
+  return run(
+    fixture.controlRoot,
+    "bash",
+    [
+      "dwyanewang/prepare-rw-main-for-build.sh",
+      "--build-root",
+      fixture.buildRoot,
+      "--push",
+      "--state-file",
+      fixture.stateFile,
+      ...syncArgs,
+    ],
+    fixture.env,
+  );
+}
+
+function withFixture(options, callback) {
+  const fixture = createFixture(options);
+  try {
+    callback(fixture);
+  } finally {
+    rmSync(fixture.fixtureRoot, { force: true, recursive: true });
+  }
+}
+
+test("runs the unchanged source preflight and rw-main no-op as one command", () => {
+  withFixture({}, (fixture) => {
+    const result = runPreflight(fixture);
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /No-op: rw-main already matches every input/);
+    assert.match(result.stdout, /PASEO_RW_MAIN_REBUILT=0/);
+    assert.match(result.stdout, /PASEO_DEPENDENCIES_REINSTALLED=0/);
+    assert.match(result.stdout, /PASEO_PREFLIGHT_STATUS=ready/);
+    assert.match(readFileSync(fixture.stateFile, "utf8"), /paseo_preflight_status=ready/);
+    assert.equal(git(fixture.buildRoot, "branch", "--show-current"), "rw-main");
+  });
+});
+
+test("propagates semantic-review status before rebuilding rw-main", () => {
+  withFixture({ advanceUpstream: true }, (fixture) => {
+    const result = runPreflight(fixture);
+
+    assert.equal(result.status, 3, result.stderr);
+    assert.match(result.stdout, /Semantic review required before rebuilding rw-main/);
+    assert.match(result.stdout, new RegExp(fixture.upstreamMain));
+    assert.match(result.stdout, /upstream\.txt/);
+    assert.match(result.stdout, /PASEO_PREFLIGHT_STATUS=review-required/);
+    assert.doesNotMatch(result.stdout, /PASEO_REBUILD_SECONDS=/);
+    assert.equal(existsSync(fixture.stateFile), false);
+    assert.equal(git(fixture.controlRoot, "rev-parse", "main"), fixture.upstreamMain);
+
+    const accepted = runPreflight(fixture, "--accept-main-review", fixture.upstreamMain);
+    assert.equal(accepted.status, 4, accepted.stderr);
+    assert.match(accepted.stdout, /PASEO_PREFLIGHT_STATUS=manifest-changed/);
+    assert.doesNotMatch(accepted.stdout, /PASEO_REBUILD_SECONDS=/);
+    assert.equal(existsSync(fixture.stateFile), false);
+  });
+});

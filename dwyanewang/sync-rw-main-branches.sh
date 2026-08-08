@@ -104,6 +104,8 @@ target_branch=rw-main
 manifest_path=dwyanewang/rw-main-branches.txt
 upstream_repo=getpaseo/paseo
 expected_pr_owner=dwyanewang
+upstream_owner=${upstream_repo%%/*}
+upstream_name=${upstream_repo#*/}
 
 fail() {
   printf 'sync-rw-main-branches: %s\n' "$1" >&2
@@ -180,22 +182,96 @@ pr_head_owner=
 pr_merge_commit=
 pr_title=
 pr_url=
-query_pr() {
+declare -A queried_pr_states=()
+declare -A queried_pr_head_branches=()
+declare -A queried_pr_head_owners=()
+declare -A queried_pr_merge_commits=()
+declare -A queried_pr_titles=()
+declare -A queried_pr_urls=()
+declare -A requested_pr_queries=()
+declare -a requested_pr_numbers=()
+
+request_pr_query() {
   local requested_number=$1
-  local row
-  if ! row=$(
-    gh pr view "$requested_number" \
-      --repo "$upstream_repo" \
-      --json number,state,headRefName,headRepositoryOwner,mergeCommit,title,url \
-      --jq '[.number,.state,.headRefName,(.headRepositoryOwner.login // ""),(.mergeCommit.oid // ""),.title,.url] | join("\u001f")'
+  if [[ -z "${requested_pr_queries[$requested_number]+present}" ]]; then
+    requested_pr_queries[$requested_number]=1
+    requested_pr_numbers+=("$requested_number")
+  fi
+}
+
+while IFS= read -r manifest_line || [[ -n "$manifest_line" ]]; do
+  if [[ "$manifest_line" =~ \#[[:space:]]*PR[[:space:]]*\#([1-9][0-9]*)([[:space:]]|$) ]]; then
+    request_pr_query "${BASH_REMATCH[1]}"
+  fi
+done <"$manifest_path"
+
+for index in "${!addition_kinds[@]}"; do
+  if [[ "${addition_kinds[$index]}" == pr ]]; then
+    request_pr_query "${addition_values[$index]}"
+  fi
+done
+
+batch_query_prs() {
+  ((${#requested_pr_numbers[@]} > 0)) || return 0
+
+  local query='query BatchPaseoPullRequests($owner: String!, $name: String!) { repository(owner: $owner, name: $name) {'
+  local requested_number rows row_number row_state row_head_branch row_head_owner
+  local row_merge_commit row_title row_url
+  for requested_number in "${requested_pr_numbers[@]}"; do
+    printf -v query '%s\npr_%s: pullRequest(number: %s) { number state headRefName headRepositoryOwner { login } mergeCommit { oid } title url }' \
+      "$query" "$requested_number" "$requested_number"
+  done
+  query+=$'\n} }'
+
+  if ! rows=$(
+    gh api graphql \
+      -f "query=$query" \
+      -f "owner=$upstream_owner" \
+      -f "name=$upstream_name" \
+      --jq '.data.repository | to_entries[] | .value | select(. != null) | [.number,.state,.headRefName,(.headRepositoryOwner.login // ""),(.mergeCommit.oid // ""),.title,.url] | join("\u001f")'
   ); then
-    fail "could not query $upstream_repo PR #$requested_number"
+    fail "could not query $upstream_repo PRs: ${requested_pr_numbers[*]}"
   fi
 
-  IFS=$'\x1f' read -r pr_number pr_state pr_head_branch pr_head_owner pr_merge_commit pr_title pr_url <<<"$row"
-  [[ "$pr_number" == "$requested_number" && -n "$pr_state" && -n "$pr_head_branch" ]] ||
-    fail "invalid metadata returned for $upstream_repo PR #$requested_number"
+  while IFS=$'\x1f' read -r row_number row_state row_head_branch row_head_owner \
+    row_merge_commit row_title row_url; do
+    [[ -n "$row_number" ]] || continue
+    [[ "$row_number" =~ ^[1-9][0-9]*$ ]] || fail "invalid PR number returned by GitHub: $row_number"
+    [[ -n "${requested_pr_queries[$row_number]+present}" ]] ||
+      fail "GitHub returned unexpected PR #$row_number"
+    [[ -z "${queried_pr_states[$row_number]+present}" ]] ||
+      fail "GitHub returned duplicate metadata for PR #$row_number"
+    [[ -n "$row_state" && -n "$row_head_branch" ]] ||
+      fail "invalid metadata returned for $upstream_repo PR #$row_number"
+    queried_pr_states[$row_number]=$row_state
+    queried_pr_head_branches[$row_number]=$row_head_branch
+    queried_pr_head_owners[$row_number]=$row_head_owner
+    queried_pr_merge_commits[$row_number]=$row_merge_commit
+    queried_pr_titles[$row_number]=$row_title
+    queried_pr_urls[$row_number]=$row_url
+  done <<<"$rows"
+
+  for requested_number in "${requested_pr_numbers[@]}"; do
+    [[ -n "${queried_pr_states[$requested_number]+present}" ]] ||
+      fail "GitHub returned no metadata for $upstream_repo PR #$requested_number"
+  done
 }
+
+load_pr() {
+  local requested_number=$1
+  [[ -n "${queried_pr_states[$requested_number]+present}" ]] ||
+    fail "PR #$requested_number was not included in the batch query"
+
+  pr_number=$requested_number
+  pr_state=${queried_pr_states[$requested_number]}
+  pr_head_branch=${queried_pr_head_branches[$requested_number]}
+  pr_head_owner=${queried_pr_head_owners[$requested_number]}
+  pr_merge_commit=${queried_pr_merge_commits[$requested_number]}
+  pr_title=${queried_pr_titles[$requested_number]}
+  pr_url=${queried_pr_urls[$requested_number]}
+}
+
+batch_query_prs
 
 validate_source_branch() {
   local branch_name=$1
@@ -254,7 +330,7 @@ while IFS= read -r line || [[ -n "$line" ]]; do
       fail "duplicate PR in manifest: #$entry_pr"
     seen_manifest_prs[$entry_pr]=1
 
-    query_pr "$entry_pr"
+    load_pr "$entry_pr"
     if [[ "$pr_state" == "MERGED" ]]; then
       [[ -n "$pr_merge_commit" ]] || fail "merged PR #$entry_pr has no merge commit"
       if ! git merge-base --is-ancestor "$pr_merge_commit" "$base_branch"; then
@@ -293,7 +369,7 @@ for index in "${!addition_kinds[@]}"; do
   value=${addition_values[$index]}
 
   if [[ "$kind" == "pr" ]]; then
-    query_pr "$value"
+    load_pr "$value"
     [[ "$pr_state" == "OPEN" ]] || fail "PR #$value is $pr_state; only open PRs can be added"
     [[ "$pr_head_owner" == "$expected_pr_owner" ]] ||
       fail "PR #$value is owned by $pr_head_owner, expected $expected_pr_owner"

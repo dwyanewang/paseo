@@ -36,6 +36,7 @@ function createFixture({
   patchEquivalent = false,
   prState,
   secondBranch = false,
+  secondPr = false,
 } = {}) {
   const root = mkdtempSync(path.join(tmpdir(), "paseo-rw-main-review-"));
   git(root, "init", "-b", "main");
@@ -95,7 +96,7 @@ function createFixture({
 
   const manifestEntry = prState ? "feature/one # PR #1" : "feature/one # Personal branch";
   const secondManifestEntry = secondBranch
-    ? `feature/two # Personal branch # reviewed-main:${currentMain} # reviewed-head:${secondFeatureHead}\n`
+    ? `feature/two # ${secondPr ? "PR #2" : "Personal branch"} # reviewed-main:${currentMain} # reviewed-head:${secondFeatureHead}\n`
     : "";
   const manifestPath = path.join(controlDir, "rw-main-branches.txt");
   writeFileSync(
@@ -105,10 +106,36 @@ function createFixture({
 
   const mergeCommit = prState === "MERGED" ? currentMain : "";
   const ghPath = path.join(binDir, "gh");
-  writeFileSync(
-    ghPath,
-    `#!/usr/bin/env bash\nprintf '1\\037${prState ?? "OPEN"}\\037feature/one\\037dwyanewang\\037${mergeCommit}\\037Feature one\\037https://example.test/pr/1'\n`,
-  );
+  const ghCallLog = path.join(root, ".git", "gh-calls.log");
+  const ghRows = [
+    [
+      "1",
+      prState ?? "OPEN",
+      "feature/one",
+      "dwyanewang",
+      mergeCommit,
+      "Feature one",
+      "https://example.test/pr/1",
+    ],
+  ];
+  if (secondPr) {
+    ghRows.push([
+      "2",
+      "OPEN",
+      "feature/two",
+      "dwyanewang",
+      "",
+      "Feature two",
+      "https://example.test/pr/2",
+    ]);
+  }
+  const ghOutput = ghRows
+    .map(
+      (fields) =>
+        `printf '%s\\037%s\\037%s\\037%s\\037%s\\037%s\\037%s\\n' ${fields.map((field) => `'${field}'`).join(" ")}`,
+    )
+    .join("\n");
+  writeFileSync(ghPath, `#!/usr/bin/env bash\nprintf 'call\\n' >> "$GH_CALL_LOG"\n${ghOutput}\n`);
   chmodSync(ghPath, 0o755);
 
   git(root, "add", "dwyanewang", "test-bin");
@@ -116,8 +143,9 @@ function createFixture({
 
   return {
     currentMain,
-    env: { PATH: `${binDir}:${process.env.PATH}` },
+    env: { GH_CALL_LOG: ghCallLog, PATH: `${binDir}:${process.env.PATH}` },
     featureHead,
+    ghCallLog,
     manifestPath,
     reviewedMain,
     reviewedFeatureHead,
@@ -148,6 +176,19 @@ test("keeps existing behavior when main has already been reviewed", () => {
     assert.match(result.stdout, /manifest is already up to date/);
     assert.equal(readFileSync(fixture.manifestPath, "utf8"), before);
   });
+});
+
+test("queries all manifest PR metadata in one GitHub request", () => {
+  withFixture(
+    { advanceMain: false, prState: "OPEN", secondBranch: true, secondPr: true },
+    (fixture) => {
+      const result = runSync(fixture, "--dry-run");
+
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(readFileSync(fixture.ghCallLog, "utf8"), "call\n");
+      assert.match(result.stdout, /manifest is already up to date/);
+    },
+  );
 });
 
 test("blocks on every new upstream commit even without overlapping paths", () => {

@@ -36,9 +36,10 @@ description: 一键执行 Paseo 三端本地打包（服务端 / 安卓 APK / Wi
 
 ## rw-main 清单自动维护
 
-完整同步模式下，在重建前运行 `dwyanewang/sync-rw-main-branches.sh`：
+完整同步模式下一律从 chore worktree 调用 `dwyanewang/prepare-rw-main-for-build.sh`。它用一个确定性命令完成 worktree 预检、同步 upstream/fork、维护清单和 `rw-main` readiness gate；内部仍调用 `sync-rw-main-branches.sh` 与 `rebuild-rw-main.sh`，不能在代理侧拆回多轮命令：
 
 - 自动检查 `rw-main-branches.txt` 中带 `PR #编号` 的条目。PR 已合入且本地 `main` 已包含其 merge commit 时，自动删除该条目。
+- 同一轮需要的所有 PR 元数据必须由同步脚本用一次 GitHub GraphQL 请求批量获取；每个 PR 的状态、owner、head 和 merge commit 仍逐项验证，批量化不改变删除或审查规则。
 - 每个清单项都带 `reviewed-main:<SHA>` 与 `reviewed-head:<SHA>`，分别记录该分支上次审查时的上游 main 和功能分支 head。各分支基线独立；`main`、任一分支 head 前进或本次新增功能分支时，脚本按项列出自己的 main/head 审查区间、PR、独有/等价补丁和路径重叠证据，然后以退出码 `3` 暂停；这不是脚本故障。
 - 收到退出码 `3` 后必须逐项浏览报告中的全部提交主题和路径。新分支从自己的 `merge-base(main, branch)` 开始；已有分支从自己的 `reviewed-main` 开始，分支 head 变化还要检查 `reviewed-head..当前 head`。任何可能覆盖同一用户能力的提交都继续查看 PR 说明和完整 diff。路径或 patch 等价只用于优先检查，不能证明语义相同或不同。
 - 明确未吸收的分支保留；明确完整吸收的分支在确认命令中传 `--remove-branch <分支>`；部分吸收时先在该功能分支 worktree rebase 最新 `main`、删除重复部分并定向验证/推送，再重新审查。结论不明确时询问用户，禁止确认或继续重建。
@@ -56,13 +57,21 @@ description: 一键执行 Paseo 三端本地打包（服务端 / 安卓 APK / Wi
 /build-paseo，把 feat/example 作为长期个人分支加入清单，然后完整打包
 ```
 
-同步代码时严格执行 `打包流程.md` 第 1 节：`main` 只做上游镜像，先在 chore worktree 同步清单，再从 chore worktree 调用：
+同步代码时严格执行 `打包流程.md` 第 1 节：`main` 只做上游镜像，从 chore worktree 单次调用：
 
 ```bash
-bash "$paseo_chore_root/dwyanewang/rebuild-rw-main.sh" \
+paseo_preflight_state=/home/yangfei/Projects/paseo/.dev/build-paseo-preflight.env
+bash "$paseo_chore_root/dwyanewang/prepare-rw-main-for-build.sh" \
   --build-root /home/yangfei/Projects/paseo \
+  --state-file "$paseo_preflight_state" \
   --push
+source "$paseo_preflight_state"
+[[ "$paseo_preflight_status" == ready ]]
 ```
+
+用户指定新增项时把 `--add-pr` / `--add-branch` 原样加到这个命令。退出码 `3` 表示必须完成报告中的语义审查；审查后用同一脚本传 `--accept-main-review <当前 main 完整 SHA>` 及必要的 `--remove-branch`。退出码 `4` 表示清单已经原子更新但 readiness gate 尚未运行：此时运行 `npm run format`，确认只改了清单，提交并推送 `chore/build-paseo`，再无新增/删除参数重跑同一脚本。任何其他非零退出都立即停止。
+
+成功后 source `--state-file` 指定的文件；其中 `rw_main_rebuilt` 和 `dependencies_reinstalled` 是后续选择服务端增量/完整构建的权威值。脚本在任何失败或暂停前删除旧 state file，`paseo_preflight_status=ready` 之前不得开始重型构建。
 
 `rw-main` 只由 `main` 和清单内功能分支组成。脚本输出 `No-op:` 表示现有产品 merge 链与全部输入完全一致；默认可复用，`--dry-run` 仍强制完整验证。从非 `rw-main` 分支进入时会无条件运行 `npm install`；原本已在 `rw-main` 时，仅当 package、lockfile、`patches/**` 或 postinstall 补丁脚本变化才安装。**禁止继续把 chore、main 或 rebase 后的 PR 分支追加合并到旧 rw-main。**
 
