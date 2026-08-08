@@ -65,6 +65,8 @@ try {
 
   const successful = readSummary("successful");
   assert.equal(successful.get("exit_status"), "0");
+  assert.match(successful.get("systemd_run_exit_status"), /^\d+$/);
+  assert.match(successful.get("systemd_cleanup_degraded"), /^[01]$/);
   assert.ok(Number(successful.get("command_runtime_microseconds")) > 0);
   assert.ok(Number(successful.get("cgroup_cpu_time_microseconds")) >= 0);
   assert.ok(Number(successful.get("memory_peak_bytes")) > 0);
@@ -92,11 +94,48 @@ try {
   assert.equal(result.status, 7, result.stderr);
   assert.equal(readSummary("failed").get("exit_status"), "7");
 
+  const cleanupStartedAt = Date.now();
+  result = run(
+    "--label",
+    "lingering-child",
+    "--output-dir",
+    fixture,
+    "--interval",
+    "0.05",
+    "--",
+    "bash",
+    "-c",
+    "sleep 30 </dev/null >/dev/null 2>&1 & exit 0",
+  );
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(Date.now() - cleanupStartedAt < 10_000, "cgroup cleanup exceeded 10 seconds");
+  assert.equal(readSummary("lingering-child").get("exit_status"), "0");
+
+  const failedCleanupStartedAt = Date.now();
+  result = run(
+    "--label",
+    "failed-lingering-child",
+    "--output-dir",
+    fixture,
+    "--interval",
+    "0.05",
+    "--",
+    "bash",
+    "-c",
+    "sleep 30 </dev/null >/dev/null 2>&1 & exit 7",
+  );
+  assert.equal(result.status, 7, result.stderr);
+  assert.ok(
+    Date.now() - failedCleanupStartedAt < 10_000,
+    "failed cgroup cleanup exceeded 10 seconds",
+  );
+  assert.equal(readSummary("failed-lingering-child").get("exit_status"), "7");
+
   result = run("--label", "successful", "--output-dir", fixture, "--", "true");
   assert.equal(result.status, 1);
   assert.match(result.stderr, /refusing to overwrite an existing profile/);
 
-  console.log("profile-build-resources: 8 checks passed");
+  console.log("profile-build-resources: 14 checks passed");
 } finally {
   rmSync(fixture, { recursive: true, force: true });
 }

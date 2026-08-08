@@ -128,7 +128,9 @@ profile_wrapper=$(printf '%s\n' \
   'cpu_finished_usec=$(/usr/bin/awk "\$1 == \"usage_usec\" { print \$2; exit }" "$cgroup_dir/cpu.stat")' \
   'IFS= read -r memory_peak_bytes <"$cgroup_dir/memory.peak"' \
   'IFS= read -r swap_peak_bytes <"$cgroup_dir/memory.swap.peak"' \
-  '/usr/bin/printf "started_ns=%s\nfinished_ns=%s\nexit_status=%s\ncpu_started_usec=%s\ncpu_finished_usec=%s\nmemory_peak_bytes=%s\nswap_peak_bytes=%s\n" "$command_started_ns" "$command_finished_ns" "$command_status" "$cpu_started_usec" "$cpu_finished_usec" "$memory_peak_bytes" "$swap_peak_bytes" >"$result_file"' \
+  'result_tmp_file=$result_file.tmp.$$' \
+  '/usr/bin/printf "started_ns=%s\nfinished_ns=%s\nexit_status=%s\ncpu_started_usec=%s\ncpu_finished_usec=%s\nmemory_peak_bytes=%s\nswap_peak_bytes=%s\n" "$command_started_ns" "$command_finished_ns" "$command_status" "$cpu_started_usec" "$cpu_finished_usec" "$memory_peak_bytes" "$swap_peak_bytes" >"$result_tmp_file"' \
+  '/usr/bin/mv -- "$result_tmp_file" "$result_file"' \
   '/usr/bin/sleep "$grace_seconds"' \
   'exit "$command_status"')
 
@@ -143,6 +145,8 @@ LC_ALL=C systemd-run \
   --property=CPUAccounting=yes \
   --property=MemoryAccounting=yes \
   --property=TasksAccounting=yes \
+  --property=KillMode=control-group \
+  --property=TimeoutStopSec=3s \
   "${environment_args[@]}" \
   -- /usr/bin/bash -c "$profile_wrapper" paseo-profile-command \
   "$command_result_file" "$sampling_grace_seconds" "$@" 2>&1 | tee "$transcript_file" &
@@ -275,8 +279,8 @@ while [[ -r "$cgroup_dir/cpu.stat" ]]; do
   sleep "$sample_interval"
 done
 
-command_status=0
-wait "$profile_pipeline_pid" || command_status=$?
+systemd_run_status=0
+wait "$profile_pipeline_pid" || systemd_run_status=$?
 profile_active=0
 trap - EXIT INT TERM
 finished_at=$(date --iso-8601=seconds)
@@ -303,10 +307,6 @@ size_to_bytes() {
 }
 
 profile_status=0
-for metric in "$runtime_text" "$cpu_time_text" "$memory_peak_text" "$swap_peak_text"; do
-  [[ -n "$metric" ]] || profile_status=1
-done
-
 runtime_usec=
 systemd_cpu_time_usec=
 command_started_ns=
@@ -321,12 +321,11 @@ command_runtime_usec=
 command_wall_seconds=
 average_cores=
 host_cpu_percent=
-if ((profile_status == 0)); then
-  runtime_usec=$(timespan_to_microseconds "$runtime_text") || profile_status=1
-  systemd_cpu_time_usec=$(timespan_to_microseconds "$cpu_time_text") || profile_status=1
-  size_to_bytes "$memory_peak_text" >/dev/null || profile_status=1
-  size_to_bytes "$swap_peak_text" >/dev/null || profile_status=1
-fi
+[[ -z "$runtime_text" ]] || runtime_usec=$(timespan_to_microseconds "$runtime_text" 2>/dev/null || true)
+[[ -z "$cpu_time_text" ]] ||
+  systemd_cpu_time_usec=$(timespan_to_microseconds "$cpu_time_text" 2>/dev/null || true)
+[[ -z "$memory_peak_text" ]] || size_to_bytes "$memory_peak_text" >/dev/null 2>&1 || memory_peak_text=
+[[ -z "$swap_peak_text" ]] || size_to_bytes "$swap_peak_text" >/dev/null 2>&1 || swap_peak_text=
 
 if [[ -f "$command_result_file" ]]; then
   command_started_ns=$(sed -n 's/^started_ns=//p' "$command_result_file")
@@ -339,6 +338,12 @@ if [[ -f "$command_result_file" ]]; then
 else
   profile_status=1
 fi
+if [[ "$recorded_command_status" =~ ^[0-9]+$ ]] && ((recorded_command_status <= 255)); then
+  command_status=$recorded_command_status
+else
+  command_status=$systemd_run_status
+  profile_status=1
+fi
 if [[ "$command_started_ns" =~ ^[0-9]+$ && "$command_finished_ns" =~ ^[0-9]+$ ]] &&
   ((command_finished_ns >= command_started_ns)); then
   command_runtime_usec=$(((command_finished_ns - command_started_ns) / 1000))
@@ -346,7 +351,6 @@ if [[ "$command_started_ns" =~ ^[0-9]+$ && "$command_finished_ns" =~ ^[0-9]+$ ]]
 else
   profile_status=1
 fi
-[[ "$recorded_command_status" == "$command_status" ]] || profile_status=1
 if [[ "$command_cpu_started_usec" =~ ^[0-9]+$ && "$command_cpu_finished_usec" =~ ^[0-9]+$ ]] &&
   ((command_cpu_finished_usec >= command_cpu_started_usec)); then
   command_cpu_time_usec=$((command_cpu_finished_usec - command_cpu_started_usec))
@@ -375,6 +379,12 @@ minimum_host_mem_available_bytes=${minimum_host_mem_available_bytes:-unknown}
   printf 'started_at=%s\n' "$started_at"
   printf 'finished_at=%s\n' "$finished_at"
   printf 'exit_status=%s\n' "$command_status"
+  printf 'systemd_run_exit_status=%s\n' "$systemd_run_status"
+  if ((systemd_run_status == command_status)); then
+    printf 'systemd_cleanup_degraded=0\n'
+  else
+    printf 'systemd_cleanup_degraded=1\n'
+  fi
   printf 'wall_seconds=%s\n' "$wall_seconds"
   printf 'command_wall_seconds=%s\n' "${command_wall_seconds:-unknown}"
   printf 'command_runtime_microseconds=%s\n' "${command_runtime_usec:-unknown}"
@@ -400,6 +410,11 @@ minimum_host_mem_available_bytes=${minimum_host_mem_available_bytes:-unknown}
 } >"$summary_file"
 
 printf 'Resource profile: %s\n' "$summary_file"
+if ((systemd_run_status != command_status)); then
+  printf '%s\n' \
+    "profile-build-resources: command exit $command_status recorded; systemd-run returned $systemd_run_status during cgroup cleanup" \
+    >&2
+fi
 if ((command_status != 0)); then
   exit "$command_status"
 fi
