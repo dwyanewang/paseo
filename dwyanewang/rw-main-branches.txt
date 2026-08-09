@@ -2,10 +2,10 @@
 # sync-rw-main-branches.sh removes merged PRs; new entries are explicit only.
 # Each entry records the main/head pair last semantically reviewed.
 
-fix/project-skill-cache-invalidation # PR #2585 # reviewed-main:fd9cc5d6932fadde3dabc83162199e41c7754a5a # reviewed-head:e961d7ff5784f9199b2b57bb2f8e1aab5f3360ed
-feat/codeup-forge # PR #2507 # reviewed-main:fd9cc5d6932fadde3dabc83162199e41c7754a5a # reviewed-head:1936d5a4edbf6f43e30e4c12213057507f0ab5f9
-fix/android-keyboard-covers-input # PR #2467 # reviewed-main:fd9cc5d6932fadde3dabc83162199e41c7754a5a # reviewed-head:446c2849d7c81269542e1e39198bfbdff25d6e84
-refactor/provider-history-read # PR #2388 # reviewed-main:fd9cc5d6932fadde3dabc83162199e41c7754a5a # reviewed-head:f20d617cec6d3008f12493d019bb53155dbc7600
-fix/windows-native-optional-dependencies # PR #2817 # reviewed-main:fd9cc5d6932fadde3dabc83162199e41c7754a5a # reviewed-head:e241c3dcff95a546c3267098c93699026288999a
-feat/worktree-checkout-branch # PR #1721 # reviewed-main:fd9cc5d6932fadde3dabc83162199e41c7754a5a # reviewed-head:7af6b8b4ff40a37771e6210eb4fbfe0b22590a8c
-feat/file-image-preview # PR #2822 # reviewed-main:fd9cc5d6932fadde3dabc83162199e41c7754a5a # reviewed-head:b617d12754ce19510081ccb9fdacdfb8d657aa7c
+fix/project-skill-cache-invalidation # PR #2585 # reviewed-main:c0daf8e066e0d7379723a2a6ddea20afc71ead20 # reviewed-head:e961d7ff5784f9199b2b57bb2f8e1aab5f3360ed
+feat/codeup-forge # PR #2507 # reviewed-main:c0daf8e066e0d7379723a2a6ddea20afc71ead20 # reviewed-head:1936d5a4edbf6f43e30e4c12213057507f0ab5f9
+fix/android-keyboard-covers-input # PR #2467 # reviewed-main:c0daf8e066e0d7379723a2a6ddea20afc71ead20 # reviewed-head:446c2849d7c81269542e1e39198bfbdff25d6e84
+refactor/provider-history-read # PR #2388 # reviewed-main:c0daf8e066e0d7379723a2a6ddea20afc71ead20 # reviewed-head:f20d617cec6d3008f12493d019bb53155dbc7600
+fix/windows-native-optional-dependencies # PR #2817 # reviewed-main:c0daf8e066e0d7379723a2a6ddea20afc71ead20 # reviewed-head:e241c3dcff95a546c3267098c93699026288999a
+feat/worktree-checkout-branch # PR #1721 # reviewed-main:c0daf8e066e0d7379723a2a6ddea20afc71ead20 # reviewed-head:7af6b8b4ff40a37771e6210eb4fbfe0b22590a8c
+feat/file-image-preview # PR #2822 # reviewed-main:c0daf8e066e0d7379723a2a6ddea20afc71ead20 # reviewed-head:b617d12754ce19510081ccb9fdacdfb8d657aa7c
