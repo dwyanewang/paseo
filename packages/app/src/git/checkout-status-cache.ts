@@ -73,13 +73,14 @@ export function applyCheckoutStatusUpdateFromEvent({
   const checkoutIdentityChanged =
     previousStatus !== undefined &&
     (previousStatus.isGit !== payload.isGit ||
-      previousStatus.currentBranch !== payload.currentBranch);
+      previousStatus.currentBranch !== payload.currentBranch ||
+      previousStatus.headOid !== payload.headOid);
   queryClient.setQueryData(statusQueryKey, cachePayload);
   void queryClient.invalidateQueries({
     queryKey: checkoutCommitsQueryKey(serverId, payload.cwd),
   });
-  // Draft command results are long-lived, but project skills are branch-scoped. Ignore
-  // working-tree updates so an active autocomplete query does not repeatedly rediscover skills.
+  // Draft command results are long-lived, but project skills are checkout-scoped. Ignore
+  // working-tree-only updates so active autocomplete does not repeatedly rediscover skills.
   if (checkoutIdentityChanged) {
     void invalidateDraftAgentCommandsForCwd({ queryClient, serverId, cwd: payload.cwd });
   }
