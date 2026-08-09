@@ -14,7 +14,11 @@ and exits 3 until that review is explicitly accepted.
   --add-pr NUMBER           Add an open getpaseo/paseo PR owned by dwyanewang.
   --add-branch BRANCH       Add a pushed origin branch as a persistent personal branch.
   --remove-branch BRANCH    Remove a branch confirmed to be absorbed upstream.
-  --accept-main-review SHA  Confirm all pending branch reviews at current main.
+  --accept-review-request PATH
+                            Accept one frozen review request after semantic review.
+  --accept-main-review SHA  Confirm pending reviews at this exact main SHA.
+  --accept-branch-head BRANCH SHA
+                            Freeze one reviewed branch at this exact current head.
   --dry-run                 Print the proposed manifest diff without changing it.
   --help                    Show this help.
 
@@ -24,10 +28,12 @@ EOF
 
 dry_run=0
 accept_main_review=
+accept_review_request=
 declare -a addition_kinds=()
 declare -a addition_values=()
 declare -a removal_branches=()
 declare -A requested_removals=()
+declare -A expected_branch_heads=()
 
 while (($# > 0)); do
   case "$1" in
@@ -78,6 +84,34 @@ while (($# > 0)); do
       accept_main_review=$2
       shift 2
       ;;
+    --accept-branch-head)
+      (($# >= 3)) || {
+        printf '%s\n' 'Missing BRANCH or SHA for --accept-branch-head.' >&2
+        exit 2
+      }
+      [[ -n "$2" ]] || {
+        printf '%s\n' 'Empty BRANCH for --accept-branch-head.' >&2
+        exit 2
+      }
+      [[ -z "${expected_branch_heads[$2]+present}" ]] || {
+        printf 'Duplicate --accept-branch-head branch: %s\n' "$2" >&2
+        exit 2
+      }
+      expected_branch_heads[$2]=$3
+      shift 3
+      ;;
+    --accept-review-request)
+      (($# >= 2)) || {
+        printf '%s\n' 'Missing value for --accept-review-request.' >&2
+        exit 2
+      }
+      [[ -z "$accept_review_request" ]] || {
+        printf '%s\n' '--accept-review-request may only be specified once.' >&2
+        exit 2
+      }
+      accept_review_request=$2
+      shift 2
+      ;;
     --dry-run)
       dry_run=1
       shift
@@ -110,6 +144,74 @@ upstream_name=${upstream_repo#*/}
 fail() {
   printf 'sync-rw-main-branches: %s\n' "$1" >&2
   exit 1
+}
+
+declare -A request_branch_main_starts=()
+declare -A request_branch_head_starts=()
+load_review_request() {
+  local request_path=$1
+  local request_name request_token actual_token
+  local record field1 field2 field3 field4 field5 extra
+  local version_seen=0 main_seen=0 branch_count=0
+
+  [[ -f "$request_path" ]] || fail "review request is not a file: $request_path"
+  request_path=$(realpath -e -- "$request_path")
+  request_name=$(basename -- "$request_path")
+  [[ "$request_name" =~ ^([0-9a-f]{40})\.tsv$ ]] ||
+    fail "review request filename is not a content token: $request_name"
+  request_token=${BASH_REMATCH[1]}
+  actual_token=$(git hash-object -- "$request_path")
+  [[ "$actual_token" == "$request_token" ]] ||
+    fail "review request content does not match its token: $request_path"
+
+  while IFS=$'\t' read -r record field1 field2 field3 field4 field5 extra ||
+    [[ -n "$record$field1$field2$field3$field4$field5$extra" ]]; do
+    case "$record" in
+      paseo-rw-main-review-request)
+        ((version_seen == 0)) || fail "duplicate review request version record"
+        ((main_seen == 0 && branch_count == 0)) ||
+          fail "review request version record must be first"
+        [[ "$field1" == 1 && -z "$field2$field3$field4$field5$extra" ]] ||
+          fail "unsupported review request version record"
+        version_seen=1
+        ;;
+      main)
+        ((main_seen == 0)) || fail "duplicate review request main record"
+        ((version_seen == 1 && branch_count == 0)) ||
+          fail "review request main record must follow its version"
+        [[ "$field1" =~ ^[0-9a-f]{40}$ && -z "$field2$field3$field4$field5$extra" ]] ||
+          fail "malformed review request main record"
+        accept_main_review=$field1
+        main_seen=1
+        ;;
+      branch)
+        ((version_seen == 1 && main_seen == 1)) ||
+          fail "review request branch record must follow its main"
+        [[ -n "$field1" && "$field2" =~ ^[0-9a-f]{40}$ &&
+          "$field3" =~ ^[0-9a-f]{40}$ && "$field4" =~ ^[0-9a-f]{40}$ &&
+          "$field5" =~ ^[0-9a-f]{40}$ && -z "$extra" ]] ||
+          fail "malformed review request branch record"
+        git check-ref-format --branch "$field1" >/dev/null ||
+          fail "invalid branch in review request: $field1"
+        [[ -z "${expected_branch_heads[$field1]+present}" ]] ||
+          fail "duplicate branch in review request: $field1"
+        request_branch_main_starts[$field1]=$field2
+        request_branch_head_starts[$field1]=$field4
+        expected_branch_heads[$field1]=$field5
+        [[ "$field3" == "$accept_main_review" ]] ||
+          fail "review request branch main does not match its main record: $field1"
+        ((branch_count += 1))
+        ;;
+      *)
+        fail "unknown review request record: ${record:-<empty>}"
+        ;;
+    esac
+  done <"$request_path"
+
+  ((version_seen == 1)) || fail "review request is missing its version record"
+  ((main_seen == 1)) || fail "review request is missing its main record"
+  ((branch_count > 0)) || fail "review request contains no branch ranges"
+  accept_review_request=$request_path
 }
 
 trim() {
@@ -155,12 +257,46 @@ parse_review_metadata() {
 git show-ref --verify --quiet "refs/heads/$base_branch" || fail "missing local branch: $base_branch"
 base_head=$(git rev-parse "$base_branch")
 
+if [[ -n "$accept_review_request" ]]; then
+  [[ -z "$accept_main_review" && ${#expected_branch_heads[@]} -eq 0 ]] ||
+    fail "--accept-review-request cannot be combined with explicit review coordinates"
+  load_review_request "$accept_review_request"
+fi
+
 if [[ -n "$accept_main_review" ]]; then
   [[ "$accept_main_review" =~ ^[0-9a-f]{40}$ ]] ||
     fail "--accept-main-review must be a full lowercase commit SHA"
   [[ "$accept_main_review" == "$base_head" ]] ||
     fail "--accept-main-review must equal current $base_branch: $base_head"
 fi
+
+if ((${#expected_branch_heads[@]} > 0)) && [[ -z "$accept_main_review" ]]; then
+  fail "--accept-branch-head requires --accept-main-review"
+fi
+for branch_name in "${!expected_branch_heads[@]}"; do
+  git check-ref-format --branch "$branch_name" >/dev/null ||
+    fail "invalid --accept-branch-head branch: $branch_name"
+  [[ "${expected_branch_heads[$branch_name]}" =~ ^[0-9a-f]{40}$ ]] ||
+    fail "expected head for $branch_name must be a full lowercase commit SHA"
+done
+
+verify_accepted_ref_tips() {
+  local branch_name current_head current_main
+  [[ -n "$accept_main_review" ]] || return 0
+
+  current_main=$(git rev-parse --verify "refs/heads/$base_branch" 2>/dev/null) ||
+    fail "$base_branch disappeared during semantic review"
+  [[ "$current_main" == "$accept_main_review" ]] ||
+    fail "$base_branch moved during semantic review: expected $accept_main_review, current $current_main"
+  for branch_name in "${!expected_branch_heads[@]}"; do
+    current_head=$(git rev-parse --verify "refs/heads/$branch_name" 2>/dev/null) ||
+      fail "$branch_name disappeared during semantic review"
+    [[ "$current_head" == "${expected_branch_heads[$branch_name]}" ]] ||
+      fail "$branch_name moved during semantic review: expected ${expected_branch_heads[$branch_name]}, current $current_head"
+  done
+}
+
+verify_accepted_ref_tips
 
 if ((${#removal_branches[@]} > 0)) && [[ -z "$accept_main_review" ]]; then
   fail "--remove-branch requires --accept-main-review $base_head"
@@ -430,20 +566,97 @@ for index in "${!addition_kinds[@]}"; do
 done
 
 declare -a review_branches=()
+declare -a pending_review_branches=()
 declare -A current_branch_heads=()
+declare -A review_main_starts=()
 for branch_name in "${!branch_indexes[@]}"; do
   line_index=${branch_indexes[$branch_name]}
-  [[ -z "${dropped_line_indexes[$line_index]+present}" ]] || continue
   current_branch_heads[$branch_name]=$(git rev-parse "$branch_name")
   if [[ -n "${newly_added_branches[$branch_name]+present}" ]] ||
     [[ "${branch_reviewed_mains[$branch_name]}" != "$base_head" ]] ||
     [[ "${branch_reviewed_heads[$branch_name]}" != "${current_branch_heads[$branch_name]}" ]]; then
-    review_branches+=("$branch_name")
+    branch_base=$(git merge-base "$base_branch" "$branch_name")
+    review_main_starts[$branch_name]=${branch_reviewed_mains[$branch_name]}
+    if [[ -n "${newly_added_branches[$branch_name]+present}" ]]; then
+      review_main_starts[$branch_name]=$branch_base
+    fi
+    pending_review_branches+=("$branch_name")
+    if [[ -z "${dropped_line_indexes[$line_index]+present}" ]]; then
+      review_branches+=("$branch_name")
+    fi
   fi
 done
+if ((${#pending_review_branches[@]} > 0)); then
+  mapfile -t pending_review_branches < <(printf '%s\n' "${pending_review_branches[@]}" | sort)
+fi
 if ((${#review_branches[@]} > 0)); then
   mapfile -t review_branches < <(printf '%s\n' "${review_branches[@]}" | sort)
 fi
+
+if [[ -n "$accept_main_review" ]]; then
+  declare -A required_expected_heads=()
+  for branch_name in "${pending_review_branches[@]}" "${removal_branches[@]}"; do
+    [[ -n "$branch_name" ]] || continue
+    required_expected_heads[$branch_name]=1
+  done
+  for branch_name in "${!required_expected_heads[@]}"; do
+    [[ -n "${expected_branch_heads[$branch_name]+present}" ]] ||
+      fail "accepted review is missing the expected current head for $branch_name"
+    [[ -n "${current_branch_heads[$branch_name]+present}" ]] ||
+      fail "accepted review branch is no longer in the manifest: $branch_name"
+    [[ "${current_branch_heads[$branch_name]}" == "${expected_branch_heads[$branch_name]}" ]] ||
+      fail "$branch_name moved during semantic review: expected ${expected_branch_heads[$branch_name]}, current ${current_branch_heads[$branch_name]}"
+  done
+  for branch_name in "${!expected_branch_heads[@]}"; do
+    [[ -n "${required_expected_heads[$branch_name]+present}" ]] ||
+      fail "accepted review includes a branch that is no longer pending: $branch_name"
+  done
+
+  if [[ -n "$accept_review_request" ]]; then
+    for branch_name in "${pending_review_branches[@]}"; do
+      [[ "${request_branch_main_starts[$branch_name]:-}" == "${review_main_starts[$branch_name]}" ]] ||
+        fail "main review range for $branch_name changed after the request was created"
+      [[ "${request_branch_head_starts[$branch_name]:-}" == "${branch_reviewed_heads[$branch_name]}" ]] ||
+        fail "branch review range for $branch_name changed after the request was created"
+    done
+  fi
+fi
+
+write_review_request() {
+  local request_dir request_temp request_token request_path branch_name
+  request_dir=$(git rev-parse --git-path paseo-review-requests)
+  if [[ "$request_dir" != /* ]]; then
+    request_dir="$repo_root/$request_dir"
+  fi
+  request_dir=$(realpath -m -- "$request_dir")
+  mkdir -p -- "$request_dir"
+
+  request_temp=$(mktemp "$request_dir/.request.XXXXXX")
+  (
+    trap 'rm -f -- "$request_temp"' EXIT
+    {
+      printf 'paseo-rw-main-review-request\t1\n'
+      printf 'main\t%s\n' "$base_head"
+      for branch_name in "${review_branches[@]}"; do
+        printf 'branch\t%s\t%s\t%s\t%s\t%s\n' \
+          "$branch_name" "${review_main_starts[$branch_name]}" "$base_head" \
+          "${branch_reviewed_heads[$branch_name]}" "${current_branch_heads[$branch_name]}"
+      done
+    } >"$request_temp"
+    request_token=$(git hash-object -- "$request_temp")
+    request_path="$request_dir/$request_token.tsv"
+    chmod 400 "$request_temp"
+    if [[ -e "$request_path" ]]; then
+      cmp --silent "$request_temp" "$request_path" ||
+        fail "review request token collision: $request_path"
+      rm -f -- "$request_temp"
+    else
+      mv -- "$request_temp" "$request_path"
+    fi
+    trap - EXIT
+    printf '%s\n' "$request_path"
+  )
+}
 
 print_review_report() {
   local branch_name branch_base cherry_output current_head equivalent_count
@@ -456,10 +669,7 @@ print_review_report() {
     reviewed_main=${branch_reviewed_mains[$branch_name]}
     reviewed_head=${branch_reviewed_heads[$branch_name]}
     current_head=${current_branch_heads[$branch_name]}
-    upstream_start=$reviewed_main
-    if [[ -n "${newly_added_branches[$branch_name]+present}" ]]; then
-      upstream_start=$branch_base
-    fi
+    upstream_start=${review_main_starts[$branch_name]}
 
     printf '\n%s\n' "$branch_name"
     printf '  Main review:   %s..%s\n' "$upstream_start" "$base_head"
@@ -511,12 +721,14 @@ print_review_report() {
   done
 
   printf '\nReview every per-branch main/head range above. Path and patch matches only prioritize inspection.\n'
-  printf 'After review, rerun with --accept-main-review %s and any --remove-branch decisions.\n' \
-    "$base_head"
+  printf 'After review, accept only the frozen request printed below, plus any --remove-branch decisions.\n'
 }
 
 if ((${#review_branches[@]} > 0)) && [[ -z "$accept_main_review" ]]; then
+  review_request_path=$(write_review_request)
   print_review_report
+  printf 'PASEO_REVIEW_REQUEST_FILE=%s\n' "$review_request_path"
+  printf 'Accept the frozen coordinates with --accept-review-request %q.\n' "$review_request_path"
   exit 3
 fi
 
@@ -541,6 +753,10 @@ for ((index = 0; index < ${#output_lines[@]}; index++)); do
   printf '%s\n' "${output_lines[$index]}"
 done >"$proposed_manifest"
 
+# Recheck immediately before any manifest result is accepted. This catches refs
+# that moved while PR metadata and semantic ranges were being evaluated.
+verify_accepted_ref_tips
+
 if cmp --silent "$manifest_path" "$proposed_manifest"; then
   printf '%s\n' 'rw-main branch manifest is already up to date.'
   exit 0
@@ -555,6 +771,10 @@ if ((dry_run)); then
 fi
 
 chmod --reference="$manifest_path" "$proposed_manifest"
+# Keep the final ref check adjacent to the atomic manifest replacement. The
+# earlier check protects comparison/reporting; this one closes that reporting
+# window before accepted coordinates are persisted.
+verify_accepted_ref_tips
 mv -- "$proposed_manifest" "$manifest_path"
 trap - EXIT
 printf 'Updated %s. Review and commit it before rebuilding rw-main.\n' "$manifest_path"

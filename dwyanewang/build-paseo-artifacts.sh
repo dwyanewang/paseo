@@ -8,7 +8,7 @@ Usage: bash dwyanewang/build-paseo-artifacts.sh --build-root PATH \
   (--preflight-state PATH | --skip-preflight) [options]
 
 Build and verify the Paseo server, Android ARM64 APK, and Windows x64 zip from
-the dedicated product worktree. The script owns stage logging, Android resource
+the dedicated product worktree. The script owns stage logging, resource
 profiles, terminal-webview cleanup, final artifact verification, and the
 download service.
 
@@ -39,6 +39,7 @@ run_dir_arg=
 download_port=8800
 download_ttl=10800
 serve_dist=1
+parallel_min_available_bytes=${PASEO_BUILD_PARALLEL_MIN_AVAILABLE_BYTES:-17179869184}
 
 while (($# > 0)); do
   case "$1" in
@@ -110,6 +111,9 @@ download_ttl=$((10#$download_ttl))
 ((download_port != 6767)) || fail "refusing to use the main daemon port 6767" 2
 ((download_ttl >= 1 && download_ttl <= 604800)) ||
   fail "download TTL must be in 1..604800: $download_ttl" 2
+[[ "$parallel_min_available_bytes" =~ ^[0-9]+$ ]] ||
+  fail "parallel minimum available memory must be numeric: $parallel_min_available_bytes" 2
+parallel_min_available_bytes=$((10#$parallel_min_available_bytes))
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 control_root=$(git -C "$script_dir/.." rev-parse --show-toplevel 2>/dev/null) ||
@@ -136,6 +140,16 @@ canonical_common_dir() {
 
 [[ "$(canonical_common_dir "$control_root")" == "$(canonical_common_dir "$build_root")" ]] ||
   fail "control and build worktrees do not belong to the same Git repository"
+
+for required_command in flock setsid; do
+  command -v "$required_command" >/dev/null || fail "$required_command is required"
+done
+mkdir -p -- "$build_root/.dev"
+build_lock_file="$build_root/.dev/build-paseo-artifacts.lock"
+exec {build_lock_fd}>"$build_lock_file"
+flock -n "$build_lock_fd" ||
+  fail "another build-paseo workflow already owns the build root: $build_root"
+
 control_branch=$(git -C "$control_root" symbolic-ref --quiet --short HEAD) ||
   fail "control worktree is detached: $control_root"
 [[ "$control_branch" == chore/build-paseo ]] ||
@@ -146,6 +160,8 @@ build_branch=$(git -C "$build_root" symbolic-ref --quiet --short HEAD) ||
   fail "build worktree is detached: $build_root"
 [[ -z "$(git -C "$build_root" status --porcelain)" ]] ||
   fail "build worktree is not clean: $build_root"
+control_start_head=$(git -C "$control_root" rev-parse HEAD)
+build_start_head=$(git -C "$build_root" rev-parse HEAD)
 
 run_id=$(date +%Y%m%d-%H%M%S)-$$
 if [[ -n "$run_dir_arg" ]]; then
@@ -167,6 +183,15 @@ exec > >(tee -a "$full_log") 2>&1
 started_epoch=$(date +%s)
 terminal_webview=packages/app/src/terminal/webview/terminal-emulator-webview-html.ts
 terminal_restore_needed=0
+distribution_cleanup_needed=0
+result_temp=
+android_native_pid=
+windows_pid=
+android_native_log="$run_dir/android-native-assemble.branch.log"
+windows_log="$run_dir/windows-artifacts.branch.log"
+android_native_bundle_gate=not-checked
+artifact_parallel_mode=not-evaluated
+mem_available_bytes=0
 
 write_exit_status() {
   local status=$1 status_temp
@@ -182,10 +207,52 @@ restore_terminal_webview() {
   [[ -z "$(git -C "$build_root" status --porcelain -- "$terminal_webview")" ]]
 }
 
+terminate_branch_group() {
+  local pid=$1
+  [[ -n "$pid" ]] || return 0
+  # Let the profile wrapper handle TERM first so its EXIT trap can stop the
+  # transient systemd cgroup. Killing the whole process group immediately can
+  # kill systemd-run/tee before that cleanup reaches the unit.
+  kill -TERM -- "$pid" 2>/dev/null || true
+  for _ in {1..30}; do
+    if ! kill -0 -- "$pid" 2>/dev/null; then
+      kill -TERM -- "-$pid" 2>/dev/null || true
+      return 0
+    fi
+    sleep 0.1
+  done
+  kill -TERM -- "-$pid" 2>/dev/null || true
+  for _ in {1..10}; do
+    kill -0 -- "-$pid" 2>/dev/null || return 0
+    sleep 0.1
+  done
+  kill -KILL -- "-$pid" 2>/dev/null || true
+}
+
+stop_active_branches() {
+  local pid
+  for pid in "$android_native_pid" "$windows_pid"; do
+    terminate_branch_group "$pid"
+  done
+  for pid in "$android_native_pid" "$windows_pid"; do
+    [[ -n "$pid" ]] && wait "$pid" >/dev/null 2>&1 || true
+  done
+  android_native_pid=
+  windows_pid=
+}
+
 finish() {
   local status=$? restore_status=0
   trap - EXIT INT TERM
   set +e
+  stop_active_branches
+  if ((status != 0 && distribution_cleanup_needed)); then
+    (
+      eval "exec ${build_lock_fd}>&-"
+      exec bash "$control_root/dwyanewang/serve-dist.sh" stop
+    ) || printf '%s\n' 'build-paseo-artifacts: failed to stop distribution after a late build failure.' >&2
+    distribution_cleanup_needed=0
+  fi
   if ((terminal_restore_needed)); then
     git -C "$build_root" restore --worktree -- "$terminal_webview"
     restore_status=$?
@@ -202,6 +269,7 @@ finish() {
     printf 'PASEO_ARTIFACT_BUILD_STATUS=ready\n'
   else
     rm -f -- "$result_file"
+    [[ -z "$result_temp" ]] || rm -f -- "$result_temp"
     printf 'PASEO_ARTIFACT_BUILD_STATUS=failed\n' >&2
   fi
   printf 'PASEO_BUILD_RUN_DIR=%s\nPASEO_BUILD_LOG=%s\nPASEO_BUILD_EXIT_STATUS_FILE=%s\n' \
@@ -219,6 +287,259 @@ stage() {
   printf '%s\n' "$line" >>"$stage_log"
 }
 
+print_branch_log() {
+  local label=$1 log_file=$2
+  printf 'PASEO_PARALLEL_BRANCH_LOG_BEGIN=%s|%s\n' "$label" "$log_file"
+  if [[ -f "$log_file" ]]; then
+    cat -- "$log_file"
+  else
+    printf 'build-paseo-artifacts: branch log is missing: %s\n' "$log_file" >&2
+  fi
+  printf 'PASEO_PARALLEL_BRANCH_LOG_END=%s|%s\n' "$label" "$log_file"
+}
+
+launch_android_native_branch() {
+  (
+    cd "$build_root/packages/app/android"
+    eval "exec ${build_lock_fd}>&-"
+    exec setsid bash "$control_root/dwyanewang/profile-build-resources.sh" \
+      --label android-native-assemble \
+      --output-dir "$resource_profile_dir" \
+      -- ./gradlew assembleRelease \
+      --console=plain --no-daemon --parallel --max-workers=8 \
+      -Dorg.gradle.jvmargs="-Xmx4g -XX:MaxMetaspaceSize=1024m" \
+      -PreactNativeArchitectures=arm64-v8a
+  ) >"$android_native_log" 2>&1 &
+  android_native_pid=$!
+}
+
+launch_windows_branch() {
+  (
+    cd "$build_root"
+    eval "exec ${build_lock_fd}>&-"
+    exec setsid bash "$control_root/dwyanewang/profile-build-resources.sh" \
+      --label windows-artifacts \
+      --output-dir "$resource_profile_dir" \
+      -- bash -c '
+        set -Eeuo pipefail
+        build_root=$1
+        cd "$build_root"
+        windows_stage() {
+          printf "[%s] windows: %s\n" "$(date "+%Y-%m-%d %H:%M:%S %z")" "$1"
+        }
+        windows_stage "build two-way-audio"
+        npm run build --workspace=@getpaseo/expo-two-way-audio
+        windows_stage "export Electron web bundle"
+        (cd packages/app && PASEO_WEB_PLATFORM=electron npx expo export --platform web)
+        windows_stage "compile Electron main process"
+        npm run build:main --workspace=@getpaseo/desktop
+        windows_stage "package x64 zip with compression level 3"
+        (
+          cd packages/desktop
+          ELECTRON_BUILDER_COMPRESSION_LEVEL=3 \
+            npx electron-builder --config electron-builder.yml --win zip --x64 --publish never
+        )
+      ' paseo-windows "$build_root"
+  ) >"$windows_log" 2>&1 &
+  windows_pid=$!
+}
+
+wait_for_active_branches() {
+  local completed_pid completed_status completed_name first_failure=0 first_failure_name=
+  local -a active_pids
+
+  while [[ -n "$android_native_pid" || -n "$windows_pid" ]]; do
+    active_pids=()
+    [[ -n "$android_native_pid" ]] && active_pids+=("$android_native_pid")
+    [[ -n "$windows_pid" ]] && active_pids+=("$windows_pid")
+    completed_pid=
+    set +e
+    wait -n -p completed_pid "${active_pids[@]}"
+    completed_status=$?
+    set -e
+
+    case "${completed_pid:-}" in
+      "$android_native_pid")
+        completed_name=android-native-assemble
+        android_native_pid=
+        ;;
+      "$windows_pid")
+        completed_name=windows-artifacts
+        windows_pid=
+        ;;
+      *)
+        completed_name=unknown
+        ((first_failure != 0)) || first_failure=1
+        [[ -n "$first_failure_name" ]] || first_failure_name=wait-controller
+        stop_active_branches
+        break
+        ;;
+    esac
+
+    stage "parallel: $completed_name exited with status $completed_status"
+    if ((completed_status != 0 && first_failure == 0)); then
+      first_failure=$completed_status
+      first_failure_name=$completed_name
+      stage "parallel: $completed_name failed; terminate the sibling process group"
+      terminate_branch_group "$android_native_pid"
+      terminate_branch_group "$windows_pid"
+      if [[ -n "$android_native_pid" ]]; then
+        set +e
+        wait "$android_native_pid"
+        completed_status=$?
+        set -e
+        stage "parallel: terminated android-native-assemble sibling exited with status $completed_status"
+        android_native_pid=
+      fi
+      if [[ -n "$windows_pid" ]]; then
+        set +e
+        wait "$windows_pid"
+        completed_status=$?
+        set -e
+        stage "parallel: terminated windows-artifacts sibling exited with status $completed_status"
+        windows_pid=
+      fi
+    fi
+  done
+
+  if ((first_failure != 0)); then
+    printf 'build-paseo-artifacts: parallel branch failed: %s (status %s)\n' \
+      "$first_failure_name" "$first_failure" >&2
+    return "$first_failure"
+  fi
+}
+
+wait_for_android_bundle_gate() {
+  local observed_line native_status
+  local task_line='> Task :app:createBundleReleaseJsAndAssets'
+  local gate_line='> Task :app:createBundleReleaseJsAndAssets UP-TO-DATE'
+
+  while :; do
+    observed_line=$(
+      awk -v task="$task_line" '
+        $0 == task || index($0, task " ") == 1 { print; exit }
+      ' "$android_native_log"
+    )
+    if [[ "$observed_line" == "$gate_line" ]]; then
+      android_native_bundle_gate=up-to-date
+      stage "android: second-phase bundle producer is UP-TO-DATE; Windows may start"
+      return 0
+    fi
+    if [[ -n "$observed_line" ]]; then
+      android_native_bundle_gate=not-up-to-date
+      stage "android: second-phase bundle producer is not UP-TO-DATE; stop before Windows"
+      terminate_branch_group "$android_native_pid"
+      if wait "$android_native_pid"; then
+        native_status=0
+      else
+        native_status=$?
+      fi
+      android_native_pid=
+      printf 'build-paseo-artifacts: second Android phase attempted to rerun the bundle producer: %s\n' \
+        "$observed_line" >&2
+      return 1
+    fi
+    kill -0 "$android_native_pid" 2>/dev/null || break
+    sleep 0.05
+  done
+
+  # The process may have written its last line immediately before exiting.
+  observed_line=$(
+    awk -v task="$task_line" '
+      $0 == task || index($0, task " ") == 1 { print; exit }
+    ' "$android_native_log"
+  )
+  if [[ "$observed_line" == "$gate_line" ]]; then
+    android_native_bundle_gate=up-to-date
+    stage "android: second-phase bundle producer is UP-TO-DATE; Windows may start"
+    return 0
+  fi
+  if [[ -n "$observed_line" ]]; then
+    android_native_bundle_gate=not-up-to-date
+    if wait "$android_native_pid"; then
+      native_status=0
+    else
+      native_status=$?
+    fi
+    android_native_pid=
+    printf 'build-paseo-artifacts: second Android phase attempted to rerun the bundle producer: %s\n' \
+      "$observed_line" >&2
+    return 1
+  fi
+
+  if wait "$android_native_pid"; then
+    native_status=0
+  else
+    native_status=$?
+  fi
+  android_native_pid=
+  if ((native_status != 0)); then
+    android_native_bundle_gate=native-failed-before-gate
+    stage "android: native branch failed before the bundle producer gate (status $native_status)"
+    return "$native_status"
+  fi
+  android_native_bundle_gate=missing
+  printf '%s\n' \
+    'build-paseo-artifacts: Android native branch completed without an UP-TO-DATE bundle producer gate' \
+    >&2
+  return 1
+}
+
+read_mem_available_bytes() {
+  awk '$1 == "MemAvailable:" { printf "%.0f\n", $2 * 1024; found = 1; exit } END { if (!found) exit 1 }' \
+    /proc/meminfo
+}
+
+run_profiled_artifact_branches() {
+  local status=0
+  launch_android_native_branch
+  if wait_for_android_bundle_gate; then
+    status=0
+  else
+    status=$?
+  fi
+
+  if ((status == 0)); then
+    mem_available_bytes=$(read_mem_available_bytes) ||
+      fail "could not read MemAvailable from /proc/meminfo"
+    if ((mem_available_bytes >= parallel_min_available_bytes)); then
+      artifact_parallel_mode=concurrent
+      stage "artifact branches: concurrent mode after bundle gate (MemAvailable=$mem_available_bytes, minimum=$parallel_min_available_bytes)"
+    else
+      artifact_parallel_mode=serial-low-memory
+      stage "artifact branches: serial low-memory fallback after bundle gate (MemAvailable=$mem_available_bytes, minimum=$parallel_min_available_bytes)"
+    fi
+  fi
+
+  if ((status == 0)) && [[ "$artifact_parallel_mode" == concurrent ]]; then
+    launch_windows_branch
+    if wait_for_active_branches; then
+      status=0
+    else
+      status=$?
+    fi
+  elif ((status == 0)); then
+    if wait_for_active_branches; then
+      status=0
+    else
+      status=$?
+    fi
+    if ((status == 0)); then
+      launch_windows_branch
+      if wait_for_active_branches; then
+        status=0
+      else
+        status=$?
+      fi
+    fi
+  fi
+
+  stage "artifact branches: replay isolated logs"
+  print_branch_log android-native-assemble "$android_native_log"
+  print_branch_log windows-artifacts "$windows_log"
+  return "$status"
+}
+
 printf 'PASEO_BUILD_RUN_DIR=%s\nPASEO_BUILD_LOG=%s\nPASEO_BUILD_STAGE_LOG=%s\n' \
   "$run_dir" "$full_log" "$stage_log"
 
@@ -228,7 +549,7 @@ preflight_mode=skipped
 if [[ -n "$preflight_state_arg" ]]; then
   preflight_state=$(realpath -e -- "$preflight_state_arg" 2>/dev/null) ||
     fail "preflight state does not exist: $preflight_state_arg"
-  unset paseo_preflight_status rw_main_rebuilt dependencies_reinstalled rw_main_after
+  unset paseo_preflight_status rw_main_rebuilt dependencies_reinstalled rw_main_after main_after control_head
   # The file is written atomically by prepare-rw-main-for-build.sh and is a
   # sourceable shell state contract shared by the two versioned orchestrators.
   source "$preflight_state"
@@ -240,11 +561,21 @@ if [[ -n "$preflight_state_arg" ]]; then
     fail "invalid dependencies_reinstalled value in preflight state"
   [[ "${rw_main_after:-}" =~ ^[0-9a-f]{40}$ ]] ||
     fail "invalid rw_main_after value in preflight state"
+  [[ "${main_after:-}" =~ ^[0-9a-f]{40}$ ]] ||
+    fail "invalid main_after value in preflight state"
+  [[ "${control_head:-}" =~ ^[0-9a-f]{40}$ ]] ||
+    fail "invalid control_head value in preflight state"
   [[ "$build_branch" == rw-main ]] ||
     fail "ready builds must use rw-main (current: $build_branch)"
   current_build_head=$(git -C "$build_root" rev-parse HEAD)
   [[ "$current_build_head" == "$rw_main_after" ]] ||
     fail "preflight state is stale: expected $rw_main_after, current $current_build_head"
+  current_main_head=$(git -C "$control_root" rev-parse --verify refs/heads/main)
+  [[ "$current_main_head" == "$main_after" ]] ||
+    fail "preflight state is stale: main expected $main_after, current $current_main_head"
+  current_control_head=$(git -C "$control_root" rev-parse HEAD)
+  [[ "$current_control_head" == "$control_head" ]] ||
+    fail "preflight state is stale: control expected $control_head, current $current_control_head"
   preflight_mode=ready-state
 fi
 
@@ -309,37 +640,18 @@ stage "android: Metro/Hermes first phase (profile: $resource_profile_dir)"
 android_bundle="$build_root/packages/app/android/app/build/generated/assets/createBundleReleaseJsAndAssets/index.android.bundle"
 [[ -s "$android_bundle" ]] || fail "Android bundle is missing or empty: $android_bundle"
 
-stage "android: ARM64 native assemble second phase"
-(
-  cd packages/app/android
-  bash "$control_root/dwyanewang/profile-build-resources.sh" \
-    --label android-native-assemble \
-    --output-dir "$resource_profile_dir" \
-    -- ./gradlew assembleRelease \
-    --no-daemon --parallel --max-workers=8 \
-    -Dorg.gradle.jvmargs="-Xmx4g -XX:MaxMetaspaceSize=1024m" \
-    -PreactNativeArchitectures=arm64-v8a
-)
+export PYTHONPATH= PYTHONHOME= WINEDEBUG=-all CI=1
+stage "artifact branches: launch Android ARM64 native assemble; gate Windows on the bundle producer"
+printf 'PASEO_PARALLEL_BRANCH_LOG=android-native-assemble|%s\n' "$android_native_log"
+printf 'PASEO_PARALLEL_BRANCH_LOG=windows-artifacts|%s\n' "$windows_log"
+run_profiled_artifact_branches
+
 native_transcript="$resource_profile_dir/android-native-assemble.transcript.log"
-grep -F '> Task :app:createBundleReleaseJsAndAssets UP-TO-DATE' "$native_transcript" >/dev/null ||
+grep -Fx '> Task :app:createBundleReleaseJsAndAssets UP-TO-DATE' "$native_transcript" >/dev/null ||
   fail "second Android phase did not keep the bundle producer UP-TO-DATE: $native_transcript"
 apk_artifact="$build_root/packages/app/android/app/build/outputs/apk/release/app-release.apk"
 [[ -s "$apk_artifact" ]] || fail "Android APK is missing or empty: $apk_artifact"
 stage "android: APK and second-phase bundle producer verified"
-
-stage "windows: build two-way-audio"
-export PYTHONPATH= PYTHONHOME= WINEDEBUG=-all CI=1
-npm run build --workspace=@getpaseo/expo-two-way-audio
-stage "windows: export Electron web bundle"
-(cd packages/app && PASEO_WEB_PLATFORM=electron npx expo export --platform web)
-stage "windows: compile Electron main process"
-npm run build:main --workspace=@getpaseo/desktop
-stage "windows: package x64 zip with compression level 3"
-(
-  cd packages/desktop
-  ELECTRON_BUILDER_COMPRESSION_LEVEL=3 \
-    npx electron-builder --config electron-builder.yml --win zip --x64 --publish never
-)
 
 version=$(node -e '
   const pkg = require(process.argv[1]);
@@ -348,7 +660,7 @@ version=$(node -e '
 ' "$build_root/package.json") || fail "could not read a safe package version"
 zip_artifact="$build_root/packages/desktop/release/Paseo-Setup-${version}-x64.zip"
 [[ -s "$zip_artifact" ]] || fail "Windows zip is missing or empty: $zip_artifact"
-stage "windows: x64 zip verified"
+stage "windows: profiled x64 zip verified"
 
 restore_terminal_webview
 stage "cleanup: terminal-webview restored"
@@ -356,18 +668,20 @@ stage "cleanup: terminal-webview restored"
   fail "build worktree is not clean after artifact generation: $build_root"
 [[ -z "$(git -C "$control_root" status --porcelain)" ]] ||
   fail "control worktree changed during artifact generation: $control_root"
-
-download_service_started=0
-if ((serve_dist)); then
-  stage "serve-dist: start download service"
-  bash "$control_root/dwyanewang/serve-dist.sh" "$download_port" "$download_ttl"
-  download_service_started=1
+[[ "$(git -C "$control_root" rev-parse HEAD)" == "$control_start_head" ]] ||
+  fail "control HEAD changed during artifact generation: $control_root"
+[[ "$(git -C "$build_root" rev-parse HEAD)" == "$build_start_head" ]] ||
+  fail "build HEAD changed during artifact generation: $build_root"
+if [[ "$preflight_mode" == ready-state ]]; then
+  [[ "$(git -C "$control_root" rev-parse refs/heads/main)" == "$main_after" ]] ||
+    fail "main moved during artifact generation; rerun preflight"
 fi
 
-finished_epoch=$(date +%s)
-total_seconds=$((finished_epoch - started_epoch))
+download_service_started=0
 metro_summary="$resource_profile_dir/android-metro-hermes.summary"
 native_summary="$resource_profile_dir/android-native-assemble.summary"
+windows_summary="$resource_profile_dir/windows-artifacts.summary"
+windows_transcript="$resource_profile_dir/windows-artifacts.transcript.log"
 stat --printf='PASEO_ARTIFACT_STAT=%n|%s|%y\n' \
   "$server_artifact" "$apk_artifact" "$zip_artifact"
 summary_keys=(
@@ -379,20 +693,40 @@ summary_keys=(
   peak_sampled_cpu_cores
   memory_peak_bytes
   swap_peak_bytes
+  minimum_host_mem_available_bytes
 )
-for summary in "$metro_summary" "$native_summary"; do
-  [[ -s "$summary" ]] || fail "Android resource summary is missing or empty: $summary"
+for summary in "$metro_summary" "$native_summary" "$windows_summary"; do
+  [[ -s "$summary" ]] || fail "resource summary is missing or empty: $summary"
   for summary_key in "${summary_keys[@]}"; do
     grep -q "^${summary_key}=" "$summary" ||
-      fail "Android resource summary is missing $summary_key: $summary"
+      fail "resource summary is missing $summary_key: $summary"
   done
   grep -q '^exit_status=0$' "$summary" ||
-    fail "Android resource summary recorded a failed command: $summary"
-  printf 'PASEO_ANDROID_SUMMARY_BEGIN=%s\n' "$summary"
-  grep -E '^(command_wall_seconds|average_cpu_cores|peak_sampled_cpu_cores|host_cpu_percent|memory_peak_bytes|swap_peak_bytes|exit_status|systemd_cleanup_degraded)=' \
+    fail "resource summary recorded a failed command: $summary"
+  if [[ "$summary" == "$windows_summary" ]]; then
+    summary_platform=WINDOWS
+  else
+    summary_platform=ANDROID
+  fi
+  printf 'PASEO_%s_SUMMARY_BEGIN=%s\n' "$summary_platform" "$summary"
+  grep -E '^(command_wall_seconds|average_cpu_cores|peak_sampled_cpu_cores|host_cpu_percent|memory_peak_bytes|swap_peak_bytes|minimum_host_mem_available_bytes|exit_status|systemd_cleanup_degraded)=' \
     "$summary"
-  printf 'PASEO_ANDROID_SUMMARY_END=%s\n' "$summary"
+  printf 'PASEO_%s_SUMMARY_END=%s\n' "$summary_platform" "$summary"
 done
+
+if ((serve_dist)); then
+  stage "serve-dist: start download service"
+  # The long-lived download server must not inherit the artifact-build lock.
+  (
+    eval "exec ${build_lock_fd}>&-"
+    exec bash "$control_root/dwyanewang/serve-dist.sh" "$download_port" "$download_ttl"
+  )
+  download_service_started=1
+  distribution_cleanup_needed=1
+fi
+
+finished_epoch=$(date +%s)
+total_seconds=$((finished_epoch - started_epoch))
 
 result_temp=$(mktemp "${result_file}.tmp.XXXXXX")
 {
@@ -412,12 +746,22 @@ result_temp=$(mktemp "${result_file}.tmp.XXXXXX")
   printf 'paseo_artifact_android_profile_dir=%q\n' "$resource_profile_dir"
   printf 'paseo_artifact_android_metro_summary=%q\n' "$metro_summary"
   printf 'paseo_artifact_android_native_summary=%q\n' "$native_summary"
+  printf 'paseo_artifact_windows_profile_dir=%q\n' "$resource_profile_dir"
+  printf 'paseo_artifact_windows_summary=%q\n' "$windows_summary"
+  printf 'paseo_artifact_windows_transcript=%q\n' "$windows_transcript"
+  printf 'paseo_artifact_parallel_mode=%q\n' "$artifact_parallel_mode"
+  printf 'paseo_artifact_android_native_bundle_gate=%q\n' "$android_native_bundle_gate"
+  printf 'paseo_artifact_parallel_mem_available_bytes=%q\n' "$mem_available_bytes"
+  printf 'paseo_artifact_parallel_min_available_bytes=%q\n' "$parallel_min_available_bytes"
+  printf 'paseo_artifact_android_native_branch_log=%q\n' "$android_native_log"
+  printf 'paseo_artifact_windows_branch_log=%q\n' "$windows_log"
   printf 'paseo_artifact_download_service_started=%q\n' "$download_service_started"
   printf 'paseo_artifact_download_port=%q\n' "$download_port"
   printf 'paseo_artifact_download_ttl=%q\n' "$download_ttl"
 } >"$result_temp"
 chmod 600 "$result_temp"
 mv -- "$result_temp" "$result_file"
+distribution_cleanup_needed=0
 
 stage "complete: server, Android, Windows, cleanup, and requested distribution succeeded"
 printf 'PASEO_ARTIFACT_BUILD_VERSION=%s\n' "$version"
@@ -426,4 +770,5 @@ printf 'PASEO_ARTIFACT_SERVER=%s\n' "$server_artifact"
 printf 'PASEO_ARTIFACT_APK=%s\n' "$apk_artifact"
 printf 'PASEO_ARTIFACT_WINDOWS_ZIP=%s\n' "$zip_artifact"
 printf 'PASEO_ANDROID_PROFILE_DIR=%s\n' "$resource_profile_dir"
+printf 'PASEO_WINDOWS_PROFILE_DIR=%s\n' "$resource_profile_dir"
 printf 'PASEO_ARTIFACT_RESULT_FILE=%s\n' "$result_file"

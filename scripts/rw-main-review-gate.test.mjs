@@ -30,12 +30,38 @@ function git(cwd, ...args) {
   return result.stdout.trim();
 }
 
+function createSecondFeature(root, enabled) {
+  if (!enabled) return undefined;
+  git(root, "switch", "-c", "feature/two");
+  writeFileSync(path.join(root, "feature-two.txt"), "feature two\n");
+  git(root, "add", "feature-two.txt");
+  git(root, "commit", "-m", "feat: feature two");
+  const secondFeatureHead = git(root, "rev-parse", "HEAD");
+  git(root, "switch", "main");
+  return secondFeatureHead;
+}
+
+function formatSecondManifestEntry({
+  currentMain,
+  enabled,
+  pending,
+  pr,
+  reviewedMain,
+  secondFeatureHead,
+}) {
+  if (!enabled) return "";
+  const branchKind = pr ? "PR #2" : "Personal branch";
+  const reviewedMainCoordinate = pending ? reviewedMain : currentMain;
+  return `feature/two # ${branchKind} # reviewed-main:${reviewedMainCoordinate} # reviewed-head:${secondFeatureHead}\n`;
+}
+
 function createFixture({
   advanceFeature = false,
   advanceMain = true,
   patchEquivalent = false,
   prState,
   secondBranch = false,
+  secondPending = false,
   secondPr = false,
 } = {}) {
   const root = mkdtempSync(path.join(tmpdir(), "paseo-rw-main-review-"));
@@ -70,15 +96,7 @@ function createFixture({
   }
   const currentMain = git(root, "rev-parse", "main");
 
-  let secondFeatureHead;
-  if (secondBranch) {
-    git(root, "switch", "-c", "feature/two");
-    writeFileSync(path.join(root, "feature-two.txt"), "feature two\n");
-    git(root, "add", "feature-two.txt");
-    git(root, "commit", "-m", "feat: feature two");
-    secondFeatureHead = git(root, "rev-parse", "HEAD");
-    git(root, "switch", "main");
-  }
+  const secondFeatureHead = createSecondFeature(root, secondBranch);
 
   git(root, "switch", "-c", "chore/build-paseo");
   const controlDir = path.join(root, "dwyanewang");
@@ -95,9 +113,14 @@ function createFixture({
   );
 
   const manifestEntry = prState ? "feature/one # PR #1" : "feature/one # Personal branch";
-  const secondManifestEntry = secondBranch
-    ? `feature/two # ${secondPr ? "PR #2" : "Personal branch"} # reviewed-main:${currentMain} # reviewed-head:${secondFeatureHead}\n`
-    : "";
+  const secondManifestEntry = formatSecondManifestEntry({
+    currentMain,
+    enabled: secondBranch,
+    pending: secondPending,
+    pr: secondPr,
+    reviewedMain,
+    secondFeatureHead,
+  });
   const manifestPath = path.join(controlDir, "rw-main-branches.txt");
   writeFileSync(
     manifestPath,
@@ -137,6 +160,18 @@ function createFixture({
     .join("\n");
   writeFileSync(ghPath, `#!/usr/bin/env bash\nprintf 'call\\n' >> "$GH_CALL_LOG"\n${ghOutput}\n`);
   chmodSync(ghPath, 0o755);
+  const diffPath = path.join(binDir, "diff");
+  writeFileSync(
+    diffPath,
+    `#!/usr/bin/env bash
+set -euo pipefail
+if [[ -n "\${PASEO_TEST_MOVE_REF_ON_DIFF:-}" ]]; then
+  git update-ref "$PASEO_TEST_MOVE_REF_ON_DIFF" "$PASEO_TEST_MOVE_REF_TO"
+fi
+exec /usr/bin/diff "$@"
+`,
+  );
+  chmodSync(diffPath, 0o755);
 
   git(root, "add", "dwyanewang", "test-bin");
   git(root, "commit", "-m", "chore: add rw-main controls");
@@ -156,6 +191,12 @@ function createFixture({
 
 function runSync(fixture, ...args) {
   return run(fixture.root, "bash", ["dwyanewang/sync-rw-main-branches.sh", ...args], fixture.env);
+}
+
+function reviewRequestPath(result) {
+  const match = result.stdout.match(/^PASEO_REVIEW_REQUEST_FILE=(.+)$/m);
+  assert.notEqual(match, null, result.stdout);
+  return match[1];
 }
 
 function withFixture(options, callback) {
@@ -201,6 +242,12 @@ test("blocks on every new upstream commit even without overlapping paths", () =>
     assert.match(result.stdout, /upstream\.txt/);
     assert.match(result.stdout, /feature\/one/);
     assert.match(result.stdout, /Feature evidence: .*overlapping paths=0/);
+    const requestPath = reviewRequestPath(result);
+    assert.match(path.basename(requestPath), /^[0-9a-f]{40}\.tsv$/);
+    assert.equal(
+      readFileSync(requestPath, "utf8"),
+      `paseo-rw-main-review-request\t1\nmain\t${fixture.currentMain}\nbranch\tfeature/one\t${fixture.reviewedMain}\t${fixture.currentMain}\t${fixture.reviewedFeatureHead}\t${fixture.featureHead}\n`,
+    );
     assert.equal(readFileSync(fixture.manifestPath, "utf8"), before);
   });
 });
@@ -220,6 +267,24 @@ test("reviews each branch from its own recorded main baseline", () => {
   });
 });
 
+test("freezes the exact sorted set and ranges for multiple pending branches", () => {
+  withFixture({ secondBranch: true, secondPending: true }, (fixture) => {
+    const result = runSync(fixture);
+
+    assert.equal(result.status, 3, result.stderr);
+    assert.equal(
+      readFileSync(reviewRequestPath(result), "utf8"),
+      [
+        "paseo-rw-main-review-request\t1",
+        `main\t${fixture.currentMain}`,
+        `branch\tfeature/one\t${fixture.reviewedMain}\t${fixture.currentMain}\t${fixture.reviewedFeatureHead}\t${fixture.featureHead}`,
+        `branch\tfeature/two\t${fixture.reviewedMain}\t${fixture.currentMain}\t${fixture.secondFeatureHead}\t${fixture.secondFeatureHead}`,
+        "",
+      ].join("\n"),
+    );
+  });
+});
+
 test("blocks when a branch head changes even if main does not", () => {
   withFixture({ advanceFeature: true, advanceMain: false }, (fixture) => {
     const result = runSync(fixture);
@@ -235,10 +300,12 @@ test("blocks when a branch head changes even if main does not", () => {
 
 test("accepts the exact current main and removes an absorbed branch atomically", () => {
   withFixture({}, (fixture) => {
+    const review = runSync(fixture);
+    assert.equal(review.status, 3, review.stderr);
     const result = runSync(
       fixture,
-      "--accept-main-review",
-      fixture.currentMain,
+      "--accept-review-request",
+      reviewRequestPath(review),
       "--remove-branch",
       "feature/one",
     );
@@ -252,13 +319,168 @@ test("accepts the exact current main and removes an absorbed branch atomically",
 test("dry-run shows an accepted review without changing the manifest", () => {
   withFixture({}, (fixture) => {
     const before = readFileSync(fixture.manifestPath, "utf8");
-    const result = runSync(fixture, "--dry-run", "--accept-main-review", fixture.currentMain);
+    const review = runSync(fixture);
+    assert.equal(review.status, 3, review.stderr);
+    const result = runSync(
+      fixture,
+      "--dry-run",
+      "--accept-review-request",
+      reviewRequestPath(review),
+    );
 
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, new RegExp(`reviewed-main:${fixture.currentMain}`));
     assert.match(result.stdout, new RegExp(`reviewed-head:${fixture.featureHead}`));
     assert.match(result.stdout, /Dry run complete/);
     assert.equal(readFileSync(fixture.manifestPath, "utf8"), before);
+  });
+});
+
+test("requires and verifies every expected branch head in explicit coordinate mode", () => {
+  withFixture({}, (fixture) => {
+    const missingHead = runSync(fixture, "--dry-run", "--accept-main-review", fixture.currentMain);
+    assert.equal(missingHead.status, 1);
+    assert.match(missingHead.stderr, /missing the expected current head for feature\/one/);
+
+    const accepted = runSync(
+      fixture,
+      "--dry-run",
+      "--accept-main-review",
+      fixture.currentMain,
+      "--accept-branch-head",
+      "feature/one",
+      fixture.featureHead,
+    );
+    assert.equal(accepted.status, 0, accepted.stderr);
+    assert.match(accepted.stdout, /Dry run complete/);
+  });
+});
+
+test("rejects an accepted request if a reviewed branch ref moved", () => {
+  withFixture({}, (fixture) => {
+    const before = readFileSync(fixture.manifestPath, "utf8");
+    const review = runSync(fixture);
+    assert.equal(review.status, 3, review.stderr);
+    const requestPath = reviewRequestPath(review);
+
+    git(fixture.root, "update-ref", "refs/heads/feature/one", fixture.reviewedMain);
+    const result = runSync(fixture, "--accept-review-request", requestPath);
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /feature\/one moved during semantic review/);
+    assert.equal(readFileSync(fixture.manifestPath, "utf8"), before);
+  });
+});
+
+test("rejects an accepted request if main moved", () => {
+  withFixture({}, (fixture) => {
+    const review = runSync(fixture);
+    assert.equal(review.status, 3, review.stderr);
+    git(fixture.root, "update-ref", "refs/heads/main", fixture.reviewedMain);
+
+    const result = runSync(
+      fixture,
+      "--dry-run",
+      "--accept-review-request",
+      reviewRequestPath(review),
+    );
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /must equal current main/);
+  });
+});
+
+test("rejects accepted requests when a recorded review-range start changes", () => {
+  for (const coordinate of ["reviewed-main", "reviewed-head"]) {
+    withFixture({ advanceFeature: true }, (fixture) => {
+      const review = runSync(fixture);
+      assert.equal(review.status, 3, review.stderr);
+      const before = readFileSync(fixture.manifestPath, "utf8");
+      const from =
+        coordinate === "reviewed-main" ? fixture.reviewedMain : fixture.reviewedFeatureHead;
+      const to = coordinate === "reviewed-main" ? fixture.currentMain : fixture.featureHead;
+      writeFileSync(
+        fixture.manifestPath,
+        before.replace(`${coordinate}:${from}`, `${coordinate}:${to}`),
+      );
+
+      const result = runSync(
+        fixture,
+        "--dry-run",
+        "--accept-review-request",
+        reviewRequestPath(review),
+      );
+
+      assert.equal(result.status, 1);
+      assert.match(
+        result.stderr,
+        new RegExp(
+          `${coordinate === "reviewed-main" ? "main" : "branch"} review range for feature/one changed`,
+        ),
+      );
+    });
+  }
+});
+
+test("rejects an accepted request when the pending manifest set changes", () => {
+  withFixture({ secondBranch: true, secondPending: true }, (fixture) => {
+    const review = runSync(fixture);
+    assert.equal(review.status, 3, review.stderr);
+    const manifest = readFileSync(fixture.manifestPath, "utf8")
+      .split("\n")
+      .filter((line) => !line.startsWith("feature/two "))
+      .join("\n");
+    writeFileSync(fixture.manifestPath, manifest);
+
+    const result = runSync(
+      fixture,
+      "--dry-run",
+      "--accept-review-request",
+      reviewRequestPath(review),
+    );
+
+    assert.equal(result.status, 1);
+    assert.match(
+      result.stderr,
+      /accepted review includes a branch that is no longer pending: feature\/two/,
+    );
+  });
+});
+
+test("rechecks reviewed refs immediately before replacing the manifest", () => {
+  withFixture({}, (fixture) => {
+    const before = readFileSync(fixture.manifestPath, "utf8");
+    const review = runSync(fixture);
+    assert.equal(review.status, 3, review.stderr);
+    const result = run(
+      fixture.root,
+      "bash",
+      ["dwyanewang/sync-rw-main-branches.sh", "--accept-review-request", reviewRequestPath(review)],
+      {
+        ...fixture.env,
+        PASEO_TEST_MOVE_REF_ON_DIFF: "refs/heads/feature/one",
+        PASEO_TEST_MOVE_REF_TO: fixture.reviewedMain,
+      },
+    );
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /feature\/one moved during semantic review/);
+    assert.equal(readFileSync(fixture.manifestPath, "utf8"), before);
+  });
+});
+
+test("rejects a modified content-addressed review request", () => {
+  withFixture({}, (fixture) => {
+    const review = runSync(fixture);
+    assert.equal(review.status, 3, review.stderr);
+    const requestPath = reviewRequestPath(review);
+    chmodSync(requestPath, 0o600);
+    writeFileSync(requestPath, `${readFileSync(requestPath, "utf8")}tampered\n`);
+
+    const result = runSync(fixture, "--accept-review-request", requestPath);
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /review request content does not match its token/);
   });
 });
 

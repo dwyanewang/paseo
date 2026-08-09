@@ -134,11 +134,36 @@ profile_wrapper=$(printf '%s\n' \
   '/usr/bin/sleep "$grace_seconds"' \
   'exit "$command_status"')
 
+profile_pipeline_pid=
+profile_active=1
+cleanup_profile() {
+  if ((profile_active)); then
+    profile_active=0
+    # Bash updates $! as soon as the asynchronous pipeline exists. A signal may
+    # be delivered at the command boundary just before the assignment below.
+    if [[ -z "$profile_pipeline_pid" && -n "${!:-}" ]]; then
+      profile_pipeline_pid=$!
+    fi
+    systemctl --user stop "$unit_name" >/dev/null 2>&1 || true
+    if [[ -n "$profile_pipeline_pid" ]]; then
+      kill -TERM "$profile_pipeline_pid" >/dev/null 2>&1 || true
+      wait "$profile_pipeline_pid" >/dev/null 2>&1 || true
+    fi
+    # A signal can arrive while systemd-run is still registering the unit.
+    # Repeat the idempotent stop after its client pipeline has settled.
+    systemctl --user stop "$unit_name" >/dev/null 2>&1 || true
+  fi
+}
+trap cleanup_profile EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
 set +e
 LC_ALL=C systemd-run \
   --user \
   --wait \
   --pipe \
+  --collect \
   --same-dir \
   --expand-environment=no \
   --unit="$unit_base" \
@@ -169,21 +194,11 @@ if [[ -z "$control_group" || ! -d "/sys/fs/cgroup$control_group" ]]; then
   fi
   profile_status=0
   wait "$profile_pipeline_pid" || profile_status=$?
+  profile_active=0
   fail "could not locate the transient cgroup for $unit_name (command status $profile_status)"
 fi
 
 cgroup_dir="/sys/fs/cgroup$control_group"
-profile_active=1
-cleanup_profile() {
-  if ((profile_active)); then
-    profile_active=0
-    systemctl --user stop "$unit_name" >/dev/null 2>&1 || true
-    wait "$profile_pipeline_pid" >/dev/null 2>&1 || true
-  fi
-}
-trap cleanup_profile EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM
 
 previous_time_ns=
 previous_cpu_usage_usec=

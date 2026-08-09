@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import {
   chmodSync,
   copyFileSync,
@@ -32,6 +32,44 @@ function git(cwd, ...args) {
   return result.stdout.trim();
 }
 
+function startLockHolder(lockPath, readyPath) {
+  mkdirSync(path.dirname(lockPath), { recursive: true });
+  const holder = spawn(
+    "/usr/bin/flock",
+    [
+      "-x",
+      lockPath,
+      "bash",
+      "-c",
+      'trap "exit 0" TERM INT; : >"$1"; while :; do sleep 1; done',
+      "lock-holder",
+      readyPath,
+    ],
+    { detached: true, stdio: "ignore" },
+  );
+  const waitBuffer = new Int32Array(new SharedArrayBuffer(4));
+  for (let attempt = 0; attempt < 200 && !existsSync(readyPath); attempt += 1) {
+    if (holder.exitCode !== null) assert.fail("lock holder exited before acquiring the lock");
+    Atomics.wait(waitBuffer, 0, 0, 10);
+  }
+  assert.equal(existsSync(readyPath), true, "lock holder did not acquire the lock");
+  return holder;
+}
+
+function stopLockHolder(holder) {
+  try {
+    process.kill(-holder.pid, "SIGTERM");
+  } catch (error) {
+    if (error.code !== "ESRCH") throw error;
+  }
+}
+
+function assertBuildLockAvailable(fixture) {
+  const lockPath = path.join(fixture.buildRoot, ".dev", "build-paseo-artifacts.lock");
+  const result = run(fixture.controlRoot, "/usr/bin/flock", ["-n", lockPath, "true"]);
+  assert.equal(result.status, 0, `build lock remained held: ${result.stderr}`);
+}
+
 function createFixture({ advanceUpstream = false } = {}) {
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), "paseo-prepare-rw-main-"));
   const controlRoot = path.join(fixtureRoot, "control");
@@ -47,8 +85,9 @@ function createFixture({ advanceUpstream = false } = {}) {
   git(controlRoot, "init", "-b", "main");
   git(controlRoot, "config", "user.name", "Test User");
   git(controlRoot, "config", "user.email", "test@example.com");
+  writeFileSync(path.join(controlRoot, ".gitignore"), ".dev/\n");
   writeFileSync(path.join(controlRoot, "seed.txt"), "seed\n");
-  git(controlRoot, "add", "seed.txt");
+  git(controlRoot, "add", ".gitignore", "seed.txt");
   git(controlRoot, "commit", "-m", "seed");
   const reviewedMain = git(controlRoot, "rev-parse", "main");
 
@@ -138,6 +177,12 @@ function runPreflight(fixture, ...syncArgs) {
   );
 }
 
+function reviewRequestPath(result) {
+  const match = result.stdout.match(/^PASEO_REVIEW_REQUEST_FILE=(.+)$/m);
+  assert.notEqual(match, null, result.stdout);
+  return match[1];
+}
+
 function withFixture(options, callback) {
   const fixture = createFixture(options);
   try {
@@ -156,8 +201,32 @@ test("runs the unchanged source preflight and rw-main no-op as one command", () 
     assert.match(result.stdout, /PASEO_RW_MAIN_REBUILT=0/);
     assert.match(result.stdout, /PASEO_DEPENDENCIES_REINSTALLED=0/);
     assert.match(result.stdout, /PASEO_PREFLIGHT_STATUS=ready/);
-    assert.match(readFileSync(fixture.stateFile, "utf8"), /paseo_preflight_status=ready/);
+    const state = readFileSync(fixture.stateFile, "utf8");
+    assert.match(state, /paseo_preflight_status=ready/);
+    assert.match(state, new RegExp(`main_after=${fixture.upstreamMain}`));
+    assert.match(
+      state,
+      new RegExp(`control_head=${git(fixture.controlRoot, "rev-parse", "HEAD")}`),
+    );
     assert.equal(git(fixture.buildRoot, "branch", "--show-current"), "rw-main");
+    assertBuildLockAvailable(fixture);
+  });
+});
+
+test("refuses preflight while the shared build lock is held and preserves the old state", () => {
+  withFixture({}, (fixture) => {
+    writeFileSync(fixture.stateFile, "previous-state\n");
+    const lockPath = path.join(fixture.buildRoot, ".dev", "build-paseo-artifacts.lock");
+    const readyPath = path.join(fixture.fixtureRoot, "preflight-lock-ready");
+    const holder = startLockHolder(lockPath, readyPath);
+    try {
+      const result = runPreflight(fixture);
+      assert.equal(result.status, 1, `${result.stdout}\n${result.stderr}`);
+      assert.match(result.stderr, /another build-paseo workflow already owns the build root/);
+      assert.equal(readFileSync(fixture.stateFile, "utf8"), "previous-state\n");
+    } finally {
+      stopLockHolder(holder);
+    }
   });
 });
 
@@ -173,8 +242,10 @@ test("propagates semantic-review status before rebuilding rw-main", () => {
     assert.doesNotMatch(result.stdout, /PASEO_REBUILD_SECONDS=/);
     assert.equal(existsSync(fixture.stateFile), false);
     assert.equal(git(fixture.controlRoot, "rev-parse", "main"), fixture.upstreamMain);
+    const requestPath = reviewRequestPath(result);
+    assert.equal(existsSync(requestPath), true);
 
-    const accepted = runPreflight(fixture, "--accept-main-review", fixture.upstreamMain);
+    const accepted = runPreflight(fixture, "--accept-review-request", requestPath);
     assert.equal(accepted.status, 4, accepted.stderr);
     assert.match(accepted.stdout, /PASEO_PREFLIGHT_STATUS=manifest-changed/);
     assert.doesNotMatch(accepted.stdout, /PASEO_REBUILD_SECONDS=/);

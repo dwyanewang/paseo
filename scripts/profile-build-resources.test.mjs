@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -27,6 +27,49 @@ function readSummary(label) {
       return [line.slice(0, separator), line.slice(separator + 1)];
     });
   return new Map(entries);
+}
+
+function readProfileUnitName(label) {
+  const transcript = readFileSync(path.join(fixture, `${label}.transcript.log`), "utf8");
+  const match = transcript.match(/^Running as unit: ([^;\s]+)(?:;|$)/m);
+  assert.ok(match, `missing transient unit name in ${label} transcript`);
+  return match[1];
+}
+
+function unitIsUnloaded(unitName) {
+  const result = spawnSync(
+    "systemctl",
+    ["--user", "show", unitName, "--property=LoadState", "--value"],
+    { encoding: "utf8" },
+  );
+  return result.status === 0 && result.stdout.trim() === "not-found";
+}
+
+function waitUntil(predicate, timeoutMs, message) {
+  const waitBuffer = new Int32Array(new SharedArrayBuffer(4));
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate() && Date.now() < deadline) {
+    Atomics.wait(waitBuffer, 0, 0, 20);
+  }
+  assert.equal(predicate(), true, message);
+}
+
+function processIsAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (error.code === "ESRCH") return false;
+    throw error;
+  }
+}
+
+function killProcessGroupIfAlive(pid) {
+  try {
+    process.kill(-pid, "SIGKILL");
+  } catch (error) {
+    if (error.code !== "ESRCH") throw error;
+  }
 }
 
 try {
@@ -93,6 +136,12 @@ try {
   );
   assert.equal(result.status, 7, result.stderr);
   assert.equal(readSummary("failed").get("exit_status"), "7");
+  const failedUnitName = readProfileUnitName("failed");
+  waitUntil(
+    () => unitIsUnloaded(failedUnitName),
+    10_000,
+    `failed transient unit ${failedUnitName} was not collected`,
+  );
 
   const cleanupStartedAt = Date.now();
   result = run(
@@ -131,11 +180,59 @@ try {
   );
   assert.equal(readSummary("failed-lingering-child").get("exit_status"), "7");
 
+  const externalStopReady = path.join(fixture, "external-stop.ready");
+  const externalStopChildPid = path.join(fixture, "external-stop-child.pid");
+  const externallyStopped = spawn(
+    "setsid",
+    [
+      "bash",
+      script,
+      "--label",
+      "externally-stopped",
+      "--output-dir",
+      fixture,
+      "--interval",
+      "0.05",
+      "--",
+      "bash",
+      "-c",
+      'sleep 30 & child=$!; printf "%s\\n" "$child" >"$1"; : >"$2"; wait "$child"',
+      "profile-external-stop",
+      externalStopChildPid,
+      externalStopReady,
+    ],
+    {
+      cwd: repoRoot,
+      detached: false,
+      env: { ...process.env, PROFILE_TEST_TOKEN: "preserved" },
+      stdio: "ignore",
+    },
+  );
+  try {
+    waitUntil(() => existsSync(externalStopReady), 10_000, "profile command did not start");
+    const descendantPid = Number(readFileSync(externalStopChildPid, "utf8").trim());
+    assert.ok(Number.isInteger(descendantPid) && descendantPid > 1);
+    externallyStopped.kill("SIGTERM");
+    waitUntil(
+      () => !processIsAlive(descendantPid),
+      10_000,
+      `profile descendant ${descendantPid} survived external termination`,
+    );
+    const externallyStoppedUnitName = readProfileUnitName("externally-stopped");
+    waitUntil(
+      () => unitIsUnloaded(externallyStoppedUnitName),
+      10_000,
+      `externally stopped transient unit ${externallyStoppedUnitName} was not collected`,
+    );
+  } finally {
+    killProcessGroupIfAlive(externallyStopped.pid);
+  }
+
   result = run("--label", "successful", "--output-dir", fixture, "--", "true");
   assert.equal(result.status, 1);
   assert.match(result.stderr, /refusing to overwrite an existing profile/);
 
-  console.log("profile-build-resources: 14 checks passed");
+  console.log("profile-build-resources: 19 checks passed");
 } finally {
   rmSync(fixture, { recursive: true, force: true });
 }

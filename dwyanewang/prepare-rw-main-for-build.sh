@@ -16,7 +16,11 @@ atomic rw-main readiness gate.
   --add-pr NUMBER           Forward an explicit PR addition to manifest sync.
   --add-branch BRANCH       Forward an explicit personal branch addition.
   --remove-branch BRANCH    Forward a reviewed branch removal.
-  --accept-main-review SHA  Forward an accepted semantic-review coordinate.
+  --accept-review-request PATH
+                            Forward one frozen semantic-review request.
+  --accept-main-review SHA  Forward an accepted main review coordinate.
+  --accept-branch-head BRANCH SHA
+                            Forward an accepted exact branch head coordinate.
   --help                    Show this help.
 
 Exit status 3 means semantic review is required. Exit status 4 means the
@@ -60,13 +64,21 @@ while (($# > 0)); do
       state_file_arg=$2
       shift 2
       ;;
-    --add-pr | --add-branch | --remove-branch | --accept-main-review)
+    --add-pr | --add-branch | --remove-branch | --accept-main-review | --accept-review-request)
       (($# >= 2)) || {
         printf 'Missing value for %s.\n' "$1" >&2
         exit 2
       }
       sync_args+=("$1" "$2")
       shift 2
+      ;;
+    --accept-branch-head)
+      (($# >= 3)) || {
+        printf '%s\n' 'Missing BRANCH or SHA for --accept-branch-head.' >&2
+        exit 2
+      }
+      sync_args+=("$1" "$2" "$3")
+      shift 3
       ;;
     --help | -h)
       usage
@@ -102,8 +114,6 @@ if [[ -n "$state_file_arg" ]]; then
     printf 'State file path is a directory: %s\n' "$state_file" >&2
     exit 2
   }
-  mkdir -p -- "$(dirname -- "$state_file")"
-  rm -f -- "$state_file"
 fi
 
 fail() {
@@ -152,6 +162,17 @@ build_repo_root=$(realpath -e -- "$build_repo_root")
 [[ "$build_root" != "$control_root" ]] || fail "control and build worktrees must be distinct"
 [[ "$(canonical_common_dir "$control_root")" == "$(canonical_common_dir "$build_root")" ]] ||
   fail "control and build worktrees do not belong to the same Git repository"
+
+command -v flock >/dev/null || fail "flock is required"
+mkdir -p -- "$build_root/.dev"
+build_lock_file="$build_root/.dev/build-paseo-artifacts.lock"
+exec {build_lock_fd}>"$build_lock_file"
+flock -n "$build_lock_fd" ||
+  fail "another build-paseo workflow already owns the build root: $build_root"
+if [[ -n "$state_file" ]]; then
+  mkdir -p -- "$(dirname -- "$state_file")"
+  rm -f -- "$state_file"
+fi
 
 current_control_branch=$(git -C "$control_root" symbolic-ref --quiet --short HEAD) ||
   fail "control worktree is detached: $control_root"
@@ -249,9 +270,19 @@ elif ((rw_main_rebuilt)) &&
 fi
 
 rebuild_seconds=$(( $(date +%s) - rebuild_started ))
+control_head=$(git -C "$control_root" rev-parse HEAD)
+[[ "$(git -C "$control_root" rev-parse "$base_branch")" == "$main_after" ]] ||
+  fail "$base_branch moved after synchronization; rerun preflight"
+[[ "$(git -C "$build_root" rev-parse HEAD)" == "$rw_main_after" ]] ||
+  fail "$target_branch moved after readiness checks; rerun preflight"
+[[ -z "$(git -C "$control_root" status --porcelain)" ]] ||
+  fail "control worktree changed before readiness state was written: $control_root"
+[[ -z "$(git -C "$build_root" status --porcelain)" ]] ||
+  fail "build worktree changed before readiness state was written: $build_root"
 total_seconds=$(( $(date +%s) - started_at ))
 
 printf 'PASEO_BUILD_STARTING_BRANCH=%s\n' "$build_starting_branch"
+printf 'PASEO_CONTROL_HEAD=%s\n' "$control_head"
 printf 'PASEO_RW_MAIN_BEFORE=%s\n' "$rw_main_before"
 printf 'PASEO_RW_MAIN_AFTER=%s\n' "$rw_main_after"
 printf 'PASEO_RW_MAIN_REBUILT=%s\n' "$rw_main_rebuilt"
@@ -267,6 +298,7 @@ if [[ -n "$state_file" ]]; then
     printf 'rw_main_after=%q\n' "$rw_main_after"
     printf 'rw_main_rebuilt=%q\n' "$rw_main_rebuilt"
     printf 'dependencies_reinstalled=%q\n' "$dependencies_reinstalled"
+    printf 'control_head=%q\n' "$control_head"
     printf 'main_before=%q\n' "$main_before"
     printf 'main_after=%q\n' "$main_after"
     printf 'paseo_preflight_total_seconds=%q\n' "$total_seconds"
