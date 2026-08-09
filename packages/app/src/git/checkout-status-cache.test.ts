@@ -41,6 +41,7 @@ function checkoutStatus(overrides: Partial<CheckoutStatusPayload> = {}): Checkou
     isPaseoOwnedWorktree: false,
     repoRoot: cwd,
     currentBranch: "main",
+    headOid: "head-1",
     isDirty: false,
     baseRef: "origin/main",
     aheadBehind: { ahead: 0, behind: 0 },
@@ -213,6 +214,45 @@ describe("applyCheckoutStatusUpdateFromEvent", () => {
 
     expect(queryClient.getQueryState(draftCommandsKey)?.isInvalidated).toBe(true);
     expect(queryClient.getQueryState(otherDraftCommandsKey)?.isInvalidated).toBe(false);
+  });
+
+  it("invalidates draft command caches when HEAD changes on the same branch", () => {
+    const queryClient = createQueryClient();
+    const draftCommandsKey = draftAgentCommandsQueryKey({
+      serverId,
+      draftConfig: { provider: "codex", cwd },
+    });
+    queryClient.setQueryData(draftCommandsKey, []);
+    queryClient.setQueryData(checkoutStatusQueryKey(serverId, cwd), checkoutStatus());
+
+    applyCheckoutStatusUpdateFromEvent({
+      queryClient,
+      serverId,
+      message: checkoutStatusUpdate(checkoutStatus({ headOid: "head-2" })),
+    });
+
+    expect(queryClient.getQueryState(draftCommandsKey)?.isInvalidated).toBe(true);
+  });
+
+  it("invalidates draft command caches when a detached HEAD changes", () => {
+    const queryClient = createQueryClient();
+    const draftCommandsKey = draftAgentCommandsQueryKey({
+      serverId,
+      draftConfig: { provider: "codex", cwd },
+    });
+    queryClient.setQueryData(draftCommandsKey, []);
+    queryClient.setQueryData(
+      checkoutStatusQueryKey(serverId, cwd),
+      checkoutStatus({ currentBranch: null }),
+    );
+
+    applyCheckoutStatusUpdateFromEvent({
+      queryClient,
+      serverId,
+      message: checkoutStatusUpdate(checkoutStatus({ currentBranch: null, headOid: "head-2" })),
+    });
+
+    expect(queryClient.getQueryState(draftCommandsKey)?.isInvalidated).toBe(true);
   });
 
   it("keeps draft command caches fresh for a working-tree status update", () => {
