@@ -2384,7 +2384,10 @@ async function resolveGitHubBaseRepositoryRemote(options: {
 }): Promise<string> {
   const baseRepository = await parseGitHubRepositoryRemote(options.repositoryUrl);
   if (!baseRepository) {
-    throw new Error("Unable to resolve the GitHub pull request base repository");
+    // The GraphQL schema allows a missing repository URL, and a token without `repo` scope on a
+    // private GHE instance hits that. Base-repository detection is an improvement over the old
+    // hardcoded "origin", so fall back to it rather than failing a checkout that used to work.
+    return "origin";
   }
 
   const { stdout } = await runGitCommand(["remote"], { cwd: options.cwd });

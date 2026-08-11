@@ -338,7 +338,7 @@ function pullRequestJson(title: string): string {
 
 function pullRequestCheckoutTargetJson(
   number = 526,
-  repositoryUrl = "https://github.com/getpaseo/paseo",
+  repositoryUrl: string | null = "https://github.com/getpaseo/paseo",
 ): string {
   return JSON.stringify({
     data: {
@@ -836,6 +836,24 @@ describe("ForgeService", () => {
         checkoutRefs: [{ remoteName: "origin", remoteRef: "refs/pull/2831/head" }],
       });
       expect(resolveSshHostname).toHaveBeenCalledWith("github-work");
+    } finally {
+      repository.dispose();
+    }
+  });
+
+  it("falls back to origin when the API omits the base repository URL", async () => {
+    const repository = createGitRepositoryWithRemotes([
+      ["origin", "git@github.com:dwyanewang/paseo.git"],
+    ]);
+    const runner = createRunner([repoViewJson(), pullRequestCheckoutTargetJson(2831, null)]);
+    const service = createGitHubService({ runner: runner.runner });
+
+    try {
+      await expect(
+        service.getPullRequestCheckoutTarget?.({ cwd: repository.cwd, number: 2831 }),
+      ).resolves.toMatchObject({
+        checkoutRefs: [{ remoteName: "origin", remoteRef: "refs/pull/2831/head" }],
+      });
     } finally {
       repository.dispose();
     }
