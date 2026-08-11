@@ -79,11 +79,16 @@ export function applyCheckoutStatusUpdateFromEvent({
   void queryClient.invalidateQueries({
     queryKey: checkoutCommitsQueryKey(serverId, payload.cwd),
   });
-  // Draft command results are long-lived, but project skills are checkout-scoped. Ignore
-  // working-tree-only updates so active autocomplete does not repeatedly rediscover skills.
-  if (checkoutIdentityChanged) {
-    void invalidateDraftAgentCommandsForCwd({ queryClient, serverId, cwd: payload.cwd });
-  }
+  // Draft command results are long-lived, but project skills are checkout-scoped and an external
+  // tool can add or remove an uncommitted one without moving Git identity. Every push therefore
+  // marks the cache stale; only an identity change refetches on the spot, so working-tree churn
+  // cannot make active autocomplete rediscover skills mid-typing.
+  void invalidateDraftAgentCommandsForCwd({
+    queryClient,
+    serverId,
+    cwd: payload.cwd,
+    timing: checkoutIdentityChanged ? "now" : "next-open",
+  });
   expireStaleDiffModeOverrides({
     serverId,
     cwd: payload.cwd,

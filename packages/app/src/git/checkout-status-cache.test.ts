@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { QueryClient } from "@tanstack/react-query";
+import { QueryClient, QueryObserver } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { CheckoutStatusUpdate } from "@getpaseo/protocol/messages";
 import {
@@ -98,6 +98,44 @@ function setDiffModeOverride(isDirtyAtSelection: boolean): void {
 
 function createQueryClient(): QueryClient {
   return new QueryClient({ defaultOptions: { queries: { retry: false } } });
+}
+
+// Mirrors how autocomplete consumes draft commands: the query is only enabled while the command
+// menu is open (use-agent-autocomplete.ts), and provider discovery never expires on its own.
+// Counting discoveries is the only way to tell "marked stale" apart from "refetched".
+function mountCommandMenu(queryClient: QueryClient) {
+  const queryKey = draftAgentCommandsQueryKey({
+    serverId,
+    draftConfig: { provider: "codex", cwd },
+  });
+  let discoveryCount = 0;
+  const optionsFor = (enabled: boolean) => ({
+    queryKey: [...queryKey],
+    queryFn: async () => {
+      discoveryCount += 1;
+      return [];
+    },
+    enabled,
+    staleTime: Number.POSITIVE_INFINITY,
+    retry: false,
+  });
+  const observer = new QueryObserver(queryClient, optionsFor(false));
+  const unsubscribe = observer.subscribe(() => {});
+  return {
+    queryKey,
+    open: () => observer.setOptions(optionsFor(true)),
+    close: () => observer.setOptions(optionsFor(false)),
+    discoveryCount: () => discoveryCount,
+    // Waiting on the counter alone is not enough: it advances when queryFn is entered, and a
+    // later invalidation would be deduped into that still-in-flight fetch.
+    settled: async (expectedDiscoveries: number) => {
+      await vi.waitFor(() => {
+        expect(discoveryCount).toBe(expectedDiscoveries);
+        expect(queryClient.getQueryState(queryKey)?.fetchStatus).toBe("idle");
+      });
+    },
+    unsubscribe,
+  };
 }
 
 beforeEach(() => {
@@ -255,22 +293,61 @@ describe("applyCheckoutStatusUpdateFromEvent", () => {
     expect(queryClient.getQueryState(draftCommandsKey)?.isInvalidated).toBe(true);
   });
 
-  it("keeps draft command caches fresh for a working-tree status update", () => {
+  it("does not rediscover commands in an open menu on a working-tree status update", async () => {
     const queryClient = createQueryClient();
-    const draftCommandsKey = draftAgentCommandsQueryKey({
-      serverId,
-      draftConfig: { provider: "codex", cwd },
-    });
-    queryClient.setQueryData(draftCommandsKey, []);
+    const menu = mountCommandMenu(queryClient);
     queryClient.setQueryData(checkoutStatusQueryKey(serverId, cwd), checkoutStatus());
+    menu.open();
+    await menu.settled(1);
 
     applyCheckoutStatusUpdateFromEvent({
       queryClient,
       serverId,
       message: checkoutStatusUpdate(checkoutStatus({ isDirty: true, requestId: "push-2" })),
     });
+    await vi.waitFor(() =>
+      expect(queryClient.getQueryState(menu.queryKey)?.isInvalidated).toBe(true),
+    );
 
-    expect(queryClient.getQueryState(draftCommandsKey)?.isInvalidated).toBe(false);
+    expect(menu.discoveryCount()).toBe(1);
+    menu.unsubscribe();
+  });
+
+  it("rediscovers commands the next time the menu opens after a working-tree status update", async () => {
+    const queryClient = createQueryClient();
+    const menu = mountCommandMenu(queryClient);
+    queryClient.setQueryData(checkoutStatusQueryKey(serverId, cwd), checkoutStatus());
+    menu.open();
+    await menu.settled(1);
+    menu.close();
+
+    // An external tool adds an uncommitted project skill: same branch, same HEAD, dirty tree.
+    applyCheckoutStatusUpdateFromEvent({
+      queryClient,
+      serverId,
+      message: checkoutStatusUpdate(checkoutStatus({ isDirty: true, requestId: "push-2" })),
+    });
+    menu.open();
+
+    await menu.settled(2);
+    menu.unsubscribe();
+  });
+
+  it("rediscovers commands in an open menu when the checkout identity changes", async () => {
+    const queryClient = createQueryClient();
+    const menu = mountCommandMenu(queryClient);
+    queryClient.setQueryData(checkoutStatusQueryKey(serverId, cwd), checkoutStatus());
+    menu.open();
+    await menu.settled(1);
+
+    applyCheckoutStatusUpdateFromEvent({
+      queryClient,
+      serverId,
+      message: checkoutStatusUpdate(checkoutStatus({ currentBranch: "feature/skills" })),
+    });
+
+    await menu.settled(2);
+    menu.unsubscribe();
   });
 
   it("writes the PR status cache when prStatus is present, and skips it otherwise", () => {
