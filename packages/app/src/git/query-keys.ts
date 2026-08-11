@@ -76,6 +76,7 @@ export async function invalidateCheckoutGitQueriesForClient(
       queryClient,
       serverId: identity.serverId,
       cwd: identity.cwd,
+      timing: "now",
     }),
   ]);
 }
