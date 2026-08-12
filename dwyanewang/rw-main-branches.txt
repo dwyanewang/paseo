@@ -2,9 +2,9 @@
 # sync-rw-main-branches.sh removes merged PRs; new entries are explicit only.
 # Each entry records the main/head pair last semantically reviewed.
 
-fix/project-skill-cache-invalidation # PR #2585 # reviewed-main:334bf623709d91b9b9d5217fb17acc289ed16622 # reviewed-head:e961d7ff5784f9199b2b57bb2f8e1aab5f3360ed
-feat/codeup-forge # PR #2507 # reviewed-main:334bf623709d91b9b9d5217fb17acc289ed16622 # reviewed-head:1936d5a4edbf6f43e30e4c12213057507f0ab5f9
-fix/android-keyboard-covers-input # PR #2467 # reviewed-main:334bf623709d91b9b9d5217fb17acc289ed16622 # reviewed-head:446c2849d7c81269542e1e39198bfbdff25d6e84
-refactor/provider-history-read # PR #2388 # reviewed-main:334bf623709d91b9b9d5217fb17acc289ed16622 # reviewed-head:f20d617cec6d3008f12493d019bb53155dbc7600
-feat/worktree-checkout-branch # PR #1721 # reviewed-main:334bf623709d91b9b9d5217fb17acc289ed16622 # reviewed-head:7af6b8b4ff40a37771e6210eb4fbfe0b22590a8c
-feat/file-image-preview # PR #2822 # reviewed-main:334bf623709d91b9b9d5217fb17acc289ed16622 # reviewed-head:db20eab28e94cd316d5625b080ca02b8d1d77216
+fix/project-skill-cache-invalidation # PR #2585 # reviewed-main:d012b6f0717e2c92c6f591c9e653f7409fd77fd9 # reviewed-head:a2e5fb192706cd563bf202f86375fe7b9d181eb1
+feat/codeup-forge # PR #2507 # reviewed-main:d012b6f0717e2c92c6f591c9e653f7409fd77fd9 # reviewed-head:1936d5a4edbf6f43e30e4c12213057507f0ab5f9
+fix/android-keyboard-covers-input # PR #2467 # reviewed-main:d012b6f0717e2c92c6f591c9e653f7409fd77fd9 # reviewed-head:446c2849d7c81269542e1e39198bfbdff25d6e84
+refactor/provider-history-read # PR #2388 # reviewed-main:d012b6f0717e2c92c6f591c9e653f7409fd77fd9 # reviewed-head:522a28cfb27a213f6d917426d05a053c5a121185
+feat/worktree-checkout-branch # PR #1721 # reviewed-main:d012b6f0717e2c92c6f591c9e653f7409fd77fd9 # reviewed-head:2389b1a2a616d138c1564a6daa85bec21ee0f468
+feat/file-image-preview # PR #2822 # reviewed-main:d012b6f0717e2c92c6f591c9e653f7409fd77fd9 # reviewed-head:db20eab28e94cd316d5625b080ca02b8d1d77216
