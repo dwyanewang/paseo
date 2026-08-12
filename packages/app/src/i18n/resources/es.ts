@@ -1222,6 +1222,10 @@ export const es: TranslationResources = {
       composerStateRequired: "Se requiere el estado del compositor",
       selectModel: "Selecciona un modelo",
     },
+    notices: {
+      checkoutBranchCopied:
+        "{{requestedBranch}} ya está activa en otro lugar. Se usará una copia en su lugar: {{createdBranch}}.",
+    },
     tooltips: {
       project: "Choose the project",
       host: "Choose the host",

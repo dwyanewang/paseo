@@ -1197,6 +1197,10 @@ export const en = {
       composerStateRequired: "Composer state is required",
       selectModel: "Select a model",
     },
+    notices: {
+      checkoutBranchCopied:
+        "{{requestedBranch}} is already checked out elsewhere. Using a copy instead: {{createdBranch}}.",
+    },
     tooltips: {
       project: "Choose the project",
       host: "Choose the host",

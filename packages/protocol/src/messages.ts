@@ -4428,6 +4428,16 @@ export const ClearAgentAttentionResponseMessageSchema = z.object({
   }),
 });
 
+// Present when a checkout could not take the requested branch — it was already
+// live in another worktree — and the daemon created a copy of it instead. Absent
+// on every other create, including daemons that predate the field.
+const CheckoutBranchCopySchema = z
+  .object({
+    requestedBranch: z.string(),
+    createdBranch: z.string(),
+  })
+  .optional();
+
 export const WorkspaceCreateResponseSchema = z.object({
   type: z.literal("workspace.create.response"),
   payload: z.object({
@@ -4435,6 +4445,7 @@ export const WorkspaceCreateResponseSchema = z.object({
     setupTerminalId: z.string().nullable(),
     error: z.string().nullable(),
     errorCode: z.string().optional(),
+    checkoutBranchCopy: CheckoutBranchCopySchema,
     requestId: z.string(),
   }),
 });
@@ -5450,6 +5461,7 @@ export const CreatePaseoWorktreeResponseSchema = z.object({
     error: z.string().nullable(),
     errorCode: z.string().optional(),
     setupTerminalId: z.string().nullable(),
+    checkoutBranchCopy: CheckoutBranchCopySchema,
     requestId: z.string(),
   }),
 });

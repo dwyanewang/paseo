@@ -5946,6 +5946,7 @@ export class Session {
         workspace: descriptor,
         setupTerminalId: null,
         error: null,
+        ...(result.checkoutBranchCopy ? { checkoutBranchCopy: result.checkoutBranchCopy } : {}),
       },
     });
     await this.emitCreatedWorkspaceUpdate(

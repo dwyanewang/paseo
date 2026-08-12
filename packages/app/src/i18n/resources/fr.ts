@@ -1223,6 +1223,10 @@ export const fr: TranslationResources = {
       composerStateRequired: "L'état du compositeur est requis",
       selectModel: "Sélectionnez un modèle",
     },
+    notices: {
+      checkoutBranchCopied:
+        "{{requestedBranch}} est déjà extraite ailleurs. Une copie est utilisée à la place : {{createdBranch}}.",
+    },
     tooltips: {
       project: "Choose the project",
       host: "Choose the host",

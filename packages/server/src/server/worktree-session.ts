@@ -556,6 +556,9 @@ export async function handleCreatePaseoWorktreeRequest(
         error: null,
         setupTerminalId: null,
         requestId: request.requestId,
+        ...(createdWorktree.checkoutBranchCopy
+          ? { checkoutBranchCopy: createdWorktree.checkoutBranchCopy }
+          : {}),
       },
     });
     dependencies.emit({

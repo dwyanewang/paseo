@@ -804,6 +804,12 @@ interface WorkspaceCreateErrorLabels {
   branchAlreadyCheckedOut: string;
 }
 
+// Git refuses to check a branch out twice, so a checkout can land on a copy of
+// the branch the user picked. Nothing about the created workspace says it is a
+// substitution, so whoever creates it has to say so out loud. Daemons that
+// predate the field never set it.
+type NotifyCheckoutBranchCopy = (copy: { requestedBranch: string; createdBranch: string }) => void;
+
 // A branch already checked out is recoverable — the user can branch off instead —
 // so it gets a dedicated, actionable message. Everything else falls back to the
 // daemon's own message, then a generic label.
@@ -828,10 +834,14 @@ async function createAndMergeWorkspace(input: {
   ) => void;
   serverId: string;
   labels: WorkspaceCreateErrorLabels;
+  onCheckoutBranchCopy: NotifyCheckoutBranchCopy;
 }): Promise<ReturnType<typeof normalizeWorkspaceDescriptor>> {
   const payload = await input.client.createPaseoWorktree(input.createInput);
   if (payload.error || !payload.workspace) {
     throw workspaceCreateError(payload, input.labels);
+  }
+  if (payload.checkoutBranchCopy) {
+    input.onCheckoutBranchCopy(payload.checkoutBranchCopy);
   }
   const normalizedWorkspace = normalizeWorkspaceDescriptor(payload.workspace);
   const workspaceForInitialMerge = input.createInput.firstAgentContext
@@ -856,6 +866,7 @@ async function createMultiplicityWorkspace(input: {
   ) => void;
   serverId: string;
   labels: WorkspaceCreateErrorLabels;
+  onCheckoutBranchCopy: NotifyCheckoutBranchCopy;
 }): Promise<ReturnType<typeof normalizeWorkspaceDescriptor>> {
   const projectId = getHostProjectId(input.project, input.serverId);
   if (!projectId) throw new Error("Project is not available on the selected host");
@@ -882,6 +893,9 @@ async function createMultiplicityWorkspace(input: {
   });
   if (payload.error || !payload.workspace) {
     throw workspaceCreateError(payload, input.labels);
+  }
+  if (payload.checkoutBranchCopy) {
+    input.onCheckoutBranchCopy(payload.checkoutBranchCopy);
   }
   const normalizedWorkspace = normalizeWorkspaceDescriptor(payload.workspace);
   const workspaceForInitialMerge = input.withInitialAgent
@@ -2078,6 +2092,19 @@ export function NewWorkspaceScreen({
     [selectedProject, selectedServerId, selectedSourceDirectory],
   );
 
+  const notifyCheckoutBranchCopy = useCallback<NotifyCheckoutBranchCopy>(
+    ({ requestedBranch, createdBranch }) => {
+      toast.show(
+        t("newWorkspace.notices.checkoutBranchCopied", { requestedBranch, createdBranch }),
+        {
+          variant: "warning",
+          durationMs: 6000,
+        },
+      );
+    },
+    [t, toast],
+  );
+
   const ensureWorkspace = useCallback(
     async (input: {
       cwd: string;
@@ -2142,6 +2169,7 @@ export function NewWorkspaceScreen({
               createFailed: t("newWorkspace.errors.createWorktreeFailed"),
               branchAlreadyCheckedOut: t("newWorkspace.errors.branchAlreadyCheckedOut"),
             },
+            onCheckoutBranchCopy: notifyCheckoutBranchCopy,
           })
         : await createAndMergeWorkspace({
             client: connectedClient,
@@ -2152,6 +2180,7 @@ export function NewWorkspaceScreen({
               createFailed: t("newWorkspace.errors.createWorktreeFailed"),
               branchAlreadyCheckedOut: t("newWorkspace.errors.branchAlreadyCheckedOut"),
             },
+            onCheckoutBranchCopy: notifyCheckoutBranchCopy,
           });
       setCreatedWorkspace(normalizedWorkspace);
       return normalizedWorkspace;
@@ -2161,6 +2190,7 @@ export function NewWorkspaceScreen({
       createdWorkspace,
       effectiveIsolation,
       mergeWorkspaces,
+      notifyCheckoutBranchCopy,
       queryClient,
       selectedItem,
       selectedProject,

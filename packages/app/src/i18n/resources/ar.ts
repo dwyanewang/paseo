@@ -1188,6 +1188,10 @@ export const ar: TranslationResources = {
       composerStateRequired: "حالة الملحن مطلوبة",
       selectModel: "اختر نموذجا",
     },
+    notices: {
+      checkoutBranchCopied:
+        "الفرع {{requestedBranch}} مسحوب بالفعل في مكان آخر. سيتم استخدام نسخة بدلًا منه: {{createdBranch}}.",
+    },
     tooltips: {
       project: "Choose the project",
       host: "Choose the host",

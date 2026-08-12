@@ -7,6 +7,7 @@ import type { PersistedWorkspaceRecord } from "./workspace-registry.js";
 import type { WorkspaceProvisioningService } from "./session/workspace-provisioning/workspace-provisioning-service.js";
 import {
   createWorktreeCore,
+  type CheckoutBranchCopy,
   type CreateWorktreeCoreDeps,
   type CreateWorktreeCoreInput,
 } from "./worktree-core.js";
@@ -41,6 +42,7 @@ export interface CreatePaseoWorktreeResult {
   workspace: PersistedWorkspaceRecord;
   repoRoot: string;
   created: boolean;
+  checkoutBranchCopy: CheckoutBranchCopy | null;
 }
 
 export type CreatePaseoWorktreeFn = (
@@ -110,6 +112,7 @@ async function createPaseoWorktreeWithPriority(
       workspace,
       repoRoot: createdWorktree.repoRoot,
       created: createdWorktree.created,
+      checkoutBranchCopy: createdWorktree.checkoutBranchCopy,
     };
   } catch (error) {
     if (!createdWorktree.created) {

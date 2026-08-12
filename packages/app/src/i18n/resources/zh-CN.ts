@@ -1176,6 +1176,9 @@ export const zhCN: TranslationResources = {
       composerStateRequired: "Composer 状态必填",
       selectModel: "请选择模型",
     },
+    notices: {
+      checkoutBranchCopied: "{{requestedBranch}} 已在别处检出，改用副本分支：{{createdBranch}}。",
+    },
     tooltips: {
       project: "Choose the project",
       host: "Choose the host",

@@ -1204,6 +1204,10 @@ export const ru: TranslationResources = {
       composerStateRequired: "Редактор сообщения ещё не готов.",
       selectModel: "Выберите модель",
     },
+    notices: {
+      checkoutBranchCopied:
+        "Ветка {{requestedBranch}} уже извлечена в другом месте. Вместо неё используется копия: {{createdBranch}}.",
+    },
     tooltips: {
       project: "Выберите проект",
       host: "Выберите хост",

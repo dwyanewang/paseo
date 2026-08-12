@@ -1213,6 +1213,10 @@ export const ptBR: TranslationResources = {
       composerStateRequired: "O estado do composer é obrigatório",
       selectModel: "Selecione um modelo",
     },
+    notices: {
+      checkoutBranchCopied:
+        "{{requestedBranch}} já está em uso em outro lugar. Usando uma cópia no lugar: {{createdBranch}}.",
+    },
     tooltips: {
       project: "Choose the project",
       host: "Choose the host",

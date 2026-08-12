@@ -1200,6 +1200,10 @@ export const ja: TranslationResources = {
       composerStateRequired: "コンポーザーの状態が必要です",
       selectModel: "モデルを選択してください",
     },
+    notices: {
+      checkoutBranchCopied:
+        "{{requestedBranch}} は別の場所で既にチェックアウトされています。代わりにコピーを使用します: {{createdBranch}}。",
+    },
     tooltips: {
       project: "Choose the project",
       host: "Choose the host",

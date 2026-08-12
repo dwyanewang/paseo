@@ -1195,6 +1195,10 @@ export const ko: TranslationResources = {
       composerStateRequired: "작성기 상태가 필요합니다",
       selectModel: "모델을 선택하세요",
     },
+    notices: {
+      checkoutBranchCopied:
+        "{{requestedBranch}}은(는) 다른 곳에서 이미 체크아웃되어 있습니다. 대신 사본을 사용합니다: {{createdBranch}}.",
+    },
     tooltips: {
       project: "Choose the project",
       host: "Choose the host",
