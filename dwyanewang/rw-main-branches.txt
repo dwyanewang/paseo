@@ -7,4 +7,4 @@ feat/codeup-forge # PR #2507 # reviewed-main:9a7301d9a0963ea753bf0ce20b0ee61e034
 fix/android-keyboard-covers-input # PR #2467 # reviewed-main:9a7301d9a0963ea753bf0ce20b0ee61e0341d710 # reviewed-head:446c2849d7c81269542e1e39198bfbdff25d6e84
 refactor/provider-history-read # PR #2388 # reviewed-main:9a7301d9a0963ea753bf0ce20b0ee61e0341d710 # reviewed-head:522a28cfb27a213f6d917426d05a053c5a121185
 feat/worktree-checkout-branch # PR #1721 # reviewed-main:9a7301d9a0963ea753bf0ce20b0ee61e0341d710 # reviewed-head:934837fbc6034370f62f4832115ddd5c7f3bb7b5
-feat/file-image-preview # PR #2822 # reviewed-main:9a7301d9a0963ea753bf0ce20b0ee61e0341d710 # reviewed-head:f9a326dc7274448fa93383fc449762a160bf9a7e
+feat/file-image-preview # PR #2822 # reviewed-main:9a7301d9a0963ea753bf0ce20b0ee61e0341d710 # reviewed-head:58ee85abe4a11a1839166d2ae5b7bc7fca7d38e9
