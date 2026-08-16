@@ -1653,6 +1653,7 @@ export const ProviderDiagnosticRequestMessageSchema = z.object({
 
 export const ProviderUsageListRequestMessageSchema = z.object({
   type: z.literal("provider.usage.list.request"),
+  forceRefresh: z.boolean().optional(),
   requestId: z.string(),
 });
 

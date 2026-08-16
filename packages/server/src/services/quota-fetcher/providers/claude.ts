@@ -28,7 +28,6 @@ const ClaudeCredentialsSchema = z.object({
   claudeAiOauth: z
     .object({
       accessToken: z.string().optional(),
-      refreshToken: z.string().optional(),
       subscriptionType: z.string().optional(),
       rateLimitTier: z.string().optional(),
     })
@@ -470,6 +469,8 @@ export class ClaudeQuotaProvider implements ProviderUsageFetcher {
         "anthropic-beta": CLAUDE_OAUTH_BETA,
       },
     });
+    // Claude Code exclusively owns OAuth refresh and credential writes. This provider
+    // only reads the current access token so it cannot race token rotation in the CLI.
     if (res.status === 401 || res.status === 403) return "NEEDS_AUTH";
     if (!res.ok) throw new Error(`Claude usage API returned ${res.status}`);
     return ClaudeUsageResponseSchema.parse(await res.json());

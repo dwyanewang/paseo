@@ -9,6 +9,7 @@ interface ProviderUsageFixturePayload {
 
 export interface ProviderUsageFixture {
   requestCount(): number;
+  requestOptions(): Array<{ forceRefresh?: boolean }>;
   waitForRequestCount(count: number): Promise<void>;
 }
 
@@ -80,6 +81,7 @@ export async function installProviderUsageFixture(
   payloads: ProviderUsageFixturePayload[],
 ): Promise<ProviderUsageFixture> {
   let requests = 0;
+  const requestOptions: Array<{ forceRefresh?: boolean }> = [];
   const waiters: Array<{ count: number; resolve: () => void }> = [];
 
   function notifyWaiters() {
@@ -109,9 +111,14 @@ export async function installProviderUsageFixture(
       if (sessionMessage?.type === "provider.usage.list.request") {
         requests += 1;
         const requestId = sessionMessage.requestId;
+        const forceRefresh = sessionMessage.forceRefresh;
         if (typeof requestId !== "string") {
           throw new Error("provider.usage.list.request missing requestId");
         }
+        if (forceRefresh !== undefined && typeof forceRefresh !== "boolean") {
+          throw new Error("provider.usage.list.request has invalid forceRefresh");
+        }
+        requestOptions.push(forceRefresh === undefined ? {} : { forceRefresh });
         const payload = payloadForRequest();
         notifyWaiters();
         ws.send(
@@ -141,6 +148,9 @@ export async function installProviderUsageFixture(
   return {
     requestCount() {
       return requests;
+    },
+    requestOptions() {
+      return requestOptions.slice();
     },
     waitForRequestCount(count: number) {
       if (requests >= count) {

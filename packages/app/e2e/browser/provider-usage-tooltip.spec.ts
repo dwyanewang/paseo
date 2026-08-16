@@ -105,6 +105,7 @@ test.describe("provider usage tooltip", () => {
       await meter.hover();
       await usageFixture.waitForRequestCount(2);
       expect(usageFixture.requestCount()).toBe(2);
+      expect(usageFixture.requestOptions()).toEqual([{}, {}]);
       await expect(page.getByText("64%")).toBeVisible();
     } finally {
       await session.cleanup();
