@@ -5846,6 +5846,37 @@ test("sends provider.usage.list.request and resolves provider.usage.list.respons
       },
     ],
   });
+
+  const forcedUsagePromise = client.listProviderUsage({
+    requestId: "usage-2",
+    forceRefresh: true,
+  });
+
+  expect(JSON.parse(assertStr(mock.sent[1]))).toEqual({
+    type: "session",
+    message: {
+      type: "provider.usage.list.request",
+      forceRefresh: true,
+      requestId: "usage-2",
+    },
+  });
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "provider.usage.list.response",
+      payload: {
+        requestId: "usage-2",
+        fetchedAt: "2026-06-19T00:01:00.000Z",
+        providers: [],
+      },
+    }),
+  );
+
+  await expect(forcedUsagePromise).resolves.toEqual({
+    requestId: "usage-2",
+    fetchedAt: "2026-06-19T00:01:00.000Z",
+    providers: [],
+  });
 });
 
 test("sends close_items_request and resolves close_items_response", async () => {

@@ -103,12 +103,14 @@ test.describe("provider usage settings", () => {
     await openSettings(page);
     await openSettingsHostSection(page, serverId, "usage");
     await usageFixture.waitForRequestCount(1);
+    expect(usageFixture.requestOptions()).toEqual([{}]);
     await expect(page.getByText("23%")).toBeVisible({ timeout: 10_000 });
 
     await page.getByRole("button", { name: "Refresh", exact: true }).click();
     await usageFixture.waitForRequestCount(2);
 
     expect(usageFixture.requestCount()).toBe(2);
+    expect(usageFixture.requestOptions()).toEqual([{}, { forceRefresh: true }]);
     await expect(page.getByText("64%")).toBeVisible();
   });
 

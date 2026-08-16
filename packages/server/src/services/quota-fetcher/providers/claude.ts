@@ -22,14 +22,12 @@ import {
 const execFileAsync = promisify(execFile);
 const CLAUDE_KEYCHAIN_TIMEOUT_MS = 2_000;
 const CLAUDE_OAUTH_BETA = "oauth-2025-04-20";
-const CLAUDE_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 const CLAUDE_KEYCHAIN_SERVICE = "Claude Code-credentials";
 
 const ClaudeCredentialsSchema = z.object({
   claudeAiOauth: z
     .object({
       accessToken: z.string().optional(),
-      refreshToken: z.string().optional(),
       subscriptionType: z.string().optional(),
       rateLimitTier: z.string().optional(),
     })
@@ -71,21 +69,14 @@ const ClaudeUsageResponseSchema = z.object({
     .nullish(),
 });
 
-const ClaudeTokenRefreshSchema = z.object({
-  access_token: z.string().optional(),
-  refresh_token: z.string().optional(),
-});
-
 type ClaudeCredentials = z.infer<typeof ClaudeCredentialsSchema>;
 type ClaudeUsageResponse = z.infer<typeof ClaudeUsageResponseSchema>;
-type ClaudeTokenRefresh = z.infer<typeof ClaudeTokenRefreshSchema>;
 type ClaudeLimit = z.infer<typeof ClaudeLimitSchema>;
 
 const SCOPED_WEEKLY_KIND = "weekly_scoped";
 
 interface ClaudeCredentialRecord {
   oauth: { accessToken: string } & NonNullable<ClaudeCredentials["claudeAiOauth"]>;
-  filePath: string | null;
 }
 
 interface ClaudeQuotaProviderOptions {
@@ -337,30 +328,12 @@ export class ClaudeQuotaProvider implements ProviderUsageFetcher {
       return unavailableUsage(this);
     }
 
-    const { oauth, filePath } = credentials;
+    const { oauth } = credentials;
     const plan = buildClaudePlan(oauth.subscriptionType, oauth.rateLimitTier);
-    let resp = await this.callClaudeApi(oauth.accessToken);
+    const resp = await this.callClaudeApi(oauth.accessToken);
 
     if (resp === "NEEDS_AUTH") {
-      if (!filePath || !oauth.refreshToken) {
-        return unavailableUsage(this);
-      }
-
-      const refreshed = await this.refreshClaudeToken(oauth.refreshToken);
-      if (!refreshed?.access_token) {
-        return unavailableUsage(this);
-      }
-
-      await this.saveClaudeCredentials(filePath, {
-        ...oauth,
-        accessToken: refreshed.access_token,
-        refreshToken: refreshed.refresh_token ?? oauth.refreshToken,
-      });
-
-      resp = await this.callClaudeApi(refreshed.access_token);
-      if (resp === "NEEDS_AUTH") {
-        return unavailableUsage(this);
-      }
+      return unavailableUsage(this);
     }
 
     const scoped = reconcileScopedLimits(
@@ -436,7 +409,7 @@ export class ClaudeQuotaProvider implements ProviderUsageFetcher {
         );
         const oauth = creds.claudeAiOauth;
         if (oauth?.accessToken) {
-          return { oauth: { ...oauth, accessToken: oauth.accessToken }, filePath: credPath };
+          return { oauth: { ...oauth, accessToken: oauth.accessToken } };
         }
       } catch {
         // Fall through to the macOS Keychain below.
@@ -447,7 +420,7 @@ export class ClaudeQuotaProvider implements ProviderUsageFetcher {
       const creds = ClaudeCredentialsSchema.safeParse(await this.readKeychainCredentials());
       const oauth = creds.success ? creds.data.claudeAiOauth : undefined;
       if (oauth?.accessToken) {
-        return { oauth: { ...oauth, accessToken: oauth.accessToken }, filePath: null };
+        return { oauth: { ...oauth, accessToken: oauth.accessToken } };
       }
     }
 
@@ -462,42 +435,10 @@ export class ClaudeQuotaProvider implements ProviderUsageFetcher {
         "anthropic-beta": CLAUDE_OAUTH_BETA,
       },
     });
+    // Claude Code exclusively owns OAuth refresh and credential writes. This provider
+    // only reads the current access token so it cannot race token rotation in the CLI.
     if (res.status === 401 || res.status === 403) return "NEEDS_AUTH";
     if (!res.ok) throw new Error(`Claude usage API returned ${res.status}`);
     return ClaudeUsageResponseSchema.parse(await res.json());
-  }
-
-  private async refreshClaudeToken(refreshToken: string): Promise<ClaudeTokenRefresh | null> {
-    const res = await fetchProviderApi(
-      this.fetchApi,
-      "https://platform.claude.com/v1/oauth/token",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          grant_type: "refresh_token",
-          refresh_token: refreshToken,
-          client_id: CLAUDE_CLIENT_ID,
-          scope: "user:profile user:inference user:sessions:claude_code user:mcp_servers",
-        }),
-      },
-    );
-    if (!res.ok) return null;
-    return ClaudeTokenRefreshSchema.parse(await res.json());
-  }
-
-  private async saveClaudeCredentials(
-    credPath: string,
-    oauth: ClaudeCredentials["claudeAiOauth"],
-  ): Promise<void> {
-    try {
-      const existing = ClaudeCredentialsSchema.parse(
-        JSON.parse(await fs.readFile(credPath, "utf8")),
-      );
-      existing.claudeAiOauth = oauth;
-      await fs.writeFile(credPath, JSON.stringify(existing, null, 2), { mode: 0o600 });
-    } catch {
-      // Non-fatal; Claude Code can refresh again on its own next time.
-    }
   }
 }

@@ -28,6 +28,7 @@ export function useProviderUsage(
 ): {
   view: ProviderUsageView;
   refresh: () => Promise<void>;
+  forceRefresh: () => Promise<void>;
   canFetch: boolean;
 } {
   const queryClient = useQueryClient();
@@ -67,6 +68,15 @@ export function useProviderUsage(
     });
   }, [canFetch, queryClient, queryFn, queryKey]);
 
+  const forceRefresh = useCallback(async () => {
+    if (!canFetch || !client) return;
+    await queryClient.fetchQuery({
+      queryKey,
+      queryFn: () => client.listProviderUsage({ forceRefresh: true }),
+      staleTime: 0,
+    });
+  }, [canFetch, client, queryClient, queryKey]);
+
   const view = useMemo<ProviderUsageView>(() => {
     if (!serverId || !client || !isConnected) {
       return { kind: "error", message: providerUsageCopy.hostUnavailable };
@@ -99,5 +109,5 @@ export function useProviderUsage(
     supportsProviderUsage,
   ]);
 
-  return { view, refresh, canFetch };
+  return { view, refresh, forceRefresh, canFetch };
 }

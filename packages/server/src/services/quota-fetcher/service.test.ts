@@ -528,44 +528,34 @@ describe("real provider usage fetchers", () => {
     expect(fetchApi).not.toHaveBeenCalled();
   });
 
-  it("refreshes Claude access tokens on 401 and retries", async () => {
-    writeClaudeCredentials(claudeHome, "at_expired", "rt_valid");
-    let usageCalls = 0;
-    fetchApi = vi.fn(async (url: RequestInfo | URL) => {
-      const endpoint = url.toString();
-      if (endpoint === "https://api.anthropic.com/api/oauth/usage") {
-        usageCalls += 1;
-        if (usageCalls === 1) return new Response(null, { status: 401 });
-        return jsonResponse(makeClaudeResponse());
-      }
-      if (endpoint === "https://platform.claude.com/v1/oauth/token") {
-        return jsonResponse({ access_token: "at_refreshed", refresh_token: "rt_new" });
-      }
-      throw new Error(`Unmocked: ${endpoint}`);
-    }) as never;
+  it.each([401, 403])(
+    "returns unavailable Claude usage on %s without refreshing or modifying credentials",
+    async (status) => {
+      writeClaudeCredentials(claudeHome, "at_expired", "rt_valid");
+      const credentialPath = join(claudeHome, ".credentials.json");
+      const credentialsBefore = readFileSync(credentialPath, "utf8");
+      fetchApi = vi.fn(async (url: RequestInfo | URL) => {
+        const endpoint = url.toString();
+        if (endpoint === "https://api.anthropic.com/api/oauth/usage") {
+          return new Response(null, { status });
+        }
+        if (endpoint === "https://platform.claude.com/v1/oauth/token") {
+          return jsonResponse({ access_token: "at_refreshed", refresh_token: "rt_new" });
+        }
+        throw new Error(`Unmocked: ${endpoint}`);
+      }) as never;
 
-    const result = await service().listUsage();
+      const result = await service().listUsage();
 
-    expect(findProvider(result, "claude").status).toBe("available");
-    expect(usageCalls).toBe(2);
-  });
-
-  it("returns unavailable Claude usage when 401 persists after refresh", async () => {
-    writeClaudeCredentials(claudeHome, "at_bad", "rt_bad");
-    fetchApi = mockFetch(
-      new Map([
-        ["https://api.anthropic.com/api/oauth/usage", () => new Response(null, { status: 401 })],
-        [
-          "https://platform.claude.com/v1/oauth/token",
-          () => jsonResponse({ access_token: "at_still_bad", refresh_token: "rt_still_bad" }),
-        ],
-      ]),
-    );
-
-    const result = await service().listUsage();
-
-    expect(findProvider(result, "claude").status).toBe("unavailable");
-  });
+      expect(findProvider(result, "claude").status).toBe("unavailable");
+      expect(fetchApi).toHaveBeenCalledTimes(1);
+      expect(fetchApi).toHaveBeenCalledWith(
+        "https://api.anthropic.com/api/oauth/usage",
+        expect.any(Object),
+      );
+      expect(readFileSync(credentialPath, "utf8")).toBe(credentialsBefore);
+    },
+  );
 
   it("does not refresh Claude tokens read from the macOS Keychain", async () => {
     const usageFetch = vi.fn(async () => new Response(null, { status: 401 }));

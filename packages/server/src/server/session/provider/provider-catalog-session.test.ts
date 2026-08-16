@@ -305,6 +305,37 @@ describe("ProviderCatalogSession", () => {
     expect(err?.payload.requestId).toBe("u1");
   });
 
+  it("forwards an explicit usage cache bypass to the usage service", async () => {
+    const listUsage = vi.fn(async () => ({
+      fetchedAt: "2026-08-16T00:00:00.000Z",
+      providers: [],
+    }));
+    const { subsystem } = makeSubsystem({ usage: { listUsage } });
+
+    await subsystem.handleProviderUsageListRequest({
+      type: "provider.usage.list.request",
+      forceRefresh: true,
+      requestId: "u-refresh",
+    });
+
+    expect(listUsage).toHaveBeenCalledWith({ forceRefresh: true });
+  });
+
+  it("preserves normal usage cache behavior when no bypass is requested", async () => {
+    const listUsage = vi.fn(async () => ({
+      fetchedAt: "2026-08-16T00:00:00.000Z",
+      providers: [],
+    }));
+    const { subsystem } = makeSubsystem({ usage: { listUsage } });
+
+    await subsystem.handleProviderUsageListRequest({
+      type: "provider.usage.list.request",
+      requestId: "u-cached",
+    });
+
+    expect(listUsage).toHaveBeenCalledWith({ forceRefresh: undefined });
+  });
+
   it("surfaces a feature-list failure inline, not as an rpc_error", async () => {
     const { subsystem, emitted } = makeSubsystem({
       host: {
