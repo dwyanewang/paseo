@@ -5,7 +5,7 @@
 fix/project-skill-cache-invalidation # PR #2585 # reviewed-main:ac4331456c997a5e3c161b91e87cce3af1fbb89e # reviewed-head:a2e5fb192706cd563bf202f86375fe7b9d181eb1
 feat/codeup-forge # PR #2507 # reviewed-main:ac4331456c997a5e3c161b91e87cce3af1fbb89e # reviewed-head:1d422d54380b37c5df06019cb542a3bb9e2dc820
 fix/android-keyboard-covers-input # PR #2467 # reviewed-main:ac4331456c997a5e3c161b91e87cce3af1fbb89e # reviewed-head:446c2849d7c81269542e1e39198bfbdff25d6e84
-refactor/provider-history-read # PR #2388 # reviewed-main:ac4331456c997a5e3c161b91e87cce3af1fbb89e # reviewed-head:522a28cfb27a213f6d917426d05a053c5a121185
+refactor/provider-history-read # PR #2388 # reviewed-main:ac4331456c997a5e3c161b91e87cce3af1fbb89e # reviewed-head:d681bbee72b3e1246262044eedef2c1c84a42fed
 feat/worktree-checkout-branch # PR #1721 # reviewed-main:ac4331456c997a5e3c161b91e87cce3af1fbb89e # reviewed-head:934837fbc6034370f62f4832115ddd5c7f3bb7b5
 feat/file-image-preview # PR #2822 # reviewed-main:ac4331456c997a5e3c161b91e87cce3af1fbb89e # reviewed-head:58ee85abe4a11a1839166d2ae5b7bc7fca7d38e9
 fix/claude-usage-oauth # Personal branch # reviewed-main:ac4331456c997a5e3c161b91e87cce3af1fbb89e # reviewed-head:cdfb78df48d2b62a96ea3cf1907e0adfe47e6e2b
