@@ -100,7 +100,7 @@ function createFixture({
 
   git(root, "switch", "-c", "chore/build-paseo");
   const controlDir = path.join(root, "dwyanewang");
-  const binDir = path.join(root, "test-bin");
+  const binDir = path.join(root, ".git", "test-bin");
   mkdirSync(controlDir);
   mkdirSync(binDir);
   copyFileSync(
@@ -160,6 +160,10 @@ function createFixture({
     .join("\n");
   writeFileSync(ghPath, `#!/usr/bin/env bash\nprintf 'call\\n' >> "$GH_CALL_LOG"\n${ghOutput}\n`);
   chmodSync(ghPath, 0o755);
+  const npmPath = path.join(binDir, "npm");
+  const npmCallLog = path.join(root, ".git", "npm-calls.log");
+  writeFileSync(npmPath, '#!/usr/bin/env bash\nprintf \'%s\\n\' "$*" >> "$NPM_CALL_LOG"\n');
+  chmodSync(npmPath, 0o755);
   const diffPath = path.join(binDir, "diff");
   writeFileSync(
     diffPath,
@@ -173,15 +177,20 @@ exec /usr/bin/diff "$@"
   );
   chmodSync(diffPath, 0o755);
 
-  git(root, "add", "dwyanewang", "test-bin");
+  git(root, "add", "dwyanewang");
   git(root, "commit", "-m", "chore: add rw-main controls");
 
   return {
     currentMain,
-    env: { GH_CALL_LOG: ghCallLog, PATH: `${binDir}:${process.env.PATH}` },
+    env: {
+      GH_CALL_LOG: ghCallLog,
+      NPM_CALL_LOG: npmCallLog,
+      PATH: `${binDir}:${process.env.PATH}`,
+    },
     featureHead,
     ghCallLog,
     manifestPath,
+    npmCallLog,
     reviewedMain,
     reviewedFeatureHead,
     root,
@@ -561,5 +570,27 @@ test("rebuild rejects a changed branch head before merging or running npm", () =
     assert.equal(result.status, 1);
     assert.match(result.stderr, /head .* has not completed semantic review/);
     assert.doesNotMatch(result.stdout, /Merging|Refreshing|npm/);
+  });
+});
+
+test("rebuild refreshes plugin declarations before repository checks", () => {
+  withFixture({ advanceMain: false }, (fixture) => {
+    const result = run(
+      fixture.root,
+      "bash",
+      ["dwyanewang/rebuild-rw-main.sh", "--build-root", fixture.root, "--dry-run"],
+      fixture.env,
+    );
+
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.deepEqual(readFileSync(fixture.npmCallLog, "utf8").trim().split("\n"), [
+      "install",
+      "run build --workspace=@getpaseo/relay",
+      "run build:client",
+      "run build:plugin",
+      "run format:check",
+      "run typecheck",
+      "run lint",
+    ]);
   });
 });
