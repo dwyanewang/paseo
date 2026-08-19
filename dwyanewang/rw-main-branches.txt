@@ -2,11 +2,10 @@
 # sync-rw-main-branches.sh removes merged PRs; new entries are explicit only.
 # Each entry records the main/head pair last semantically reviewed.
 
-fix/project-skill-cache-invalidation # PR #2585 # reviewed-main:60706feb348cd1c8b18c2218e5d0305535ab1233 # reviewed-head:a2e5fb192706cd563bf202f86375fe7b9d181eb1
-feat/codeup-forge # PR #2507 # reviewed-main:60706feb348cd1c8b18c2218e5d0305535ab1233 # reviewed-head:5fa5a98dbda023c6f9c1f84ecdedde802f0fb930
-fix/android-keyboard-covers-input # PR #2467 # reviewed-main:60706feb348cd1c8b18c2218e5d0305535ab1233 # reviewed-head:eab2b55a6857213ffcc678e5a7573ff1500b65a7
-refactor/provider-history-read # PR #2388 # reviewed-main:60706feb348cd1c8b18c2218e5d0305535ab1233 # reviewed-head:d681bbee72b3e1246262044eedef2c1c84a42fed
-feat/worktree-checkout-branch # PR #1721 # reviewed-main:60706feb348cd1c8b18c2218e5d0305535ab1233 # reviewed-head:88711fe60cd4e5bf5e9d9f300ce3a44d7daa51d6
-feat/file-image-preview # PR #2822 # reviewed-main:60706feb348cd1c8b18c2218e5d0305535ab1233 # reviewed-head:06b142114c4164a98c8d09abf05d3fd6c4149b5d
-fix/claude-usage-oauth # Personal branch # reviewed-main:60706feb348cd1c8b18c2218e5d0305535ab1233 # reviewed-head:cdfb78df48d2b62a96ea3cf1907e0adfe47e6e2b
-fix/svelte-highlight-desktop-dependencies # Personal branch # reviewed-main:60706feb348cd1c8b18c2218e5d0305535ab1233 # reviewed-head:8f4b379cd2917220a59372fa2fb6e3d3b9f867d0
+fix/project-skill-cache-invalidation # PR #2585 # reviewed-main:b638f7d3eec43e557a22fdeb20706ae90c65be62 # reviewed-head:a2e5fb192706cd563bf202f86375fe7b9d181eb1
+feat/codeup-forge # PR #2507 # reviewed-main:b638f7d3eec43e557a22fdeb20706ae90c65be62 # reviewed-head:140e106dc6447441b949aa5ec5626860d7fa1fc2
+fix/android-keyboard-covers-input # PR #2467 # reviewed-main:b638f7d3eec43e557a22fdeb20706ae90c65be62 # reviewed-head:6e300c9fd1cf915c7e5007ca86b6d77c82a09b00
+refactor/provider-history-read # PR #2388 # reviewed-main:b638f7d3eec43e557a22fdeb20706ae90c65be62 # reviewed-head:d681bbee72b3e1246262044eedef2c1c84a42fed
+feat/worktree-checkout-branch # PR #1721 # reviewed-main:b638f7d3eec43e557a22fdeb20706ae90c65be62 # reviewed-head:88711fe60cd4e5bf5e9d9f300ce3a44d7daa51d6
+feat/file-image-preview # PR #2822 # reviewed-main:b638f7d3eec43e557a22fdeb20706ae90c65be62 # reviewed-head:06b142114c4164a98c8d09abf05d3fd6c4149b5d
+fix/claude-usage-oauth # Personal branch # reviewed-main:b638f7d3eec43e557a22fdeb20706ae90c65be62 # reviewed-head:7306aed797c9e3096ef2e845a4a5b1c8c3e4131e
