@@ -9,3 +9,4 @@ refactor/provider-history-read # PR #2388 # reviewed-main:60706feb348cd1c8b18c22
 feat/worktree-checkout-branch # PR #1721 # reviewed-main:60706feb348cd1c8b18c2218e5d0305535ab1233 # reviewed-head:88711fe60cd4e5bf5e9d9f300ce3a44d7daa51d6
 feat/file-image-preview # PR #2822 # reviewed-main:60706feb348cd1c8b18c2218e5d0305535ab1233 # reviewed-head:06b142114c4164a98c8d09abf05d3fd6c4149b5d
 fix/claude-usage-oauth # Personal branch # reviewed-main:60706feb348cd1c8b18c2218e5d0305535ab1233 # reviewed-head:cdfb78df48d2b62a96ea3cf1907e0adfe47e6e2b
+fix/svelte-highlight-desktop-dependencies # Personal branch # reviewed-main:60706feb348cd1c8b18c2218e5d0305535ab1233 # reviewed-head:8f4b379cd2917220a59372fa2fb6e3d3b9f867d0
