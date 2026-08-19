@@ -196,6 +196,22 @@ describe("provider usage list message contract", () => {
     });
   });
 
+  test("parses the provider usage force-refresh feature gate", () => {
+    const parsed = parseServerInfoStatusPayload({
+      status: "server_info",
+      serverId: "srv-test",
+      features: {
+        providerUsageList: true,
+        providerUsageForceRefresh: true,
+      },
+    });
+
+    if (!parsed) {
+      throw new Error("Expected server info payload to parse");
+    }
+    expect(parsed.features?.providerUsageForceRefresh).toBe(true);
+  });
+
   test("accepts new providers and new usage windows as normalized data", () => {
     const parsed = SessionOutboundMessageSchema.parse({
       type: "provider.usage.list.response",

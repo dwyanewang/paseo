@@ -7,6 +7,10 @@ interface ProviderUsageFixturePayload {
   providers: ProviderUsage[];
 }
 
+interface ProviderUsageFixtureOptions {
+  supportsForceRefresh?: boolean;
+}
+
 export interface ProviderUsageFixture {
   requestCount(): number;
   requestOptions(): Array<{ forceRefresh?: boolean }>;
@@ -39,7 +43,10 @@ function getSessionMessage(message: WebSocketMessage): Record<string, unknown> |
   return maybeEnvelope.message as Record<string, unknown>;
 }
 
-function withProviderUsageFeature(message: WebSocketMessage): string | null {
+function withProviderUsageFeature(
+  message: WebSocketMessage,
+  supportsForceRefresh: boolean,
+): string | null {
   const envelope = parseJson(message);
   if (!envelope || typeof envelope !== "object") {
     return null;
@@ -70,6 +77,7 @@ function withProviderUsageFeature(message: WebSocketMessage): string | null {
             ? payload.features
             : {}),
           providerUsageList: true,
+          providerUsageForceRefresh: supportsForceRefresh ? true : undefined,
         },
       },
     },
@@ -79,7 +87,9 @@ function withProviderUsageFeature(message: WebSocketMessage): string | null {
 export async function installProviderUsageFixture(
   page: Page,
   payloads: ProviderUsageFixturePayload[],
+  options: ProviderUsageFixtureOptions = {},
 ): Promise<ProviderUsageFixture> {
+  const supportsForceRefresh = options.supportsForceRefresh ?? true;
   let requests = 0;
   const requestOptions: Array<{ forceRefresh?: boolean }> = [];
   const waiters: Array<{ count: number; resolve: () => void }> = [];
@@ -140,7 +150,10 @@ export async function installProviderUsageFixture(
     });
 
     server.onMessage((message) => {
-      const serverInfo = typeof message === "string" ? withProviderUsageFeature(message) : null;
+      const serverInfo =
+        typeof message === "string"
+          ? withProviderUsageFeature(message, supportsForceRefresh)
+          : null;
       ws.send(serverInfo ?? message);
     });
   });

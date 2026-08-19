@@ -322,11 +322,17 @@ export function HostProvidersPage({ serverId }: { serverId: string }) {
 
 export function HostUsagePage({ serverId }: { serverId: string }) {
   const host = useHostProfile(serverId);
-  const { view: providerUsageView, forceRefresh: refreshProviderUsage } =
-    useProviderUsage(serverId);
+  const {
+    view: providerUsageView,
+    refresh: refreshProviderUsage,
+    forceRefresh: forceRefreshProviderUsage,
+  } = useProviderUsage(serverId);
   const handleRefresh = useCallback(() => {
     void refreshProviderUsage();
   }, [refreshProviderUsage]);
+  const handleForceRefresh = useCallback(() => {
+    void forceRefreshProviderUsage?.();
+  }, [forceRefreshProviderUsage]);
 
   if (!host) {
     return <HostNotFound />;
@@ -334,7 +340,11 @@ export function HostUsagePage({ serverId }: { serverId: string }) {
 
   return (
     <View>
-      <ProviderUsageSettingsSection view={providerUsageView} onRefresh={handleRefresh} />
+      <ProviderUsageSettingsSection
+        view={providerUsageView}
+        onRefresh={handleRefresh}
+        {...(forceRefreshProviderUsage ? { onForceRefresh: handleForceRefresh } : {})}
+      />
     </View>
   );
 }

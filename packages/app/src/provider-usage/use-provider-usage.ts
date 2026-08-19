@@ -28,7 +28,7 @@ export function useProviderUsage(
 ): {
   view: ProviderUsageView;
   refresh: () => Promise<void>;
-  forceRefresh: () => Promise<void>;
+  forceRefresh: (() => Promise<void>) | null;
   canFetch: boolean;
 } {
   const queryClient = useQueryClient();
@@ -36,6 +36,10 @@ export function useProviderUsage(
   const isConnected = useHostRuntimeIsConnected(serverId ?? "");
   const supportsProviderUsage = useSessionStore(
     (state) => state.sessions[serverId ?? ""]?.serverInfo?.features?.providerUsageList === true,
+  );
+  const supportsForceRefresh = useSessionStore(
+    (state) =>
+      state.sessions[serverId ?? ""]?.serverInfo?.features?.providerUsageForceRefresh === true,
   );
   const queryKey = useMemo(() => providerUsageQueryKey(serverId), [serverId]);
   const canFetch = Boolean(serverId && client && isConnected && supportsProviderUsage);
@@ -109,5 +113,10 @@ export function useProviderUsage(
     supportsProviderUsage,
   ]);
 
-  return { view, refresh, forceRefresh, canFetch };
+  return {
+    view,
+    refresh,
+    forceRefresh: supportsForceRefresh ? forceRefresh : null,
+    canFetch,
+  };
 }

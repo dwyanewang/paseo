@@ -3360,6 +3360,8 @@ export const ServerInfoStatusPayloadSchema = z
         workspaceFileEditing: z.boolean().optional(),
         // COMPAT(providerUsageList): added in v0.1.98, drop the gate when daemon floor >= v0.1.98.
         providerUsageList: z.boolean().optional(),
+        // COMPAT(providerUsageForceRefresh): added in v0.4.0, remove gate after 2027-02-19.
+        providerUsageForceRefresh: z.boolean().optional(),
         // COMPAT(agentDetach): added in v0.1.98, remove gate after 2026-12-19 once daemon floor >= v0.1.98.
         agentDetach: z.boolean().optional(),
         // COMPAT(agentThinkingUpdate): added in v0.2.4, remove gate after 2027-01-28.
