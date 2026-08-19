@@ -13,33 +13,39 @@ import type { ProviderUsageView } from "./types";
 export function ProviderUsageSettingsSection({
   view,
   onRefresh,
+  onForceRefresh,
 }: {
   view: ProviderUsageView;
   onRefresh: () => void;
+  onForceRefresh?: () => void;
 }) {
   const busy = view.kind === "loading" || (view.kind === "ready" && view.isRefreshing);
 
-  const refreshButton = useMemo(
-    () => (
+  const trailing = useMemo(() => {
+    if (!onForceRefresh) {
+      return (
+        <Text style={styles.upgradeText}>{providerUsageCopy.forceRefreshHostUpgradeRequired}</Text>
+      );
+    }
+    return (
       <Button
         variant="ghost"
         size="sm"
         leftIcon={RefreshCw}
         loading={busy}
-        onPress={onRefresh}
+        onPress={onForceRefresh}
         accessibilityLabel={providerUsageCopy.refresh}
       >
         {busy ? providerUsageCopy.refreshing : providerUsageCopy.refresh}
       </Button>
-    ),
-    [busy, onRefresh],
-  );
+    );
+  }, [busy, onForceRefresh]);
 
   return (
     <SettingsSection
       title={providerUsageCopy.title}
       testID="provider-usage-card"
-      trailing={refreshButton}
+      trailing={trailing}
     >
       <ProviderUsageBody view={view} onRefresh={onRefresh} />
     </SettingsSection>
@@ -90,5 +96,9 @@ const styles = StyleSheet.create((theme) => ({
   emptyText: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.base,
+  },
+  upgradeText: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
   },
 }));

@@ -114,6 +114,39 @@ test.describe("provider usage settings", () => {
     await expect(page.getByText("64%")).toBeVisible();
   });
 
+  test("prompts for a host update when force refresh is unavailable", async ({ page }) => {
+    test.setTimeout(120_000);
+    const serverId = getServerId();
+    const usageFixture = await installProviderUsageFixture(
+      page,
+      [
+        {
+          fetchedAt: "2026-06-19T00:00:00.000Z",
+          providers: [
+            {
+              providerId: "glm",
+              displayName: "GLM coding plan",
+              status: "available",
+              planLabel: "GLM coding plan",
+              windows: [{ id: "biweekly", label: "Biweekly", usedPct: 23 }],
+            },
+          ],
+        },
+      ],
+      { supportsForceRefresh: false },
+    );
+
+    await gotoAppShell(page);
+    await openSettings(page);
+    await openSettingsHostSection(page, serverId, "usage");
+    await usageFixture.waitForRequestCount(1);
+
+    const card = page.getByTestId("provider-usage-card");
+    await expect(card.getByText("Update host to refresh usage", { exact: true })).toBeVisible();
+    await expect(card.getByRole("button", { name: "Refresh", exact: true })).toHaveCount(0);
+    expect(usageFixture.requestOptions()).toEqual([{}]);
+  });
+
   test("one provider error does not collapse the usage list", async ({ page }) => {
     test.setTimeout(120_000);
     const serverId = getServerId();

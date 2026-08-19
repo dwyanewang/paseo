@@ -12,6 +12,7 @@ export const providerUsageCopy = {
   errorTitle: "Unable to load usage",
   hostUnavailable: "Connect to this host to see provider usage",
   hostUpgradeRequired: "Update the host to see provider usage",
+  forceRefreshHostUpgradeRequired: "Update host to refresh usage",
   clientUnavailable: "Host connection is not ready",
   retry: "Try again",
   tooltipLoading: "Loading plan usage…",
