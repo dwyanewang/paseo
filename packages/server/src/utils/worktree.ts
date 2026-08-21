@@ -1339,7 +1339,7 @@ async function resolveWorktreeSourcePlan({
       };
     }
     case "branch-off-change-request": {
-      validateWorktreeBranchName(source.branchName);
+      await validateGitBranchName(cwd, source.branchName);
       const localBranchName = await resolveUniqueLocalBranchName(cwd, source.branchName);
       await fetchWorktreeCheckoutRefs({
         cwd,
