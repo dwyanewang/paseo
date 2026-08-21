@@ -2,10 +2,10 @@
 # sync-rw-main-branches.sh removes merged PRs; new entries are explicit only.
 # Each entry records the main/head pair last semantically reviewed.
 
-fix/project-skill-cache-invalidation # PR #2585 # reviewed-main:bed5d2b1beb97b3d568dc59d21ad794b6103d477 # reviewed-head:a2e5fb192706cd563bf202f86375fe7b9d181eb1
-feat/codeup-forge # PR #2507 # reviewed-main:bed5d2b1beb97b3d568dc59d21ad794b6103d477 # reviewed-head:140e106dc6447441b949aa5ec5626860d7fa1fc2
-fix/android-keyboard-covers-input # PR #2467 # reviewed-main:bed5d2b1beb97b3d568dc59d21ad794b6103d477 # reviewed-head:6e300c9fd1cf915c7e5007ca86b6d77c82a09b00
-refactor/provider-history-read # PR #2388 # reviewed-main:bed5d2b1beb97b3d568dc59d21ad794b6103d477 # reviewed-head:d681bbee72b3e1246262044eedef2c1c84a42fed
-feat/worktree-checkout-branch # PR #1721 # reviewed-main:bed5d2b1beb97b3d568dc59d21ad794b6103d477 # reviewed-head:31ef9622144e6b48ec7c5b6e4e21a18a8079a86f
-feat/file-image-preview # PR #2822 # reviewed-main:bed5d2b1beb97b3d568dc59d21ad794b6103d477 # reviewed-head:06b142114c4164a98c8d09abf05d3fd6c4149b5d
-fix/claude-usage-oauth # Personal branch # reviewed-main:bed5d2b1beb97b3d568dc59d21ad794b6103d477 # reviewed-head:7306aed797c9e3096ef2e845a4a5b1c8c3e4131e
+fix/project-skill-cache-invalidation # PR #2585 # reviewed-main:c3d37eba4b03e09fddc479c50261e1a4fe9d8510 # reviewed-head:a2e5fb192706cd563bf202f86375fe7b9d181eb1
+feat/codeup-forge # PR #2507 # reviewed-main:c3d37eba4b03e09fddc479c50261e1a4fe9d8510 # reviewed-head:140e106dc6447441b949aa5ec5626860d7fa1fc2
+fix/android-keyboard-covers-input # PR #2467 # reviewed-main:c3d37eba4b03e09fddc479c50261e1a4fe9d8510 # reviewed-head:6e300c9fd1cf915c7e5007ca86b6d77c82a09b00
+refactor/provider-history-read # PR #2388 # reviewed-main:c3d37eba4b03e09fddc479c50261e1a4fe9d8510 # reviewed-head:2b604969d0b761202dfac570718af56482c91095
+feat/worktree-checkout-branch # PR #1721 # reviewed-main:c3d37eba4b03e09fddc479c50261e1a4fe9d8510 # reviewed-head:47d96da47b81840a60fbf35c7a0b2d215bb83119
+feat/file-image-preview # PR #2822 # reviewed-main:c3d37eba4b03e09fddc479c50261e1a4fe9d8510 # reviewed-head:d04821fe2e24d07b04fa40dd2dcc8b312920637f
+fix/claude-usage-oauth # Personal branch # reviewed-main:c3d37eba4b03e09fddc479c50261e1a4fe9d8510 # reviewed-head:7306aed797c9e3096ef2e845a4a5b1c8c3e4131e
