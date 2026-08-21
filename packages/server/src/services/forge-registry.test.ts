@@ -8,11 +8,13 @@ describe("forge registry", () => {
   it("builds the registered adapters", () => {
     const github = createForgeService("github");
     const gitlab = createForgeService("gitlab");
+    const codeup = createForgeService("codeup");
     const gitea = createForgeService("gitea");
     const forgejo = createForgeService("forgejo");
     const codeberg = createForgeService("codeberg");
     expect(github?.getCurrentPullRequestStatus).toBeTypeOf("function");
     expect(gitlab?.getCurrentPullRequestStatus).toBeTypeOf("function");
+    expect(codeup?.getCurrentPullRequestStatus).toBeTypeOf("function");
     expect(gitea?.getCurrentPullRequestStatus).toBeTypeOf("function");
     expect(forgejo?.getCurrentPullRequestStatus).toBeTypeOf("function");
     expect(codeberg?.getCurrentPullRequestStatus).toBeTypeOf("function");
@@ -29,12 +31,13 @@ describe("forge registry", () => {
   it("knows which forges are registered", () => {
     expect(defaultForgeRegistry.has("github")).toBe(true);
     expect(defaultForgeRegistry.has("gitlab")).toBe(true);
+    expect(defaultForgeRegistry.has("codeup")).toBe(true);
     expect(defaultForgeRegistry.has("gitea")).toBe(true);
     expect(defaultForgeRegistry.has("forgejo")).toBe(true);
     expect(defaultForgeRegistry.has("codeberg")).toBe(true);
     expect(defaultForgeRegistry.has("bitbucket")).toBe(false);
     expect(defaultForgeRegistry.ids()).toEqual(
-      expect.arrayContaining(["github", "gitlab", "gitea", "forgejo", "codeberg"]),
+      expect.arrayContaining(["github", "gitlab", "codeup", "gitea", "forgejo", "codeberg"]),
     );
   });
 

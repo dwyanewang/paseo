@@ -987,6 +987,7 @@ export const es: TranslationResources = {
         },
       },
       forgeSetup: {
+        updateHost: "Actualiza este host para usar las funciones de {{brand}}.",
         installCli: "Instala la CLI de {{cli}} para usar las funciones de {{brand}}.",
         signIn: "Ejecuta {{command}} para usar las funciones de {{brand}}.",
         generic: "Configura {{brand}} en este host para usar sus funciones.",

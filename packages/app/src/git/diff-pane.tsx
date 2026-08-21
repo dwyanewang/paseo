@@ -1,6 +1,5 @@
 import { useState, useCallback, useMemo, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
-import type { TFunction } from "i18next";
 import { TreeRail } from "@/components/tree-rail";
 import { TreeRailToggle } from "@/components/tree-rail-toggle";
 import { DiffStat } from "@/components/diff-stat";
@@ -61,9 +60,7 @@ import type { GitActions } from "@/git/policy";
 import { BranchSwitcher } from "@/components/branch-switcher";
 import { useGitActions } from "@/git/use-actions";
 import { GIT_ACTION_ICONS } from "@/git/action-icons";
-import { buildForgeSignInCommand, getForgePresentation, type Forge } from "@/git/forge";
-import { parseGitRemoteLocation } from "@getpaseo/protocol/git-remote";
-import type { ForgeAuthState } from "@getpaseo/protocol/messages";
+import { buildForgeSetupMessage, computeForgeSetupState } from "@/git/forge-setup";
 import { useCheckoutGitActionsStore } from "@/git/actions-store";
 import { useToast } from "@/contexts/toast-context";
 import { useSessionStore } from "@/stores/session-store";
@@ -698,65 +695,6 @@ function computePrErrorMessage(
   return prPayloadError?.message ?? null;
 }
 
-// The precise setup step a workspace needs before its forge features work, or
-// null when nothing is actionable (authenticated, or no forge remote at all).
-type ForgeSetupAction = "install_cli" | "sign_in" | null;
-
-// Drive the onboarding callout from the forge's auth state so the message names
-// the exact next step (install the CLI vs sign in) for whichever forge backs the
-// workspace — GitHub included. GitLab additionally requires the host to advertise
-// GitLab support, matching the rest of the GitLab UI.
-function computeForgeSetupAction(input: {
-  forge: Forge;
-  forgeProvidersSupported: boolean;
-  authState: ForgeAuthState | undefined;
-}): ForgeSetupAction {
-  // A daemon without pluggable forge support can't operate any non-GitHub forge,
-  // so don't offer a setup action for one it can't drive.
-  if (input.forge !== "github" && !input.forgeProvidersSupported) {
-    return null;
-  }
-  switch (input.authState) {
-    case "cli_missing":
-      return "install_cli";
-    case "unauthenticated":
-      return "sign_in";
-    case "authenticated":
-    case "no_remote":
-    case "error":
-      return null;
-    default:
-      return null;
-  }
-}
-
-function parseForgeHost(url: string | null | undefined): string | null {
-  return url ? (parseGitRemoteLocation(url)?.host ?? null) : null;
-}
-
-function buildForgeSetupMessage(input: {
-  action: ForgeSetupAction;
-  forge: Forge;
-  host: string | null;
-  t: TFunction;
-}): string | null {
-  if (!input.action) {
-    return null;
-  }
-  const { brandLabel, signInCli } = getForgePresentation(input.forge);
-  // A forge with no known CLI (an unknown/third-party forge rendered neutrally)
-  // has no install/sign-in command to interpolate — show neutral guidance
-  // rather than the GitLab-specific callout or a null command.
-  if (signInCli === null) {
-    return input.t("workspace.git.forgeSetup.generic", { brand: brandLabel });
-  }
-  if (input.action === "install_cli") {
-    return input.t("workspace.git.forgeSetup.installCli", { cli: signInCli, brand: brandLabel });
-  }
-  const command = buildForgeSignInCommand(input.forge, input.host);
-  return input.t("workspace.git.forgeSetup.signIn", { command, brand: brandLabel });
-}
-
 function buildDiffModeTriggerStyle(): PressableStyleFn {
   return ({ hovered, pressed, open }) => [
     styles.diffModeTrigger,
@@ -1151,20 +1089,26 @@ export function ChangesSurface({
   const forgeProvidersSupported = useSessionStore(
     (s) => s.sessions[serverId]?.serverInfo?.features?.forgeProviders === true,
   );
-  const forgeSetupAction = computeForgeSetupAction({
+  const codeupForgeSupported = useSessionStore(
+    (s) => s.sessions[serverId]?.serverInfo?.features?.codeupForge === true,
+  );
+  const remoteUrl = status?.remoteUrl;
+  const forgeSetupState = computeForgeSetupState({
     forge,
+    remoteUrl,
     forgeProvidersSupported,
+    codeupForgeSupported,
     authState,
   });
   const forgeSetupMessage = useMemo(
     () =>
       buildForgeSetupMessage({
-        action: forgeSetupAction,
-        forge,
-        host: parseForgeHost(status?.remoteUrl),
+        action: forgeSetupState.action,
+        forge: forgeSetupState.forge,
+        remoteUrl,
         t,
       }),
-    [forgeSetupAction, forge, status?.remoteUrl, t],
+    [forgeSetupState.action, forgeSetupState.forge, remoteUrl, t],
   );
   const handleToggleDesktopTree = useCallback(() => {
     updateState({ ...instanceState, treeVisible: !desktopTreeVisible });

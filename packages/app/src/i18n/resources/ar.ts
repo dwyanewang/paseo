@@ -956,6 +956,7 @@ export const ar: TranslationResources = {
         },
       },
       forgeSetup: {
+        updateHost: "حدّث هذا المضيف لاستخدام ميزات {{brand}}.",
         installCli: "ثبّت واجهة سطر الأوامر {{cli}} لاستخدام ميزات {{brand}}.",
         signIn: "نفّذ {{command}} لاستخدام ميزات {{brand}}.",
         generic: "قم بإعداد {{brand}} على هذا المضيف لاستخدام ميزاته.",

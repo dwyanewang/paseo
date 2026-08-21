@@ -67,6 +67,22 @@ describe("getForgePresentation", () => {
       signInCli: "tea",
     });
   });
+
+  it("presents Codeup with merge-request vocabulary and the aliyun CLI", () => {
+    expect(getForgePresentation("codeup")).toMatchObject({
+      forge: "codeup",
+      icon: "codeup",
+      brandLabel: "Codeup",
+      changeRequestAbbrev: "MR",
+      changeRequestNoun: "merge request",
+      numberPrefix: "!",
+      issueNumberPrefix: "#",
+      signInCli: "aliyun",
+      changeRequestContext: "mr",
+      buildBlobUrl: null,
+      buildBranchTreeUrl: null,
+    });
+  });
 });
 
 describe("forgeFromRemoteUrl", () => {
@@ -74,6 +90,7 @@ describe("forgeFromRemoteUrl", () => {
     expect(forgeFromRemoteUrl("https://codeberg.org/example/repo.git")).toBe("codeberg");
     expect(forgeFromRemoteUrl("https://gitlab.com/example/repo.git")).toBe("gitlab");
     expect(forgeFromRemoteUrl("https://gitea.com/example/repo.git")).toBe("gitea");
+    expect(forgeFromRemoteUrl("git@codeup.aliyun.com:org/team/repo.git")).toBe("codeup");
   });
 
   it("does not classify self-managed hosts by substring", () => {
@@ -99,6 +116,10 @@ describe("buildForgeSignInCommand", () => {
     expect(buildForgeSignInCommand("gitlab", "gitlab.acme.com")).toBe(
       "glab auth login --hostname gitlab.acme.com",
     );
+  });
+
+  it("uses aliyun configure for Codeup", () => {
+    expect(buildForgeSignInCommand("codeup", "codeup.aliyun.com")).toBe("aliyun configure");
   });
 
   it("returns no sign-in command for an unknown forge with no known CLI", () => {

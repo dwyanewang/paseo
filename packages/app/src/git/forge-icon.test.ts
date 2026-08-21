@@ -46,4 +46,10 @@ describe("getForgeBrandColorMapping", () => {
   it("returns null for unknown icon kinds", () => {
     expect(getForgeBrandColorMapping("some-unknown-forge")).toBeNull();
   });
+
+  it("uses the Codeup orange in both color schemes", () => {
+    const mapping = getForgeBrandColorMapping("codeup");
+    expect(mapping?.({ colorScheme: "light" } as never)).toEqual({ color: "#FF6A00" });
+    expect(mapping?.({ colorScheme: "dark" } as never)).toEqual({ color: "#FF6A00" });
+  });
 });

@@ -721,6 +721,19 @@ describe("checkout PR schemas", () => {
     });
   });
 
+  test("accepts the optional Codeup Forge server_info feature flag", () => {
+    expect(
+      ServerInfoStatusPayloadSchema.parse({
+        status: "server_info",
+        serverId: "srv_test",
+        features: { codeupForge: true },
+      }).features,
+    ).toEqual({ codeupForge: true });
+    expect(
+      ServerInfoStatusPayloadSchema.parse({ status: "server_info", serverId: "srv_old" }).features,
+    ).toBeUndefined();
+  });
+
   test("accepts the project removal server_info feature flag", () => {
     expect(
       ServerInfoStatusPayloadSchema.parse({
