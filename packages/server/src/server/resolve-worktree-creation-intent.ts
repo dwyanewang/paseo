@@ -80,12 +80,9 @@ export async function resolveWorktreeCreationIntent(
       });
     }
 
-    const branchName = input.refName?.trim();
-    if (branchName) {
-      return {
-        kind: "checkout-branch",
-        branchName,
-      };
+    const refName = input.refName?.trim();
+    if (refName) {
+      return resolveCheckoutBranchIntent(refName);
     }
 
     throw new MissingCheckoutTargetError();
@@ -115,6 +112,34 @@ export async function resolveWorktreeCreationIntent(
     baseBranch: await resolveDefaultBranch(repoRoot, deps),
     branchName: input.branchName ?? input.worktreeSlug ?? "worktree",
   };
+}
+
+function resolveCheckoutBranchIntent(refName: string): WorktreeCreationIntent {
+  const localPrefix = "refs/heads/";
+  if (refName.startsWith(localPrefix)) {
+    return {
+      kind: "checkout-branch",
+      branchName: refName.slice(localPrefix.length),
+      target: { kind: "local", refName },
+    };
+  }
+
+  const remotePrefix = "refs/remotes/";
+  if (refName.startsWith(remotePrefix)) {
+    const remoteAndHead = refName.slice(remotePrefix.length);
+    const separator = remoteAndHead.indexOf("/");
+    if (separator > 0 && separator < remoteAndHead.length - 1) {
+      const remoteName = remoteAndHead.slice(0, separator);
+      const headRef = remoteAndHead.slice(separator + 1);
+      return {
+        kind: "checkout-branch",
+        branchName: headRef,
+        target: { kind: "remote", refName, remoteName, headRef },
+      };
+    }
+  }
+
+  return { kind: "checkout-branch", branchName: refName };
 }
 
 interface PrCheckoutIntentParams {

@@ -630,7 +630,7 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
         {
           cwd: repoDir,
           action: "checkout",
-          refName: "dev",
+          refName: "refs/heads/dev",
           paseoHome,
           runSetup: false,
         },
@@ -646,8 +646,98 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
       expect(result.intent).toEqual({
         kind: "checkout-branch",
         branchName: "dev",
+        target: { kind: "local", refName: "refs/heads/dev" },
       });
       expect(branch).toBe("dev");
+    });
+
+    test("checks out an explicit origin branch from the picker", async () => {
+      const { tempDir, repoDir, paseoHome } = createGitRepoWithOriginFeatureBranch();
+      cleanupPaths.push(tempDir);
+
+      const result = await createCoreWorktree(
+        {
+          cwd: repoDir,
+          action: "checkout",
+          refName: "refs/remotes/origin/feature/gitlab-mr",
+          paseoHome,
+          runSetup: false,
+        },
+        createCoreDeps(),
+      );
+
+      expect(result.intent).toEqual({
+        kind: "checkout-branch",
+        branchName: "feature/gitlab-mr",
+        target: {
+          kind: "remote",
+          refName: "refs/remotes/origin/feature/gitlab-mr",
+          remoteName: "origin",
+          headRef: "feature/gitlab-mr",
+        },
+      });
+      expect(result.worktree.branchName).toBe("feature/gitlab-mr");
+      expect(getBranchUpstream(result.worktree.worktreePath)).toBe("origin/feature/gitlab-mr");
+    });
+
+    test("checks out an explicit branch from a non-origin remote", async () => {
+      const { tempDir, repoDir, paseoHome } = createGitRepoWithOriginFeatureBranch();
+      cleanupPaths.push(tempDir);
+      execFileSync("git", ["remote", "rename", "origin", "upstream"], {
+        cwd: repoDir,
+        stdio: "pipe",
+      });
+
+      const result = await createCoreWorktree(
+        {
+          cwd: repoDir,
+          action: "checkout",
+          refName: "refs/remotes/upstream/feature/gitlab-mr",
+          paseoHome,
+          runSetup: false,
+        },
+        createCoreDeps(),
+      );
+
+      expect(result.worktree.branchName).toBe("feature/gitlab-mr");
+      expect(getBranchUpstream(result.worktree.worktreePath)).toBe("upstream/feature/gitlab-mr");
+    });
+
+    test("preserves a divergent local branch when checking out its remote ref", async () => {
+      const { tempDir, repoDir, paseoHome } = createGitRepoWithOriginFeatureBranch();
+      cleanupPaths.push(tempDir);
+      execFileSync("git", ["branch", "feature/gitlab-mr", "main"], {
+        cwd: repoDir,
+        stdio: "pipe",
+      });
+      const remoteHead = execFileSync(
+        "git",
+        ["rev-parse", "refs/remotes/origin/feature/gitlab-mr"],
+        { cwd: repoDir, encoding: "utf8" },
+      ).trim();
+
+      const result = await createCoreWorktree(
+        {
+          cwd: repoDir,
+          action: "checkout",
+          refName: "refs/remotes/origin/feature/gitlab-mr",
+          paseoHome,
+          runSetup: false,
+        },
+        createCoreDeps(),
+      );
+
+      const worktreeHead = execFileSync("git", ["rev-parse", "HEAD"], {
+        cwd: result.worktree.worktreePath,
+        encoding: "utf8",
+      }).trim();
+      expect(result.worktree.branchName).toBe("feature/gitlab-mr-1");
+      expect(result.checkoutBranchCopy).toEqual({
+        requestedBranch: "feature/gitlab-mr",
+        createdBranch: "feature/gitlab-mr-1",
+      });
+      expect(worktreeHead).toBe(remoteHead);
+      expect(getBranchUpstream(result.worktree.worktreePath)).toBeNull();
     });
 
     test("checks out an explicit GitHub PR target", async () => {
