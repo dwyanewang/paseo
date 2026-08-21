@@ -380,7 +380,7 @@ create_request() {
     printf 'operation_replacement=%q\n' "$replacement"
     printf 'operation_feature_count=%q\n' "${#requested_features[@]}"
     printf 'operation_replay_count=%q\n' "${#replay_commits[@]}"
-    printf 'operation_features=(' 
+    printf 'operation_features=('
     for index in "${!requested_features[@]}"; do printf ' %q' "${requested_features[$index]}"; done
     printf ' )\noperation_branches=('
     for index in "${!requested_branches[@]}"; do printf ' %q' "${requested_branches[$index]}"; done
