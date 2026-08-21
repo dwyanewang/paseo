@@ -190,7 +190,7 @@ declare -A event_features=()
 declare -A event_actions=()
 
 load_feature_state() {
-  local commit feature action source_branch source_head replacement_value
+  local commit feature action source_branch source_head replacement_value record_terminator
   feature_status=()
   feature_source_branch=()
   feature_source_head=()
@@ -202,17 +202,14 @@ load_feature_state() {
   event_actions=()
   git -C "$control_root" show-ref --verify --quiet "refs/heads/$base_branch" || return 0
 
-  while IFS= read -r commit; do
-    feature=$(git -C "$control_root" log -1 \
-      --format='%(trailers:key=Paseo-Base-Feature,valueonly)' "$commit")
-    action=$(git -C "$control_root" log -1 \
-      --format='%(trailers:key=Paseo-Base-Action,valueonly)' "$commit")
-    source_branch=$(git -C "$control_root" log -1 \
-      --format='%(trailers:key=Paseo-Source-Branch,valueonly)' "$commit")
-    source_head=$(git -C "$control_root" log -1 \
-      --format='%(trailers:key=Paseo-Source-Head,valueonly)' "$commit")
-    replacement_value=$(git -C "$control_root" log -1 \
-      --format='%(trailers:key=Paseo-Upstream-Replacement,valueonly)' "$commit")
+  while IFS= read -r -d '' commit &&
+    IFS= read -r -d '' feature &&
+    IFS= read -r -d '' action &&
+    IFS= read -r -d '' source_branch &&
+    IFS= read -r -d '' source_head &&
+    IFS= read -r -d '' replacement_value &&
+    IFS= read -r -d '' record_terminator; do
+    [[ -z "$record_terminator" ]] || fail "malformed rw-base history record for $commit"
     [[ -n "$feature" || -n "$action" ]] || continue
     [[ "$feature" =~ ^[a-z0-9][a-z0-9-]*$ ]] ||
       fail "invalid Paseo-Base-Feature trailer on $commit: $feature"
@@ -255,7 +252,12 @@ load_feature_state() {
         feature_integrations[$feature]=
         ;;
     esac
-  done < <(git -C "$control_root" rev-list --first-parent --reverse "$base_branch")
+  done < <(
+    git -C "$control_root" log -z --first-parent --reverse --extended-regexp \
+      --grep='^Paseo-Base-(Feature|Action):' \
+      --format='%H%x00%(trailers:key=Paseo-Base-Feature,valueonly,separator=%x0A)%x00%(trailers:key=Paseo-Base-Action,valueonly,separator=%x0A)%x00%(trailers:key=Paseo-Source-Branch,valueonly,separator=%x0A)%x00%(trailers:key=Paseo-Source-Head,valueonly,separator=%x0A)%x00%(trailers:key=Paseo-Upstream-Replacement,valueonly,separator=%x0A)%x00' \
+      "$base_branch"
+  )
 }
 
 print_status() {
