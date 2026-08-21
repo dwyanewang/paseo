@@ -126,7 +126,8 @@ function createFixture({ dependenciesReinstalled = 0, rwMainRebuilt = 0 } = {}) 
     "packages/desktop/package.json",
   );
   git(controlRoot, "commit", "-m", "test: add product fixture");
-  git(controlRoot, "branch", "rw-main", "main");
+  git(controlRoot, "branch", "rw-base", "main");
+  git(controlRoot, "branch", "rw-main", "rw-base");
   git(controlRoot, "worktree", "add", buildRoot, "rw-main");
   git(controlRoot, "switch", "-c", "chore/build-paseo");
 
@@ -342,9 +343,11 @@ fi
     preflightState,
     [
       "paseo_preflight_status=ready",
+      "rw_base_rebuilt=0",
       `rw_main_rebuilt=${rwMainRebuilt}`,
       `dependencies_reinstalled=${dependenciesReinstalled}`,
       `rw_main_after=${buildHead}`,
+      `rw_base_after=${mainHead}`,
       `main_after=${mainHead}`,
       `control_head=${controlHead}`,
       "",
@@ -692,8 +695,13 @@ test("rejects a stale preflight state before deleting artifacts", () => {
   });
 });
 
-test("rejects stale main and control coordinates before deleting artifacts", () => {
-  for (const coordinate of ["main_after", "control_head"]) {
+test("rejects stale base, main, and control coordinates before deleting artifacts", () => {
+  const coordinateLabels = {
+    control_head: "control",
+    main_after: "main",
+    rw_base_after: "rw-base",
+  };
+  for (const coordinate of ["rw_base_after", "main_after", "control_head"]) {
     withFixture({}, (fixture) => {
       const staleState = readFileSync(fixture.preflightState, "utf8").replace(
         new RegExp(`^${coordinate}=.*$`, "m"),
@@ -704,9 +712,7 @@ test("rejects stale main and control coordinates before deleting artifacts", () 
       assert.equal(result.status, 1, `${result.stdout}\n${result.stderr}`);
       assert.match(
         result.stdout,
-        new RegExp(
-          `preflight state is stale: ${coordinate === "main_after" ? "main" : "control"} expected`,
-        ),
+        new RegExp(`preflight state is stale: ${coordinateLabels[coordinate]} expected`),
       );
       assert.equal(existsSync(fixture.commandLog), false);
     });

@@ -549,7 +549,8 @@ preflight_mode=skipped
 if [[ -n "$preflight_state_arg" ]]; then
   preflight_state=$(realpath -e -- "$preflight_state_arg" 2>/dev/null) ||
     fail "preflight state does not exist: $preflight_state_arg"
-  unset paseo_preflight_status rw_main_rebuilt dependencies_reinstalled rw_main_after main_after control_head
+  unset paseo_preflight_status rw_base_rebuilt rw_base_after rw_main_rebuilt
+  unset dependencies_reinstalled rw_main_after main_after control_head
   # The file is written atomically by prepare-rw-main-for-build.sh and is a
   # sourceable shell state contract shared by the two versioned orchestrators.
   source "$preflight_state"
@@ -557,10 +558,14 @@ if [[ -n "$preflight_state_arg" ]]; then
     fail "preflight state is not ready: $preflight_state"
   [[ "${rw_main_rebuilt:-}" =~ ^[01]$ ]] ||
     fail "invalid rw_main_rebuilt value in preflight state"
+  [[ "${rw_base_rebuilt:-}" =~ ^[01]$ ]] ||
+    fail "invalid rw_base_rebuilt value in preflight state"
   [[ "${dependencies_reinstalled:-}" =~ ^[01]$ ]] ||
     fail "invalid dependencies_reinstalled value in preflight state"
   [[ "${rw_main_after:-}" =~ ^[0-9a-f]{40}$ ]] ||
     fail "invalid rw_main_after value in preflight state"
+  [[ "${rw_base_after:-}" =~ ^[0-9a-f]{40}$ ]] ||
+    fail "invalid rw_base_after value in preflight state"
   [[ "${main_after:-}" =~ ^[0-9a-f]{40}$ ]] ||
     fail "invalid main_after value in preflight state"
   [[ "${control_head:-}" =~ ^[0-9a-f]{40}$ ]] ||
@@ -570,6 +575,9 @@ if [[ -n "$preflight_state_arg" ]]; then
   current_build_head=$(git -C "$build_root" rev-parse HEAD)
   [[ "$current_build_head" == "$rw_main_after" ]] ||
     fail "preflight state is stale: expected $rw_main_after, current $current_build_head"
+  current_base_head=$(git -C "$control_root" rev-parse --verify refs/heads/rw-base)
+  [[ "$current_base_head" == "$rw_base_after" ]] ||
+    fail "preflight state is stale: rw-base expected $rw_base_after, current $current_base_head"
   current_main_head=$(git -C "$control_root" rev-parse --verify refs/heads/main)
   [[ "$current_main_head" == "$main_after" ]] ||
     fail "preflight state is stale: main expected $main_after, current $current_main_head"
@@ -675,6 +683,8 @@ stage "cleanup: terminal-webview restored"
 if [[ "$preflight_mode" == ready-state ]]; then
   [[ "$(git -C "$control_root" rev-parse refs/heads/main)" == "$main_after" ]] ||
     fail "main moved during artifact generation; rerun preflight"
+  [[ "$(git -C "$control_root" rev-parse refs/heads/rw-base)" == "$rw_base_after" ]] ||
+    fail "rw-base moved during artifact generation; rerun preflight"
 fi
 
 download_service_started=0

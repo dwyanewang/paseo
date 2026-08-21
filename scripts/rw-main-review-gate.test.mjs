@@ -98,6 +98,7 @@ function createFixture({
 
   const secondFeatureHead = createSecondFeature(root, secondBranch);
 
+  git(root, "branch", "rw-base", "main");
   git(root, "switch", "-c", "chore/build-paseo");
   const controlDir = path.join(root, "dwyanewang");
   const binDir = path.join(root, ".git", "test-bin");

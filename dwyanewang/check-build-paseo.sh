@@ -36,6 +36,7 @@ repo_root=$(realpath -e -- "$repo_root")
 vitest_files=(
   scripts/build-paseo-artifacts.test.mjs
   scripts/prepare-rw-main-for-build.test.mjs
+  scripts/rw-base-lifecycle.test.mjs
   scripts/rw-main-review-gate.test.mjs
 )
 node_test_files=(
@@ -69,7 +70,7 @@ for test_file in "${vitest_files[@]}"; do
     exit 1
   }
   printf '\n[%s]\n' "$test_file"
-  (cd "$repo_root" && npx vitest run "$test_file" --bail=1 --testTimeout=15000)
+  (cd "$repo_root" && npx vitest run "$test_file" --bail=1 --testTimeout=30000)
 done
 for test_file in "${node_test_files[@]}"; do
   [[ -f "$repo_root/$test_file" ]] || {

@@ -6,13 +6,13 @@ usage() {
   cat <<'EOF'
 Usage: bash dwyanewang/sync-rw-main-branches.sh [options]
 
-Remove manifest entries whose upstream PRs are already merged into main, and
-optionally append or remove explicitly requested branches. When main or a
-listed branch advances, the script prints per-branch semantic-review ranges
-and exits 3 until that review is explicitly accepted.
+Maintain temporary overlays whose upstream PRs are not yet merged into main.
+When main or a listed branch advances, print per-overlay semantic-review ranges
+and exit 3 until that review is explicitly accepted. Long-lived local features
+belong in rw-base and are managed by manage-rw-base.sh.
 
   --add-pr NUMBER           Add an open getpaseo/paseo PR owned by dwyanewang.
-  --add-branch BRANCH       Add a pushed origin branch as a persistent personal branch.
+  --add-branch BRANCH       Add a pushed origin branch as a temporary reviewed overlay.
   --remove-branch BRANCH    Remove a branch confirmed to be absorbed upstream.
   --accept-review-request PATH
                             Accept one frozen review request after semantic review.
@@ -133,6 +133,7 @@ repo_root=$(git -C "$script_dir/.." rev-parse --show-toplevel)
 cd "$repo_root"
 
 base_branch=main
+persistent_base_branch=rw-base
 packaging_branch=chore/build-paseo
 target_branch=rw-main
 manifest_path=dwyanewang/rw-main-branches.txt
@@ -412,7 +413,8 @@ batch_query_prs
 validate_source_branch() {
   local branch_name=$1
   git check-ref-format --branch "$branch_name" >/dev/null || fail "invalid branch: $branch_name"
-  [[ "$branch_name" != "$base_branch" && "$branch_name" != "$packaging_branch" &&
+  [[ "$branch_name" != "$base_branch" && "$branch_name" != "$persistent_base_branch" &&
+    "$branch_name" != "$packaging_branch" &&
     "$branch_name" != "$target_branch" ]] || fail "reserved branch cannot be added: $branch_name"
 
   local local_ref="refs/heads/$branch_name"
@@ -561,8 +563,8 @@ for index in "${!addition_kinds[@]}"; do
   branch_reviewed_mains[$value]=$(git merge-base "$base_branch" "$value")
   branch_reviewed_heads[$value]=$(git rev-parse "$value")
   newly_added_branches[$value]=1
-  output_lines+=("$value # Personal branch # reviewed-main:${branch_reviewed_mains[$value]} # reviewed-head:${branch_reviewed_heads[$value]}")
-  printf 'Adding persistent personal branch %s.\n' "$value"
+  output_lines+=("$value # Temporary personal overlay # reviewed-main:${branch_reviewed_mains[$value]} # reviewed-head:${branch_reviewed_heads[$value]}")
+  printf 'Adding temporary personal overlay %s.\n' "$value"
 done
 
 declare -a review_branches=()

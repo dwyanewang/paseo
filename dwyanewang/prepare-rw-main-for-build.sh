@@ -7,11 +7,11 @@ usage() {
 Usage: bash dwyanewang/prepare-rw-main-for-build.sh --build-root PATH [options]
 
 Run the source-control preflight for build-paseo as one deterministic command:
-validate worktrees, synchronize main, maintain the rw-main manifest, and run the
-atomic rw-main readiness gate.
+validate worktrees, synchronize main, maintain the overlay manifest, and run
+the atomic rw-base/rw-main readiness gate.
 
   --build-root PATH         Dedicated product build worktree (required).
-  --push                    Update origin/rw-main after the readiness gate.
+  --push                    Atomically update origin/rw-base and origin/rw-main.
   --state-file PATH         Atomically write sourceable readiness results on success.
   --add-pr NUMBER           Forward an explicit PR addition to manifest sync.
   --add-branch BRANCH       Forward an explicit personal branch addition.
@@ -101,10 +101,11 @@ done
 script_dir=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 control_root=$(git -C "$script_dir/.." rev-parse --show-toplevel)
 manifest_path="$control_root/dwyanewang/rw-main-branches.txt"
-base_branch=main
+upstream_branch=main
+base_branch=rw-base
 control_branch=chore/build-paseo
 target_branch=rw-main
-backup_branch=rw-main-backup-latest
+target_backup_branch=rw-main-backup-latest
 started_at=$(date +%s)
 
 state_file=
@@ -196,25 +197,25 @@ done <"$manifest_path"
 git -C "$control_root" remote get-url upstream >/dev/null || fail "missing upstream remote"
 git -C "$control_root" remote get-url origin >/dev/null || fail "missing origin remote"
 
-main_worktree=$(find_worktree_for_branch "$base_branch")
+main_worktree=$(find_worktree_for_branch "$upstream_branch")
 if [[ -n "$main_worktree" && -n "$(git -C "$main_worktree" status --porcelain)" ]]; then
-  fail "worktree for $base_branch is dirty: $main_worktree"
+  fail "worktree for $upstream_branch is dirty: $main_worktree"
 fi
 
 main_sync_started=$(date +%s)
-main_before=$(git -C "$control_root" rev-parse "$base_branch")
+main_before=$(git -C "$control_root" rev-parse "$upstream_branch")
 git -C "$control_root" fetch upstream
 git -C "$control_root" fetch origin --prune
 
 if [[ -n "$main_worktree" ]]; then
   git -C "$main_worktree" merge --ff-only upstream/main
 else
-  git -C "$control_root" merge-base --is-ancestor "$base_branch" upstream/main ||
-    fail "$base_branch cannot be fast-forwarded to upstream/main"
-  git -C "$control_root" branch -f "$base_branch" upstream/main
+  git -C "$control_root" merge-base --is-ancestor "$upstream_branch" upstream/main ||
+    fail "$upstream_branch cannot be fast-forwarded to upstream/main"
+  git -C "$control_root" branch -f "$upstream_branch" upstream/main
 fi
 
-main_after=$(git -C "$control_root" rev-parse "$base_branch")
+main_after=$(git -C "$control_root" rev-parse "$upstream_branch")
 origin_main=$(git -C "$control_root" rev-parse --verify refs/remotes/origin/main 2>/dev/null || true)
 if [[ "$origin_main" == "$main_after" ]]; then
   printf '%s\n' 'origin/main already matches; remote unchanged.'
@@ -244,6 +245,7 @@ if ! git -C "$control_root" diff --quiet -- "$manifest_path"; then
 fi
 
 build_starting_branch=$(git -C "$build_root" branch --show-current)
+rw_base_before=$(git -C "$build_root" rev-parse --verify "$base_branch" 2>/dev/null || true)
 rw_main_before=$(git -C "$build_root" rev-parse --verify "$target_branch" 2>/dev/null || true)
 rebuild_started=$(date +%s)
 rebuild_args=(--build-root "$build_root")
@@ -251,7 +253,13 @@ if ((push_target)); then
   rebuild_args+=(--push)
 fi
 bash "$control_root/dwyanewang/rebuild-rw-main.sh" "${rebuild_args[@]}"
+rw_base_after=$(git -C "$build_root" rev-parse "$base_branch")
 rw_main_after=$(git -C "$build_root" rev-parse "$target_branch")
+if [[ "$rw_base_before" == "$rw_base_after" ]]; then
+  rw_base_rebuilt=0
+else
+  rw_base_rebuilt=1
+fi
 if [[ "$rw_main_before" == "$rw_main_after" ]]; then
   rw_main_rebuilt=0
 else
@@ -262,8 +270,8 @@ dependencies_reinstalled=0
 if [[ "$build_starting_branch" != "$target_branch" ]]; then
   dependencies_reinstalled=1
 elif ((rw_main_rebuilt)) &&
-  { ! git -C "$build_root" show-ref --verify --quiet "refs/heads/$backup_branch" ||
-    ! git -C "$build_root" diff --quiet "$backup_branch..$target_branch" -- \
+  { ! git -C "$build_root" show-ref --verify --quiet "refs/heads/$target_backup_branch" ||
+    ! git -C "$build_root" diff --quiet "$target_backup_branch..$target_branch" -- \
       package.json package-lock.json ':(glob)**/package.json' \
       ':(glob)patches/**' scripts/postinstall-patches.mjs; }; then
   dependencies_reinstalled=1
@@ -271,8 +279,10 @@ fi
 
 rebuild_seconds=$(( $(date +%s) - rebuild_started ))
 control_head=$(git -C "$control_root" rev-parse HEAD)
-[[ "$(git -C "$control_root" rev-parse "$base_branch")" == "$main_after" ]] ||
-  fail "$base_branch moved after synchronization; rerun preflight"
+[[ "$(git -C "$control_root" rev-parse "$upstream_branch")" == "$main_after" ]] ||
+  fail "$upstream_branch moved after synchronization; rerun preflight"
+[[ "$(git -C "$control_root" rev-parse "$base_branch")" == "$rw_base_after" ]] ||
+  fail "$base_branch moved after readiness checks; rerun preflight"
 [[ "$(git -C "$build_root" rev-parse HEAD)" == "$rw_main_after" ]] ||
   fail "$target_branch moved after readiness checks; rerun preflight"
 [[ -z "$(git -C "$control_root" status --porcelain)" ]] ||
@@ -283,6 +293,9 @@ total_seconds=$(( $(date +%s) - started_at ))
 
 printf 'PASEO_BUILD_STARTING_BRANCH=%s\n' "$build_starting_branch"
 printf 'PASEO_CONTROL_HEAD=%s\n' "$control_head"
+printf 'PASEO_RW_BASE_BEFORE=%s\n' "$rw_base_before"
+printf 'PASEO_RW_BASE_AFTER=%s\n' "$rw_base_after"
+printf 'PASEO_RW_BASE_REBUILT=%s\n' "$rw_base_rebuilt"
 printf 'PASEO_RW_MAIN_BEFORE=%s\n' "$rw_main_before"
 printf 'PASEO_RW_MAIN_AFTER=%s\n' "$rw_main_after"
 printf 'PASEO_RW_MAIN_REBUILT=%s\n' "$rw_main_rebuilt"
@@ -294,6 +307,9 @@ if [[ -n "$state_file" ]]; then
   state_file_temp=$(mktemp "${state_file}.tmp.XXXXXX")
   {
     printf 'build_starting_branch=%q\n' "$build_starting_branch"
+    printf 'rw_base_before=%q\n' "$rw_base_before"
+    printf 'rw_base_after=%q\n' "$rw_base_after"
+    printf 'rw_base_rebuilt=%q\n' "$rw_base_rebuilt"
     printf 'rw_main_before=%q\n' "$rw_main_before"
     printf 'rw_main_after=%q\n' "$rw_main_after"
     printf 'rw_main_rebuilt=%q\n' "$rw_main_rebuilt"

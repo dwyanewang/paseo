@@ -15,11 +15,12 @@ description: 一键执行 Paseo 三端本地打包（服务端 / Android ARM64 A
 
 - 产品构建目录固定为 `/home/yangfei/Projects/paseo`，正常停留在 `rw-main`，保留 Gradle、Metro、NDK 和 Electron 缓存。
 - 当前 `chore/build-paseo` worktree 是唯一控制面，保存清单、脚本和文档，不合并进 `rw-main`。
+- `main` 镜像上游，`rw-base` 保存可追溯长期功能，`rw-main` 是 `rw-base` 加临时叠加层的最终产品树。禁止直接修改两个 rw 分支。
 - 有改动、detached HEAD、分支 worktree 不洁净或拓扑不符时停止；不 stash、不覆盖用户改动。
 
 ## 完整同步与 readiness gate
 
-从控制面只调用一个前置命令；用户指定的新 PR/分支按原顺序追加 `--add-pr` / `--add-branch`：
+从控制面只调用一个前置命令；用户指定的新 PR/临时叠加分支按原顺序追加 `--add-pr` / `--add-branch`：
 
 ```bash
 paseo_preflight_state=/home/yangfei/Projects/paseo/.dev/build-paseo-preflight.env
@@ -33,7 +34,12 @@ bash "$paseo_chore_root/dwyanewang/prepare-rw-main-for-build.sh" \
 - 退出码 `4`：清单已更新但尚未 ready。运行 `npm run format`，确认仅有预期清单改动，提交并推送 `chore/build-paseo`，再不带增删参数重跑。
 - 其他非零退出：停止并诊断。readiness gate 未成功，不得启动任一产物构建。
 
-前置脚本与正式产物脚本使用构建目录中的同一把非阻塞锁；任一流程已占用时，另一流程必须立即停止。ready state 同时冻结控制面 HEAD、`main` 和 `rw-main`，正式脚本会在删除旧产物前再次核对，不能复用漂移后的 state。
+前置脚本、长期功能管理与正式产物脚本使用同一把非阻塞锁。ready state 同时冻结控制面 HEAD、`main`、`rw-base` 和 `rw-main`，正式脚本会在删除旧产物前再次核对。
+
+## 长期功能
+
+- 用户明确要求把功能固化到基线时，完整读取 `打包流程.md` 第 1.3 节并使用 `manage-rw-base.sh promote|maintain|retire|status`；不要把它重新加入临时叠加清单。
+- 退出码 `5` 表示生命周期操作保留了冲突 worktree。保存输出的 `PASEO_RW_BASE_OPERATION`；解决并 `git add` 后用 `continue --operation`，或用 `abort --operation` 放弃。不得手工移动 `rw-base`/`rw-main`。
 
 ## 正式产物链
 
@@ -50,6 +56,6 @@ bash "$paseo_chore_root/dwyanewang/build-paseo-artifacts.sh" \
 ## 失败与交付
 
 - 修改任意 `dwyanewang/*.sh` 或对应测试后，提交前运行 `bash "$paseo_chore_root/dwyanewang/check-build-paseo.sh"`；它只做 Shell 语法和定向构建控制测试，不代替真实三端打包。
-- 任一步非零即停止，保留真实退出码。失败时按日志症状查询 `踩坑记录.md`；兼容修复只能落在源功能分支，不能直接修改临时候选或 `rw-main`。
+- 任一步非零即停止，保留真实退出码。失败时按日志症状查询 `踩坑记录.md`；临时叠加修复回源分支，长期功能修复经 `maintain`，不能直接修改候选、`rw-base` 或 `rw-main`。
 - 证据优先读取 `.dev/build-paseo-runs/<轮次>/result.env`、`stages.log`、两份并发分支日志、`build.log` 和 Android/Windows summary。
 - 汇报清单增删与提交、三端产物路径/体积/mtime、并发/回退模式、Android 两段与 Windows 核心资源数据、下载地址，以及从用户消息到下载服务就绪的真实总墙钟；脚本自己的产物链计时只作分段数据。

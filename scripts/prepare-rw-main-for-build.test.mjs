@@ -105,8 +105,9 @@ function createFixture({ advanceUpstream = false } = {}) {
   git(fixtureRoot, "clone", "--bare", controlRoot, originRoot);
   git(controlRoot, "remote", "add", "upstream", upstreamRoot);
   git(controlRoot, "remote", "add", "origin", originRoot);
-  git(controlRoot, "branch", "rw-main", "main");
-  git(controlRoot, "push", "origin", "rw-main:rw-main");
+  git(controlRoot, "branch", "rw-base", "main");
+  git(controlRoot, "branch", "rw-main", "rw-base");
+  git(controlRoot, "push", "origin", "rw-base:rw-base", "rw-main:rw-main");
   git(controlRoot, "worktree", "add", buildRoot, "rw-main");
   if (advanceUpstream) {
     git(controlRoot, "worktree", "add", featureRoot, "feature/one");
@@ -197,12 +198,14 @@ test("runs the unchanged source preflight and rw-main no-op as one command", () 
     const result = runPreflight(fixture);
 
     assert.equal(result.status, 0, result.stderr);
-    assert.match(result.stdout, /No-op: rw-main already matches every input/);
+    assert.match(result.stdout, /No-op: rw-base and rw-main already match every input/);
+    assert.match(result.stdout, /PASEO_RW_BASE_REBUILT=0/);
     assert.match(result.stdout, /PASEO_RW_MAIN_REBUILT=0/);
     assert.match(result.stdout, /PASEO_DEPENDENCIES_REINSTALLED=0/);
     assert.match(result.stdout, /PASEO_PREFLIGHT_STATUS=ready/);
     const state = readFileSync(fixture.stateFile, "utf8");
     assert.match(state, /paseo_preflight_status=ready/);
+    assert.match(state, new RegExp(`rw_base_after=${fixture.reviewedMain}`));
     assert.match(state, new RegExp(`main_after=${fixture.upstreamMain}`));
     assert.match(
       state,
