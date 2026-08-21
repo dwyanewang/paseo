@@ -81,7 +81,7 @@ if (origin === fixtureRemote) {
   }
   if (command === "api graphql" && args.some((arg) => arg.includes("PullRequestCheckoutTarget"))) {
     process.stdout.write(JSON.stringify({
-      data: { repository: { pullRequest: {
+      data: { repository: { url: fixtureRemote, pullRequest: {
         number: 1,
         baseRefName: "main",
         headRefName: "pr-branch-1",

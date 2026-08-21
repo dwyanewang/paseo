@@ -5805,19 +5805,23 @@ export class Session {
       }
       await this.handleWorkspaceCreateWorktree(request);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to create workspace";
+      // Map domain errors to wire codes so the client can recognize recoverable
+      // failures — notably branch_already_checked_out when a checkout targets a
+      // branch that's live elsewhere. Mirrors the per-worktree RPC path
+      // (worktree-session.ts), which already surfaces errorCode.
+      const wireError = toWorktreeWireError(error);
       this.sessionLogger.error(
         { err: error, sourceKind: request.source.kind, requestId: request.requestId },
         "Failed to create workspace",
       );
-      const errorCode = error instanceof WorkspaceProvisioningError ? error.code : undefined;
+      const errorCode = error instanceof WorkspaceProvisioningError ? error.code : wireError.code;
       this.emit({
         type: "workspace.create.response",
         payload: {
           requestId: request.requestId,
           workspace: null,
           setupTerminalId: null,
-          error: message,
+          error: wireError.message,
           errorCode,
         },
       });
@@ -5942,6 +5946,7 @@ export class Session {
         workspace: descriptor,
         setupTerminalId: null,
         error: null,
+        ...(result.checkoutBranchCopy ? { checkoutBranchCopy: result.checkoutBranchCopy } : {}),
       },
     });
     await this.emitCreatedWorkspaceUpdate(

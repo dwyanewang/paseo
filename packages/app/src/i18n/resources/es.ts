@@ -1200,7 +1200,13 @@ export const es: TranslationResources = {
     isolation: {
       local: "Local",
       worktree: "Nuevo worktree",
-      label: "Aislamiento",
+      label: "Modo del espacio de trabajo",
+    },
+    branchMode: {
+      label: "Rama existente",
+      branchOff: "Nueva rama",
+      checkout: "Usar rama",
+      updateHost: "Actualiza el host para crear una rama nueva a partir de la selección actual.",
     },
     fields: {
       project: "Proyecto",
@@ -1211,8 +1217,14 @@ export const es: TranslationResources = {
     errors: {
       hostDisconnected: "Hostno está conectado",
       createWorktreeFailed: "No se pudo crear el árbol de trabajo",
+      branchAlreadyCheckedOut:
+        "Esa rama ya está activa en otro lugar. Usa Nueva rama para crear una copia o libera la rama primero.",
       composerStateRequired: "Se requiere el estado del compositor",
       selectModel: "Selecciona un modelo",
+    },
+    notices: {
+      checkoutBranchCopied:
+        "{{requestedBranch}} ya está activa en otro lugar. Se usará una copia en su lugar: {{createdBranch}}.",
     },
     tooltips: {
       project: "Choose the project",
