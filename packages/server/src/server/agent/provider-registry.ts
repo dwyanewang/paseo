@@ -491,6 +491,7 @@ function wrapClientProvider(
   const listFeatures = inner.listFeatures?.bind(inner);
   const archiveNativeSession = inner.archiveNativeSession?.bind(inner);
   const unarchiveNativeSession = inner.unarchiveNativeSession?.bind(inner);
+  const readSessionHistory = inner.readSessionHistory?.bind(inner);
 
   return {
     provider,
@@ -511,7 +512,7 @@ function wrapClientProvider(
           options,
         ),
       ),
-    resumeSession: async (handle, overrides, launchContext, options) =>
+    resumeSession: async (handle, overrides, launchContext) =>
       wrapSessionProvider(
         provider,
         await inner.resumeSession(
@@ -525,9 +526,23 @@ function wrapClientProvider(
             providerOptions: mergeProviderOptions(providerOptions, overrides?.providerOptions),
           },
           launchContext,
-          options,
         ),
       ),
+    readSessionHistory: readSessionHistory
+      ? async (handle, context) => {
+          const result = await readSessionHistory(
+            {
+              ...handle,
+              provider: inner.provider,
+            },
+            context,
+          );
+          return {
+            ...result,
+            events: result.events.map((event) => mapStreamEvent(provider, event)),
+          };
+        }
+      : undefined,
     fetchCatalog: async (options, context) => {
       const catalog = await inner.fetchCatalog({ ...options, providerOptions }, context);
       return {

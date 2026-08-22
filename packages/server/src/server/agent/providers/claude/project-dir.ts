@@ -13,6 +13,7 @@ const PROJECT_DIR_LENGTH_CAP = 200;
 
 export interface ClaudeProjectDirOptions {
   configDir?: string;
+  runtimeSettings?: { env?: Record<string, string> };
 }
 
 export async function claudeProjectDir(
@@ -71,6 +72,14 @@ export function claudeConfigDir(env: NodeJS.ProcessEnv): string {
   return env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude");
 }
 
+export function resolveClaudeConfigDir(options?: ClaudeProjectDirOptions): string {
+  return (
+    options?.configDir ??
+    options?.runtimeSettings?.env?.CLAUDE_CONFIG_DIR ??
+    claudeConfigDir(process.env)
+  );
+}
+
 function resolveConfigDir(options?: ClaudeProjectDirOptions): string {
-  return options?.configDir ?? claudeConfigDir(process.env);
+  return resolveClaudeConfigDir(options);
 }

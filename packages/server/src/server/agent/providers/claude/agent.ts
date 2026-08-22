@@ -99,6 +99,8 @@ import {
   type AgentClient,
   type AgentCreateSessionOptions,
   type AgentFeature,
+  type AgentHistoryReadContext,
+  type AgentHistoryReadResult,
   type AgentLaunchContext,
   type AgentMetadata,
   type AgentMode,
@@ -1547,6 +1549,44 @@ export class ClaudeAgentClient implements AgentClient {
     overrides?: Partial<AgentSessionConfig>,
     launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
+    return this.createPersistedSession(handle, overrides, launchContext);
+  }
+
+  async readSessionHistory(
+    handle: AgentPersistenceHandle,
+    context?: AgentHistoryReadContext,
+  ): Promise<AgentHistoryReadResult> {
+    const metadata = coerceSessionMetadata(handle.metadata);
+    const cwd = context?.cwd ?? metadata.cwd;
+    if (!cwd) {
+      throw new Error("Claude history read requires the original working directory in metadata");
+    }
+    const session = new ClaudeAgentSession(this.assertConfig({ provider: "claude", cwd }), {
+      defaults: this.defaults,
+      runtimeSettings: this.runtimeSettings,
+      handle,
+      agentId: context?.agentId,
+      launchEnv: context?.env,
+      logger: this.logger,
+      queryFactory: this.queryFactory,
+      resolveBinary: this.resolveBinary,
+    });
+    try {
+      const events: AgentStreamEvent[] = [];
+      for await (const event of session.streamHistory()) {
+        events.push(event);
+      }
+      return { events, coverage: { kind: "complete" } };
+    } finally {
+      await session.close();
+    }
+  }
+
+  private createPersistedSession(
+    handle: AgentPersistenceHandle,
+    overrides?: Partial<AgentSessionConfig>,
+    launchContext?: AgentLaunchContext,
+  ): ClaudeAgentSession {
     const metadata = coerceSessionMetadata(handle.metadata);
     const merged: Partial<AgentSessionConfig> = { ...metadata, ...overrides };
     if (!merged.cwd) {
