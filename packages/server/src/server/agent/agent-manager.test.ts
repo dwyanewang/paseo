@@ -6824,6 +6824,86 @@ test("getAgent returns internal agents by ID", async () => {
   expect(agent?.internal).toBe(true);
 });
 
+test("getTimelineRows rejects internal history snapshots", async () => {
+  const agentId = "00000000-0000-4000-8000-000000000118";
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-internal-history-"));
+  const client = new (class extends TestAgentClient {
+    async readSessionHistory() {
+      return {
+        events: [
+          {
+            type: "timeline" as const,
+            provider: "codex" as const,
+            item: { type: "user_message" as const, text: "internal prompt" },
+          },
+        ],
+        coverage: { kind: "complete" as const },
+      };
+    }
+  })();
+  const manager = new AgentManager({ clients: { codex: client }, logger });
+
+  try {
+    await manager.readAgentHistoryFromPersistence(
+      { provider: "codex", sessionId: "internal-history", metadata: { cwd: workdir } },
+      { cwd: workdir },
+      agentId,
+      { internal: true },
+    );
+
+    await expect(manager.getTimelineRows(agentId)).rejects.toThrow(`Unknown agent '${agentId}'`);
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("dedicated history reads use only the in-memory timeline", async () => {
+  const agentId = "00000000-0000-4000-8000-000000000119";
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-memory-history-"));
+  const durableTimelineStore = new RecordingTimelineStore();
+  const getLatestCommittedSeq = vi.spyOn(durableTimelineStore, "getLatestCommittedSeq");
+  const getCommittedRows = vi.spyOn(durableTimelineStore, "getCommittedRows");
+  const bulkInsert = vi.spyOn(durableTimelineStore, "bulkInsert");
+  const client = new (class extends TestAgentClient {
+    async readSessionHistory() {
+      return {
+        events: [
+          {
+            type: "timeline" as const,
+            provider: "codex" as const,
+            item: { type: "assistant_message" as const, text: "memory-only history" },
+          },
+        ],
+        coverage: { kind: "complete" as const },
+      };
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    durableTimelineStore,
+    logger,
+  });
+
+  try {
+    await manager.readAgentHistoryFromPersistence(
+      { provider: "codex", sessionId: "memory-history", metadata: { cwd: workdir } },
+      { cwd: workdir },
+      agentId,
+      {},
+    );
+
+    expect(await manager.getTimelineRows(agentId)).toMatchObject([
+      { item: { type: "assistant_message", text: "memory-only history" } },
+    ]);
+    await manager.flush();
+    expect(getLatestCommittedSeq).not.toHaveBeenCalled();
+    expect(getCommittedRows).not.toHaveBeenCalled();
+    expect(bulkInsert).not.toHaveBeenCalled();
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("subscribe does not emit state events for internal agents to global subscribers", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
   const storagePath = join(workdir, "agents");

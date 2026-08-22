@@ -23,7 +23,7 @@ import { OWNER_PERMISSIONS, type DaemonPermission } from "./authorization/index.
 import { DownloadTokenStore } from "./file-download/token-store.js";
 import { StructuredAgentFallbackError } from "./agent/agent-response-loop.js";
 import type { StoredAgentRecord } from "./agent/agent-storage.js";
-import type { AgentManagerEvent } from "./agent/agent-manager.js";
+import type { AgentManagerEvent, ManagedAgent } from "./agent/agent-manager.js";
 import type { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import { WorkspaceLabelError, type WorkspaceLabelService } from "./workspace-labels/index.js";
 import { createPersistedProjectRecord } from "./workspace-registry.js";
@@ -42,6 +42,7 @@ import {
   asWorkspaceGitService,
   asDaemonConfigStore,
   createProviderSnapshotManagerStub,
+  findByType,
 } from "./test-utils/session-stubs.js";
 import { isPlatform } from "../test-utils/platform.js";
 import {
@@ -5038,6 +5039,166 @@ describe("schedule dispatch routing", () => {
     expect(routed, `${msg.type} did not route to a handler (silent no-op)`).toBeDefined();
     expect(routed?.payload.code).toBe(code);
   });
+});
+
+test("fetches a closed history snapshot with authoritative stored agent metadata", async () => {
+  const agentId = "00000000-0000-4000-8000-000000000402";
+  const archivedAt = "2026-07-20T12:00:00.000Z";
+  const record = createStoredAgentRecord({
+    id: agentId,
+    cwd: "/workspace/archived-agent",
+    title: "Archived investigation",
+    updatedAt: "2026-07-21T13:00:00.000Z",
+    lastStatus: "idle",
+    labels: { purpose: "audit" },
+    archivedAt,
+    persistence: {
+      provider: "codex",
+      sessionId: "archived-thread",
+      metadata: { cwd: "/workspace/archived-agent" },
+    },
+  });
+  const snapshot = {
+    id: agentId,
+    provider: "codex",
+    lifecycle: "closed",
+  } as ManagedAgent;
+  const messages: SessionOutboundMessage[] = [];
+  const providerSnapshot = createProviderSnapshotManagerStub();
+  providerSnapshot.listRegisteredProviderIds.mockReturnValue(["codex"]);
+  const session = createSessionForTest({
+    messages,
+    providerSnapshotManager: providerSnapshot.manager,
+    agentStorage: { get: vi.fn().mockResolvedValue(record) },
+    agentManager: {
+      waitForAgentClose: vi.fn().mockResolvedValue(undefined),
+      getAgent: vi.fn(() => null),
+      getHistorySnapshot: vi.fn(() => snapshot),
+      fetchPublicTimeline: vi.fn(() => ({
+        epoch: "archived-history-epoch",
+        direction: "tail" as const,
+        reset: false,
+        staleCursor: false,
+        gap: false,
+        window: { minSeq: 0, maxSeq: 0, nextSeq: 0 },
+        hasOlder: false,
+        hasNewer: false,
+        rows: [],
+      })),
+    },
+  });
+
+  await session.handleMessage({
+    type: "fetch_agent_timeline_request",
+    agentId,
+    requestId: "archived-history-request",
+    projection: "canonical",
+  });
+
+  const response = messages.find(
+    (
+      message,
+    ): message is Extract<SessionOutboundMessage, { type: "fetch_agent_timeline_response" }> =>
+      message.type === "fetch_agent_timeline_response",
+  );
+  expect(response?.payload.error).toBeNull();
+  expect(response?.payload.agent).toMatchObject({
+    id: agentId,
+    title: "Archived investigation",
+    status: "idle",
+    archivedAt,
+    labels: { purpose: "audit" },
+    persistence: {
+      provider: "codex",
+      sessionId: "archived-thread",
+    },
+  });
+});
+
+test("public timeline, prompt index, and fork-context requests reject archived internal agents", async () => {
+  const agentId = "00000000-0000-4000-8000-000000000403";
+  const record = createStoredAgentRecord({
+    id: agentId,
+    cwd: "/workspace/internal-archived-agent",
+    title: "Internal archived investigation",
+    internal: true,
+    archivedAt: "2026-07-20T12:00:00.000Z",
+    persistence: {
+      provider: "codex",
+      sessionId: "internal-archived-thread",
+      metadata: { cwd: "/workspace/internal-archived-agent" },
+    },
+  });
+  const snapshot = {
+    id: agentId,
+    provider: "codex",
+    lifecycle: "closed",
+    internal: true,
+  } as ManagedAgent;
+  const messages: SessionOutboundMessage[] = [];
+  const providerSnapshot = createProviderSnapshotManagerStub();
+  providerSnapshot.listRegisteredProviderIds.mockReturnValue(["codex"]);
+  const fetchPublicTimeline = vi.fn(() => {
+    throw new Error(`Unknown agent '${agentId}'`);
+  });
+  const getTimelineRows = vi.fn(async () => {
+    throw new Error(`Unknown agent '${agentId}'`);
+  });
+  const session = createSessionForTest({
+    messages,
+    providerSnapshotManager: providerSnapshot.manager,
+    agentStorage: { get: vi.fn().mockResolvedValue(record) },
+    agentManager: {
+      waitForAgentClose: vi.fn().mockResolvedValue(undefined),
+      getAgent: vi.fn(() => null),
+      getHistorySnapshot: vi.fn(() => snapshot),
+      getTimelineRows,
+      fetchPublicTimeline,
+    },
+  });
+
+  await session.handleMessage({
+    type: "fetch_agent_timeline_request",
+    agentId,
+    requestId: "internal-archived-timeline",
+    projection: "canonical",
+  });
+  await session.handleMessage({
+    type: "agent.fork_context.request",
+    agentId,
+    requestId: "internal-archived-fork-context",
+  });
+  await session.handleMessage({
+    type: "agent.timeline.list_prompts.request",
+    agentId,
+    requestId: "internal-archived-prompts",
+  });
+
+  expect(findByType(messages, "fetch_agent_timeline_response")?.payload).toMatchObject({
+    requestId: "internal-archived-timeline",
+    agentId,
+    agent: null,
+    entries: [],
+    error: `Unknown agent '${agentId}'`,
+  });
+  expect(findByType(messages, "agent.fork_context.response")?.payload).toEqual({
+    requestId: "internal-archived-fork-context",
+    agentId,
+    attachment: null,
+    itemCount: 0,
+    boundaryCursor: null,
+    boundaryMessageId: null,
+    error: `Unknown agent '${agentId}'`,
+  });
+  expect(findByType(messages, "agent.timeline.list_prompts.response")?.payload).toEqual({
+    requestId: "internal-archived-prompts",
+    agentId,
+    epoch: "",
+    prompts: [],
+    error: `Unknown agent '${agentId}'`,
+  });
+  expect(getTimelineRows).toHaveBeenCalledOnce();
+  expect(fetchPublicTimeline).toHaveBeenCalledTimes(2);
 });
 
 test("replaces a capable session's complete viewed timeline set", async () => {
