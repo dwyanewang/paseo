@@ -1422,9 +1422,16 @@ export class AgentManager {
       throw new Error(`Provider '${handle.provider}' does not support reading session history`);
     }
 
+    const historyEnv = await this.resolveHistoryReadEnv(
+      resolvedAgentId,
+      client,
+      storedConfig.cwd,
+      options.workspaceId ?? null,
+    );
     const history = await client.readSessionHistory(handle, {
       agentId: resolvedAgentId,
       cwd: storedConfig.cwd,
+      ...(historyEnv ? { env: historyEnv } : {}),
     });
     this.assertAcceptingAgentRegistrations();
 
@@ -5240,6 +5247,33 @@ export class AgentManager {
           daemonAppendSystemPrompt,
         }
       : next;
+  }
+
+  /**
+   * A history read opens no interactive session, so it must not build a Paseo tool
+   * catalog the way `buildLaunchContext` does. Plugins still observe the open with
+   * `purpose: "history"` and may rewrite the environment the provider reads under.
+   * Without a plugin there is nothing to apply, so providers keep their default
+   * environment rather than being handed a synthetic one.
+   */
+  private async resolveHistoryReadEnv(
+    agentId: string,
+    client: AgentClient,
+    cwd: string,
+    workspaceId: string | null,
+  ): Promise<Record<string, string> | undefined> {
+    if (!this.pluginLifecycle) return undefined;
+    const request: PluginSessionOpenRequest = {
+      agentId,
+      provider: client.provider,
+      cwd,
+      workspaceId,
+      reason: "resume",
+      purpose: "history",
+      env: {},
+    };
+    const transformed = await this.pluginLifecycle.before("agent.session_open", request);
+    return transformed.env;
   }
 
   private async buildLaunchContext(
