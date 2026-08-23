@@ -64,6 +64,9 @@ export const ru: TranslationResources = {
       workspaces: "Рабочие пространства",
       agents: "Агенты",
       newAgent: "Новый агент",
+      open: "Открыть {{name}}",
+      openInSidePanel: "Открыть {{name}} в боковой панели",
+      openInFocusedPane: "Открыть {{name}} в активной области",
       addProject: "Добавить проект",
       home: "Главная",
       groupByProject: "Группировать по проекту",
@@ -607,7 +610,7 @@ export const ru: TranslationResources = {
         files: "Файлы",
         pullRequest: "PR",
         terminalProfilesMenu: "Профили терминала",
-        editTerminalProfiles: "Изменить профили…",
+        editTerminalProfiles: "Изменить профили",
       },
       sidePanel: {
         open: "Открыть боковую панель",
@@ -889,6 +892,8 @@ export const ru: TranslationResources = {
         failedRefresh: "Не удалось обновить состояние Git.",
         emptyHiddenWhitespace: "После скрытия пробельных изменений видимых изменений нет",
         emptyUncommitted: "Нет незафиксированных изменений",
+        seeUncommittedChanges: "Показать незафиксированные изменения",
+        seeCommittedChanges: "Показать зафиксированные изменения",
         emptyAgainstBase: "Нет изменений относительно {{baseRef}}",
         checkingRepository: "Проверяем репозиторий...",
         notRepository: "Это не репозиторий Git",
@@ -1741,6 +1746,7 @@ export const ru: TranslationResources = {
       loading: "Загрузка файла...",
       noPreview: "Предварительный просмотр недоступен",
       binaryPreviewUnavailable: "Предварительный просмотр двоичного файла недоступен.",
+      tooLargeToDisplay: "Этот файл слишком велик для отображения",
       failedToLoad: "Не удалось загрузить файл",
       failedToLoadPreview: "Не удалось загрузить предварительный просмотр файла.",
       editor: {
@@ -1770,6 +1776,7 @@ export const ru: TranslationResources = {
       label: "Файлы",
       subtitle: "Файлы рабочего пространства",
       tooltip: "Просмотр файлов рабочего пространства",
+      chooseFile: "Выберите файл",
     },
     pullRequest: {
       label: "PR",
@@ -2095,13 +2102,18 @@ export const ru: TranslationResources = {
         interfaceFontHint:
           "Используется во всём приложении. Оставьте поле пустым, чтобы использовать системный шрифт.",
         interfaceFontAccessibility: "Семейство интерфейсных шрифтов",
-        baseSize: "Базовый размер",
-        baseSizeAccessibility: "Базовый размер шрифта",
+        interfaceSize: "Размер интерфейса",
+        interfaceSizeHint: "Используется для навигации, элементов управления и подписей",
+        interfaceSizeAccessibility: "Размер шрифта интерфейса",
+        contentSize: "Размер содержимого",
+        contentSizeHint: "Используется для текста чата и отображаемого Markdown",
+        contentSizeAccessibility: "Размер шрифта содержимого",
         codeFont: "Шрифт кода",
         codeFontHint:
           "Используется для кода, диффов и вывода терминала. Оставьте поле пустым, чтобы использовать системный шрифт.",
         codeFontAccessibility: "Семейство шрифтов кода",
         codeSize: "Размер кода",
+        codeSizeHint: "Используется для кода, диффов и вывода терминала",
         codeSizeAccessibility: "Размер шрифта кода",
       },
       syntax: {
@@ -2110,7 +2122,8 @@ export const ru: TranslationResources = {
         highlightThemeHint: "Цвета кода, не зависящие от темы приложения",
         highlightThemeAccessibility: "Тема подсветки: {{value}}",
         previewAccessibility:
-          "Предварительный просмотр темы синтаксиса и шрифта кода в реальном времени.",
+          "Предварительный просмотр типографики содержимого, темы синтаксиса и шрифта кода в реальном времени.",
+        previewContent: "Предварительный просмотр содержимого и кода",
       },
     },
     shortcuts: {
@@ -2391,10 +2404,9 @@ export const ru: TranslationResources = {
         featuresLabel: "Функции",
         featureCount: "Функции: {{count}}",
         featureCountOne: "{{count}} функция",
-        notesLabel: "Заметки для агентов",
+        notesLabel: "Когда использовать",
         notesPlaceholder: "Используйте для работы над UI — компоненты, макет и токены дизайна.",
-        notesHint:
-          "MCP-инструмент «list_profiles» возвращает эти заметки. Сформулируйте их как инструкцию для другого агента.",
+        notesHint: "Помогает агентам выбрать этот профиль при запуске другого агента.",
         save: "Сохранить",
         saving: "Сохранение...",
         remove: "Удалить",

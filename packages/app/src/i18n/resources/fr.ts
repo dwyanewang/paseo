@@ -65,6 +65,9 @@ export const fr: TranslationResources = {
       workspaces: "Espaces de travail",
       agents: "Agents",
       newAgent: "Nouvel agent",
+      open: "Ouvrir {{name}}",
+      openInSidePanel: "Ouvrir {{name}} dans le panneau latéral",
+      openInFocusedPane: "Ouvrir {{name}} dans le volet actif",
       addProject: "Ajouter un projet",
       home: "Maison",
       groupByProject: "Grouper par projet",
@@ -607,7 +610,7 @@ export const fr: TranslationResources = {
         files: "Fichiers",
         pullRequest: "Demande de fusion",
         terminalProfilesMenu: "Terminal profiles",
-        editTerminalProfiles: "Edit profiles…",
+        editTerminalProfiles: "Edit profiles",
       },
       sidePanel: {
         open: "Ouvrir le panneau latéral",
@@ -904,6 +907,8 @@ export const fr: TranslationResources = {
         failedRefresh: "Échec de l'actualisation de l'état git.",
         emptyHiddenWhitespace: "Aucun changement visible après avoir masqué les espaces",
         emptyUncommitted: "Aucune modification non validée",
+        seeUncommittedChanges: "Voir les modifications non validées",
+        seeCommittedChanges: "Voir les modifications validées",
         emptyAgainstBase: "Aucun changement par rapport à{{baseRef}}",
         checkingRepository: "Vérification du référentiel...",
         notRepository: "Pas un dépôt git",
@@ -1762,6 +1767,7 @@ export const fr: TranslationResources = {
       loading: "Chargement du fichier...",
       noPreview: "Aucun aperçu disponible",
       binaryPreviewUnavailable: "Aperçu binaire indisponible",
+      tooLargeToDisplay: "Ce fichier est trop volumineux pour être affiché",
       failedToLoad: "Échec du chargement du fichier",
       failedToLoadPreview: "Échec du chargement de l'aperçu du fichier",
       editor: {
@@ -1790,6 +1796,7 @@ export const fr: TranslationResources = {
       label: "Fichiers",
       subtitle: "Fichiers de l’espace de travail",
       tooltip: "Parcourir les fichiers de l’espace de travail",
+      chooseFile: "Choisissez un fichier",
     },
     pullRequest: {
       label: "Demande de fusion",
@@ -2114,13 +2121,18 @@ export const fr: TranslationResources = {
         interfaceFontHint:
           "Utilisé dans toute l'application. Laisser vide pour la valeur par défaut du système",
         interfaceFontAccessibility: "Famille de polices d'interface",
-        baseSize: "Taille de base",
-        baseSizeAccessibility: "Taille de base de la police",
+        interfaceSize: "Taille de l'interface",
+        interfaceSizeHint: "Utilisée pour la navigation, les contrôles et les libellés",
+        interfaceSizeAccessibility: "Taille de police de l'interface",
+        contentSize: "Taille du contenu",
+        contentSizeHint: "Utilisée pour le texte du chat et le Markdown rendu",
+        contentSizeAccessibility: "Taille de police du contenu",
         codeFont: "Police de code",
         codeFontHint:
           "Utilisé dans le code, les différences et la sortie du terminal. Laisser vide pour la valeur par défaut du système",
         codeFontAccessibility: "Famille de polices de code",
         codeSize: "Taille du code",
+        codeSizeHint: "Utilisée pour le code, les diffs et la sortie du terminal",
         codeSizeAccessibility: "Taille de la police du code",
       },
       syntax: {
@@ -2128,7 +2140,9 @@ export const fr: TranslationResources = {
         highlightTheme: "Thème de surbrillance",
         highlightThemeHint: "Couleurs du code, indépendamment du thème de l'application",
         highlightThemeAccessibility: "Thème phare:{{value}}",
-        previewAccessibility: "Aperçu en direct du thème de syntaxe et de la police de code",
+        previewAccessibility:
+          "Aperçu en direct de la typographie du contenu, du thème de syntaxe et de la police de code",
+        previewContent: "Aperçu du contenu et du code",
       },
     },
     shortcuts: {
@@ -2408,11 +2422,10 @@ export const fr: TranslationResources = {
         featuresLabel: "Caractéristiques",
         featureCount: "{{count}} caractéristiques",
         featureCountOne: "{{count}} caractéristique",
-        notesLabel: "Notes pour les agents",
+        notesLabel: "Quand l’utiliser",
         notesPlaceholder:
           "À utiliser pour le travail sur l'UI — composants, mise en page et tokens de design.",
-        notesHint:
-          "Renvoyé par l'outil MCP « list_profiles ». Rédigez-le comme une instruction destinée à un autre agent.",
+        notesHint: "Aide les agents à choisir ce profil lorsqu’ils démarrent un autre agent.",
         save: "Enregistrer",
         saving: "Enregistrement...",
         remove: "Supprimer",

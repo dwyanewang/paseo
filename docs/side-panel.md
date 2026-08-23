@@ -36,9 +36,9 @@ difference between them only shows up when the tab is already open somewhere:
 `pane` is a pane-local affordance — that pane's `+` menu, its empty-state launcher.
 The user is placing the tab and expects it to arrive.
 
-`prefer` is an implicit supporting open — an agent's file link, workspace setup
-progress. It has an opinion about new tabs only. Yanking a tab out of the pane the
-user deliberately moved it to is the failure this mode exists to prevent.
+`prefer` is an implicit supporting open — an agent's file link or a failed workspace
+setup. It has an opinion about new tabs only. Yanking a tab out of the pane the user
+deliberately moved it to is the failure this mode exists to prevent.
 
 `ambient` differs from `focused` in one rule: reconciliation opens tabs with nobody
 behind the click, and the side panel can hold focus from an earlier reveal, so an
@@ -74,8 +74,8 @@ side panel, which the user summons and expects to find again, split size and all
 
 It does not seed itself. Revealing it opens an empty pane with the launcher; the user
 picks what goes in. Detecting a pull request makes the launcher's card available and
-opens nothing. Event-driven surfaces such as workspace setup progress still add a
-background tab, which never reveals the panel or moves focus.
+opens nothing. A failed workspace setup adds a background tab to the main pane.
+Running and successful setup never seed tabs.
 
 ## Routing preference
 
@@ -83,7 +83,11 @@ background tab, which never reveals the panel or moves focus.
 persisted in client app settings as `openSupportingTabsInSidePanel`. Off means new
 supporting tabs land in the focused pane instead. Mobile ignores it. Explicit actions
 — the header toggle, a pane's `+` menu, the empty-state launcher — are never subject
-to it.
+to it. The Changes keyboard shortcut and the diff-stat pill above an agent composer are
+supporting opens: they follow the preference and focus an existing Changes tab wherever
+the user left it. When Changes is already visible in the Side panel, the diff-stat pill
+hides the panel without closing the tab. A different visible Side panel tab switches to
+Changes instead.
 
 ## The name
 

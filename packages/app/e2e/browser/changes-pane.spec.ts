@@ -258,6 +258,61 @@ test.afterEach(async () => {
   }
 });
 
+test("Changes opens the populated committed comparison for a clean checkout", async ({ page }) => {
+  const workspace = await createWorkspaceWithCommittedDiff();
+
+  await openWorkspaceChangesSurface(page, workspace);
+
+  const panel = page.getByTestId("working-diff-panel").filter({ visible: true });
+  await expect(panel.getByTestId("changes-diff-status-trigger")).toContainText("Committed");
+  await expect(panel.getByText("committed-only.ts", { exact: true })).toBeVisible();
+});
+
+test("Changes expires a manual comparison when checkout dirtiness changes", async ({ page }) => {
+  const workspace = await createWorkspaceWithMountedTabDiff();
+  await openWorkspaceChanges(page, workspace);
+
+  const panel = page.getByTestId("working-diff-panel").filter({ visible: true });
+  const mode = panel.getByTestId("changes-diff-status-trigger");
+  await expect(mode).toContainText("Uncommitted");
+
+  await mode.click();
+  await page.getByTestId("changes-diff-mode-committed").click();
+  await expect(mode).toContainText("Committed");
+  await expect(panel.getByRole("button", { name: "See uncommitted changes" })).toBeVisible();
+
+  execFileSync("git", ["add", "--all"], { cwd: workspace.repoPath });
+  execFileSync("git", ["commit", "-m", "Commit working changes"], { cwd: workspace.repoPath });
+  await expect(mode).toContainText("Committed");
+  await expect(panel.getByRole("button", { name: "See uncommitted changes" })).toHaveCount(0, {
+    timeout: 30_000,
+  });
+
+  await writeFile(path.join(workspace.repoPath, "new-working-change.txt"), "uncommitted\n");
+  await expect(mode).toContainText("Uncommitted", { timeout: 30_000 });
+});
+
+test("an empty Changes comparison links to the populated comparison", async ({ page }) => {
+  const workspace = await createWorkspaceWithCommittedDiff();
+  await openWorkspaceChangesSurface(page, workspace);
+
+  const panel = page.getByTestId("working-diff-panel").filter({ visible: true });
+  const mode = panel.getByTestId("changes-diff-status-trigger");
+  await mode.click();
+  await page.getByTestId("changes-diff-mode-committed").click();
+  await expect(panel.getByText("committed-only.ts", { exact: true })).toBeVisible();
+
+  await mode.click();
+  await page.getByTestId("changes-diff-mode-uncommitted").click();
+
+  await expect(panel.getByText("No uncommitted changes", { exact: true })).toBeVisible();
+  const seeCommitted = panel.getByRole("button", { name: "See committed changes" });
+  await expect(seeCommitted).toBeVisible();
+  await seeCommitted.click();
+  await expect(mode).toContainText("Committed");
+  await expect(panel.getByText("committed-only.ts", { exact: true })).toBeVisible();
+});
+
 test("changes file actions open below the right-click without a reserved kebab", async ({
   page,
 }) => {
@@ -941,6 +996,23 @@ test("canvas diff creates, edits, and deletes an inline review without DOM code 
   await expect(page.locator('[data-testid^="diff-code-row-"]')).toHaveCount(0);
 });
 
+test("autofocusing an inline review keeps the Changes tab focused", async ({ page }) => {
+  const workspace = await createWorkspaceWithMountedTabDiff();
+  await useUnwrappedDiffLines(page);
+  await openWorkspaceChanges(page, workspace);
+
+  const changesTab = page.getByTestId("workspace-tab-working_diff").filter({ visible: true });
+  const focusedBackground = await changesTab.evaluate(
+    (element) => getComputedStyle(element).backgroundColor,
+  );
+
+  await startReviewOnFirstChangedLine(page);
+  await expect(page.getByTestId("inline-review-editor-input")).toBeFocused();
+  await expect
+    .poll(() => changesTab.evaluate((element) => getComputedStyle(element).backgroundColor))
+    .toBe(focusedBackground);
+});
+
 test("split canvas creates a review on the changed side and keeps it in that column", async ({
   page,
 }) => {
@@ -1040,7 +1112,7 @@ test("canvas diff copies a dragged character selection without opening a review"
   await expect(page.getByTestId("inline-review-editor")).toHaveCount(0);
 });
 
-test("the first click after a canvas selection only dismisses the selection", async ({ page }) => {
+test("clicking the canvas dismisses a selection without opening a review", async ({ page }) => {
   const workspace = await createWorkspaceWithExactSelectionDiff("ABCDEFGHIJ");
   await useUnwrappedDiffLines(page);
   await openSelectionWorkspaceChanges(page, workspace);
@@ -1050,7 +1122,7 @@ test("the first click after a canvas selection only dismisses the selection", as
   await expect(page.getByTestId("inline-review-editor")).toHaveCount(0);
 
   await clickFirstChangedLine(page);
-  await expect(page.getByTestId("inline-review-editor")).toBeVisible();
+  await expect(page.getByTestId("inline-review-editor")).toHaveCount(0);
 });
 
 test("canvas diff replaces a selection with forward and backward drags", async ({
@@ -1365,6 +1437,28 @@ async function createWorkspaceWithMountedTabDiff(
   return { id: createdWorkspace.workspace.id, repoPath: repo.path };
 }
 
+async function createWorkspaceWithCommittedDiff(): Promise<DirtyWorkspace> {
+  const repo = await createTempGitRepo("changes-committed-", {
+    files: [{ path: "tracked.ts", content: "export const tracked = 1;\n" }],
+  });
+  const client = await connectSeedClient();
+  cleanupTasks.push({
+    run: async () => {
+      await client.close().catch(() => undefined);
+      await repo.cleanup().catch(() => undefined);
+    },
+  });
+
+  execFileSync("git", ["checkout", "-b", "feature"], { cwd: repo.path });
+  await writeFile(path.join(repo.path, "committed-only.ts"), "export const committed = true;\n");
+  execFileSync("git", ["add", "committed-only.ts"], { cwd: repo.path });
+  execFileSync("git", ["commit", "-m", "Add committed-only file"], { cwd: repo.path });
+
+  const created = await client.createWorkspace({ source: { kind: "directory", path: repo.path } });
+  if (!created.workspace) throw new Error(created.error ?? "Failed to create committed workspace");
+  return { id: created.workspace.id, repoPath: repo.path };
+}
+
 async function createWorkspaceWithExactSelectionDiff(content: string): Promise<DirtyWorkspace> {
   const repo = await createTempGitRepo("changes-canvas-selection-", {
     files: [{ path: "src/selection.ts", content: "" }],
@@ -1388,6 +1482,13 @@ async function openWorkspaceChanges(page: Page, workspace: DirtyWorkspace): Prom
   await waitForWorkspaceTabsVisible(page);
   await openChangesInVisibleExplorer(page);
   await expectExpandedMountedTabDiff(page);
+}
+
+async function openWorkspaceChangesSurface(page: Page, workspace: DirtyWorkspace): Promise<void> {
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await page.goto(buildHostWorkspaceRoute(getServerId(), workspace.id));
+  await waitForWorkspaceTabsVisible(page);
+  await openChangesPanel(page);
 }
 
 async function openSelectionWorkspaceChanges(page: Page, workspace: DirtyWorkspace): Promise<void> {
@@ -1453,7 +1554,8 @@ async function startReviewOnFirstChangedLine(
   if (!bodyBounds) throw new Error("Expanded diff body has no bounds");
   const lineHeight = Math.round(fontSize * 1.5);
   const columnLeft = side === "right" ? bodyBounds.x + bodyBounds.width / 2 : bodyBounds.x;
-  await page.mouse.click(columnLeft + 20, bodyBounds.y + lineHeight * 1.5);
+  await page.mouse.move(columnLeft + 20, bodyBounds.y + lineHeight * 1.5);
+  await page.getByRole("button", { name: "Add review comment" }).click();
   await expect(page.getByTestId("inline-review-editor")).toBeVisible();
 }
 
