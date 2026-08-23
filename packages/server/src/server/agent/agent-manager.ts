@@ -1092,6 +1092,11 @@ export class AgentManager {
     this.historySnapshots.delete(normalizedId);
   }
 
+  discardHistoryState(id: string): void {
+    const normalizedId = validateAgentId(id, "discardHistoryState");
+    this.discardRetainedAgentState(normalizedId);
+  }
+
   async waitForAgentClose(agentId: string): Promise<void> {
     await this.inFlightAgentCloses?.get(agentId)?.catch(() => undefined);
   }

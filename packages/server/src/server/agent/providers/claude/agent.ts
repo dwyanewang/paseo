@@ -406,6 +406,7 @@ interface ClaudeAgentClientOptions {
 interface ClaudeAgentSessionOptions {
   defaults?: { agents?: Record<string, AgentDefinition> };
   runtimeSettings?: ProviderRuntimeSettings;
+  configDir?: string;
   handle?: AgentPersistenceHandle;
   agentId?: string;
   launchEnv?: Record<string, string>;
@@ -1522,6 +1523,7 @@ export class ClaudeAgentClient implements AgentClient {
     return new ClaudeAgentSession(claudeConfig, {
       defaults: this.defaults,
       runtimeSettings: this.runtimeSettings,
+      configDir: this.configDir,
       agentId: launchContext?.agentId,
       launchEnv: launchContext?.env,
       persistSession: options?.persistSession,
@@ -1551,6 +1553,7 @@ export class ClaudeAgentClient implements AgentClient {
     const session = new ClaudeAgentSession(this.assertConfig({ provider: "claude", cwd }), {
       defaults: this.defaults,
       runtimeSettings: this.runtimeSettings,
+      configDir: this.configDir,
       handle,
       agentId: context?.agentId,
       launchEnv: context?.env,
@@ -1588,6 +1591,7 @@ export class ClaudeAgentClient implements AgentClient {
     return new ClaudeAgentSession(claudeConfig, {
       defaults: this.defaults,
       runtimeSettings: this.runtimeSettings,
+      configDir: this.configDir,
       handle,
       agentId: launchContext?.agentId,
       launchEnv: launchContext?.env,
@@ -2132,6 +2136,7 @@ class ClaudeAgentSession implements AgentSession {
   private foregroundHasVisibleActivity = false;
   private activeTurnHasAssistantText = false;
   private readonly contextUsage: ClaudeContextUsageState;
+  private readonly configDir?: string;
   private userMessageIds: string[] = [];
   private readonly emittedUserMessageIds = new Set<string>();
   private readonly rewindTurnAnchors: ClaudeRewindTurnAnchor[] = [];
@@ -2146,6 +2151,7 @@ class ClaudeAgentSession implements AgentSession {
     this.agentId = options.agentId;
     this.defaults = options.defaults;
     this.runtimeSettings = options.runtimeSettings;
+    this.configDir = options.configDir;
     this.persistSession = options.persistSession;
     this.logger = options.logger.child({ agentId: this.agentId });
     this.queryFactory = options.queryFactory;
@@ -4995,7 +5001,10 @@ class ClaudeAgentSession implements AgentSession {
   private resolveHistoryPath(sessionId: string): string | null {
     const cwd = this.config.cwd;
     if (!cwd) return null;
-    const configDir = resolveClaudeConfigDir({ runtimeSettings: this.runtimeSettings });
+    const configDir = resolveClaudeConfigDir({
+      configDir: this.configDir,
+      runtimeSettings: this.runtimeSettings,
+    });
     const candidates = [cwd];
     try {
       const realCwd = fs.realpathSync(cwd);

@@ -1597,17 +1597,28 @@ export class OpenCodeAgentClient implements AgentClient {
         sessionID: handle.sessionId,
         directory: cwd,
       });
+      if (sessionResponse.error || !sessionResponse.data) {
+        let detail = "response did not include session data";
+        if (sessionResponse.error) {
+          detail = toDiagnosticErrorMessage(sessionResponse.error);
+        }
+        throw new Error(`Failed to read OpenCode session metadata: ${detail}`);
+      }
       const messagesResponse = await client.session.messages({
         sessionID: handle.sessionId,
         directory: cwd,
       });
       if (messagesResponse.error || !messagesResponse.data) {
-        return { events: [], coverage: { kind: "complete" } };
+        let detail = "response did not include session messages";
+        if (messagesResponse.error) {
+          detail = toDiagnosticErrorMessage(messagesResponse.error);
+        }
+        throw new Error(`Failed to read OpenCode session messages: ${detail}`);
       }
 
       const messages = filterOpenCodeRevertedMessages(
         messagesResponse.data,
-        sessionResponse.error ? null : sessionResponse.data?.revert,
+        sessionResponse.data.revert,
       );
       return {
         events: messages.flatMap(buildOpenCodeReplayTimelineEvents),

@@ -4001,6 +4001,31 @@ describe("OpenCode persisted sessions", () => {
     expect(runtime.acquisitions).toEqual([{ kind: "current", releaseCount: 1 }]);
   });
 
+  test("rejects structured session metadata errors without reading messages", async () => {
+    const sdkClient = new TestOpenCodeClient();
+    sdkClient.sessionGetResponse = { error: { name: "NotFoundError", message: "missing session" } };
+    const { runtime, read } = createHistoryHarness({ sdkClient });
+
+    await expect(read()).rejects.toThrow(
+      'Failed to read OpenCode session metadata: {"name":"NotFoundError","message":"missing session"}',
+    );
+    expect(sdkClient.calls.sessionMessages).toEqual([]);
+    expect(runtime.acquisitions).toEqual([{ kind: "current", releaseCount: 1 }]);
+  });
+
+  test("rejects structured session message errors instead of completing empty history", async () => {
+    const sdkClient = new TestOpenCodeClient();
+    sdkClient.sessionMessagesResponse = {
+      error: { name: "InternalServerError", message: "messages unavailable" },
+    };
+    const { runtime, read } = createHistoryHarness({ sdkClient });
+
+    await expect(read()).rejects.toThrow(
+      'Failed to read OpenCode session messages: {"name":"InternalServerError","message":"messages unavailable"}',
+    );
+    expect(runtime.acquisitions).toEqual([{ kind: "current", releaseCount: 1 }]);
+  });
+
   test("releases the server acquisition when history client construction fails", async () => {
     const { runtime, read } = createHistoryHarness({ failClientCreation: true });
 
