@@ -319,6 +319,33 @@ describe("ClaudeAgentSession history replay regression", () => {
     expect(queryFactory).not.toHaveBeenCalled();
   });
 
+  test("prefers the explicit config directory when reading persisted history", async () => {
+    process.env.CLAUDE_CONFIG_DIR = path.join(tempRoot, "daemon-claude-config");
+    const client = new ClaudeAgentClient({
+      logger: createTestLogger(),
+      queryFactory,
+      configDir,
+      runtimeSettings: {
+        env: { CLAUDE_CONFIG_DIR: path.join(tempRoot, "profile-claude-config") },
+      },
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    queryFactory.mockClear();
+
+    const history = await client.readSessionHistory(
+      {
+        provider: "claude",
+        sessionId: "history-session",
+        nativeHandle: "history-session",
+        metadata: { provider: "claude", cwd },
+      },
+      { cwd },
+    );
+
+    expect(collectTimelineText(history.events)).toContain(HISTORY_ASSISTANT_MARKER);
+    expect(queryFactory).not.toHaveBeenCalled();
+  });
+
   test("replays persisted sidechains as provider subagent timelines", async () => {
     const client = new ClaudeAgentClient({
       logger: createTestLogger(),
