@@ -330,6 +330,39 @@ test("does not retain archived history state when the provider read fails", asyn
   expect(harness.manager.getAgent(agentId)).toBeNull();
 });
 
+test("discards archived history state when the record is deleted during the read", async () => {
+  const historyStarted = deferred();
+  const historyAllowed = deferred();
+  onTestFinished(() => historyAllowed.resolve());
+  const harness = await createLoaderHarness({
+    readSessionHistory: async () => {
+      historyStarted.resolve();
+      await historyAllowed.promise;
+      return completeHistory([
+        {
+          type: "timeline",
+          provider: "codex",
+          item: { type: "assistant_message", text: "History deleted during read" },
+        },
+      ]);
+    },
+  });
+  const agentId = "00000000-0000-4000-8000-000000000310";
+  await harness.createArchived(agentId);
+
+  const load = harness.load(agentId);
+  await historyStarted.promise;
+  await harness.storage.remove(agentId);
+  await harness.manager.deleteAgentState(agentId);
+  historyAllowed.resolve();
+
+  await expect(load).rejects.toThrow(`Agent not found: ${agentId}`);
+  expect(harness.manager.getHistorySnapshot(agentId)).toBeNull();
+  expect(harness.manager.getAgent(agentId)).toBeNull();
+  expect(() => harness.manager.fetchTimeline(agentId)).toThrow(`Unknown agent '${agentId}'`);
+  await expect(harness.load(agentId)).rejects.toThrow(`Agent not found: ${agentId}`);
+});
+
 test("preserves internal visibility when archived history is promoted after unarchive", async () => {
   const { harness, agentId } = await runConcurrentUnarchiveScenario(false, { internal: true });
 
