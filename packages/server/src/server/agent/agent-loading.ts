@@ -32,6 +32,7 @@ export type AgentLoaderManager = Pick<
       | "getHistorySnapshot"
       | "readAgentHistoryFromPersistence"
       | "releaseHistorySnapshot"
+      | "discardHistoryState"
       | "waitForAgentClose"
     >
   >;
@@ -146,6 +147,7 @@ export async function ensureAgentLoaded(
 
       const latestRecord = await deps.agentStorage.get(agentId);
       if (!latestRecord) {
+        deps.agentManager.discardHistoryState?.(agentId);
         throw new Error(`Agent not found: ${agentId}`);
       }
       if (latestRecord.archivedAt) {

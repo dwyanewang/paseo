@@ -1143,6 +1143,11 @@ export class AgentManager {
     this.historySnapshots.delete(normalizedId);
   }
 
+  discardHistoryState(id: string): void {
+    const normalizedId = validateAgentId(id, "discardHistoryState");
+    this.discardRetainedAgentState(normalizedId);
+  }
+
   async waitForAgentClose(agentId: string): Promise<void> {
     // Loading during reload must wait for the replacement, not resume another writer.
     await this.lifecycleMutationTails.get(agentId);
