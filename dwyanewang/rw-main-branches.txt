@@ -5,5 +5,5 @@
 fix/project-skill-cache-invalidation # PR #2585 # reviewed-main:7c430777bfb3117eb1d359eddb69235ea308930e # reviewed-head:a2e5fb192706cd563bf202f86375fe7b9d181eb1
 fix/android-keyboard-covers-input # PR #2467 # reviewed-main:7c430777bfb3117eb1d359eddb69235ea308930e # reviewed-head:6e300c9fd1cf915c7e5007ca86b6d77c82a09b00
 refactor/provider-history-read # PR #2388 # reviewed-main:7c430777bfb3117eb1d359eddb69235ea308930e # reviewed-head:041ec2e14a423f65b017ca21eb081c58468822e8
-feat/file-image-preview # PR #2822 # reviewed-main:7c430777bfb3117eb1d359eddb69235ea308930e # reviewed-head:d04821fe2e24d07b04fa40dd2dcc8b312920637f
+feat/file-image-preview # PR #2822 # reviewed-main:7c430777bfb3117eb1d359eddb69235ea308930e # reviewed-head:61f600cd268f7a02541ac4d8031dd9035e40d0b5
 fix/claude-usage-oauth # Temporary personal overlay # reviewed-main:7c430777bfb3117eb1d359eddb69235ea308930e # reviewed-head:8c03ba9a751ea29d2a651a53ca678d44596ec123
