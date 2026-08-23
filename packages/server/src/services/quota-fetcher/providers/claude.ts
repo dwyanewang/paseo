@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
-import { existsSync, promises as fs } from "node:fs";
+import { createHash } from "node:crypto";
+import { promises as fs } from "node:fs";
 import { homedir, userInfo } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -10,6 +11,8 @@ import type {
   ProviderUsageDetail,
   ProviderUsageWindow,
 } from "../../../server/messages.js";
+import type { AgentPlanUsage } from "../../../server/agent/agent-sdk-types.js";
+import type { ProviderUsageTarget } from "../../../server/agent/provider-registry.js";
 import type { ProviderApiFetch, ProviderUsageFetcher } from "../provider.js";
 import {
   ApiNumberSchema,
@@ -18,11 +21,14 @@ import {
   unavailableUsage,
   windowFromUsedPct,
 } from "../usage.js";
+import { type ClaudeCredential, ClaudeUsageState } from "./claude-state.js";
 
 const execFileAsync = promisify(execFile);
 const CLAUDE_KEYCHAIN_TIMEOUT_MS = 2_000;
 const CLAUDE_OAUTH_BETA = "oauth-2025-04-20";
 const CLAUDE_KEYCHAIN_SERVICE = "Claude Code-credentials";
+const CLAUDE_API_USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
+const LIVE_USAGE_SOURCE_ID = "claude-code";
 
 const ClaudeCredentialsSchema = z.object({
   claudeAiOauth: z
@@ -69,20 +75,24 @@ const ClaudeUsageResponseSchema = z.object({
     .nullish(),
 });
 
-type ClaudeCredentials = z.infer<typeof ClaudeCredentialsSchema>;
 type ClaudeUsageResponse = z.infer<typeof ClaudeUsageResponseSchema>;
 type ClaudeLimit = z.infer<typeof ClaudeLimitSchema>;
 
 const SCOPED_WEEKLY_KIND = "weekly_scoped";
 
-interface ClaudeCredentialRecord {
-  oauth: { accessToken: string } & NonNullable<ClaudeCredentials["claudeAiOauth"]>;
+interface ClaudePlanUsageSession {
+  getPlanUsage?(): Promise<AgentPlanUsage>;
 }
 
 interface ClaudeQuotaProviderOptions {
   logger: Logger;
+  target?: ProviderUsageTarget;
+  liveSessions?: ClaudePlanUsageSession[];
+  state?: ClaudeUsageState;
+  now?: () => number;
+  env?: NodeJS.ProcessEnv;
   claudeHome?: string;
-  claudeKeychainReader?: () => Promise<unknown | null>;
+  claudeKeychainReader?: (service: string) => Promise<unknown | null>;
   platform?: typeof process.platform;
   fetch?: ProviderApiFetch;
 }
@@ -95,6 +105,56 @@ function buildClaudePlan(
   const label = subscriptionType.charAt(0).toUpperCase() + subscriptionType.slice(1);
   const tier = rateLimitTier?.split("_").pop();
   return tier ? `${label} ${tier}` : label;
+}
+
+function credentialFingerprint(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+export function claudeKeychainService(env: NodeJS.ProcessEnv): string {
+  const secureStorageDir = env.CLAUDE_SECURESTORAGE_CONFIG_DIR;
+  const configDir = env.CLAUDE_CONFIG_DIR;
+  const usesDefaultService =
+    secureStorageDir !== undefined ? secureStorageDir.length === 0 : configDir === undefined;
+  if (usesDefaultService) return CLAUDE_KEYCHAIN_SERVICE;
+  const servicePath = (secureStorageDir ?? configDir ?? "").normalize("NFC");
+  const suffix = createHash("sha256").update(servicePath).digest("hex").slice(0, 8);
+  return `${CLAUDE_KEYCHAIN_SERVICE}-${suffix}`;
+}
+
+function isTruthyEnvValue(value: string | undefined): boolean {
+  const normalized = value?.trim().toLowerCase();
+  return (
+    normalized !== undefined &&
+    normalized.length > 0 &&
+    normalized !== "0" &&
+    normalized !== "false" &&
+    normalized !== "no" &&
+    normalized !== "off"
+  );
+}
+
+function hasOfficialOAuthUsage(env: NodeJS.ProcessEnv): boolean {
+  const hasCustomEndpoint = Boolean(env.ANTHROPIC_BASE_URL?.trim());
+  const usesCloudTransport =
+    isTruthyEnvValue(env.CLAUDE_CODE_USE_BEDROCK) ||
+    isTruthyEnvValue(env.CLAUDE_CODE_USE_VERTEX) ||
+    isTruthyEnvValue(env.CLAUDE_CODE_USE_FOUNDRY);
+  if (hasCustomEndpoint || usesCloudTransport) return false;
+  if (env.CLAUDE_CODE_OAUTH_TOKEN?.trim()) return true;
+  return !(env.ANTHROPIC_API_KEY?.trim() || env.ANTHROPIC_AUTH_TOKEN?.trim());
+}
+
+function hasExplicitCredentialSource(
+  target: ProviderUsageTarget,
+  platform: typeof process.platform,
+): boolean {
+  const env = target.runtimeSettings?.env;
+  return Boolean(
+    env?.CLAUDE_CODE_OAUTH_TOKEN?.trim() ||
+    env?.CLAUDE_CONFIG_DIR?.trim() ||
+    (platform === "darwin" && env?.CLAUDE_SECURESTORAGE_CONFIG_DIR?.trim()),
+  );
 }
 
 /**
@@ -315,10 +375,11 @@ async function runSecurityCommand(args: string[]): Promise<string | null> {
 export async function readClaudeKeychainCredentials(
   run: ClaudeKeychainCommandRunner = runSecurityCommand,
   account: string = claudeKeychainAccount(),
+  service: string = CLAUDE_KEYCHAIN_SERVICE,
 ): Promise<unknown | null> {
   const lookups = [
-    ["find-generic-password", "-a", account, "-w", "-s", CLAUDE_KEYCHAIN_SERVICE],
-    ["find-generic-password", "-w", "-s", CLAUDE_KEYCHAIN_SERVICE],
+    ["find-generic-password", "-a", account, "-w", "-s", service],
+    ["find-generic-password", "-w", "-s", service],
   ];
 
   for (const args of lookups) {
@@ -337,39 +398,177 @@ export async function readClaudeKeychainCredentials(
 }
 
 export class ClaudeQuotaProvider implements ProviderUsageFetcher {
-  readonly providerId = "claude";
-  readonly displayName = "Claude";
+  readonly providerId: string;
+  readonly displayName: string;
 
   private readonly logger: Logger;
-  private readonly claudeHome: string;
-  private readonly readKeychainCredentials: () => Promise<unknown | null>;
+  private readonly target: ProviderUsageTarget;
+  private readonly liveSessions: ClaudePlanUsageSession[];
+  private readonly state: ClaudeUsageState;
+  private readonly now: () => number;
+  private readonly env: NodeJS.ProcessEnv;
+  private readonly configDir: string;
+  private readonly readKeychainCredentials: (service: string) => Promise<unknown | null>;
   private readonly platform: typeof process.platform;
   private readonly fetchApi: ProviderApiFetch;
 
   constructor(options: ClaudeQuotaProviderOptions) {
+    this.target =
+      options.target ??
+      ({
+        providerId: "claude",
+        displayName: "Claude",
+        baseProviderId: "claude",
+        iconProviderId: "claude",
+      } satisfies ProviderUsageTarget);
+    this.providerId = this.target.providerId;
+    this.displayName = this.target.displayName;
     this.logger = options.logger.child({ module: "claude-quota-provider" });
-    this.claudeHome =
-      options.claudeHome || process.env["CLAUDE_HOME"] || join(homedir(), ".claude");
-    this.readKeychainCredentials = options.claudeKeychainReader ?? readClaudeKeychainCredentials;
+    this.liveSessions = options.liveSessions ?? [];
+    this.state = options.state ?? new ClaudeUsageState();
+    this.now = options.now ?? Date.now;
+    this.env = {
+      ...(options.env ?? process.env),
+      ...this.target.runtimeSettings?.env,
+    };
+    this.configDir = options.claudeHome ?? this.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude");
+    this.readKeychainCredentials =
+      options.claudeKeychainReader ??
+      ((service) =>
+        readClaudeKeychainCredentials(runSecurityCommand, claudeKeychainAccount(), service));
     this.platform = options.platform ?? process.platform;
     this.fetchApi = options.fetch ?? fetch;
   }
 
   async fetchUsage(): Promise<ProviderUsage> {
-    const credentials = await this.readCredentials();
-    if (!credentials) {
-      return unavailableUsage(this);
+    const live = await this.readLiveUsage();
+    if (live.kind === "available") {
+      return live.usage;
+    }
+    if (live.kind === "not_applicable") {
+      return this.unavailable("Claude Code");
     }
 
-    const { oauth } = credentials;
-    const plan = buildClaudePlan(oauth.subscriptionType, oauth.rateLimitTier);
-    const resp = await this.callClaudeApi(oauth.accessToken);
-
-    if (resp === "NEEDS_AUTH") {
-      // Read-only on credentials; the Claude CLI owns refresh. See docs/providers.md.
-      return unavailableUsage(this);
+    const replacementCommand = this.target.runtimeSettings?.command?.mode === "replace";
+    if (replacementCommand && !hasExplicitCredentialSource(this.target, this.platform)) {
+      return this.cached({ status: "unavailable" });
+    }
+    if (!hasOfficialOAuthUsage(this.env)) {
+      return this.cached({ status: "unavailable" });
     }
 
+    const credential = await this.readCredential();
+    if (!credential) {
+      return this.cached({ status: "unavailable" });
+    }
+
+    const nowMs = this.now();
+    const retryAt = this.state.authRetryAt(credential);
+    if (retryAt !== null && nowMs < retryAt) {
+      return this.cached({
+        status: "unavailable",
+        preferredSourceId: credential.sourceId,
+        nextRetryAtMs: retryAt,
+      });
+    }
+
+    try {
+      const response = await this.callClaudeApi(credential.accessToken);
+      if (response.kind === "available") {
+        return this.storeHttpSuccess(credential, response.usage);
+      }
+
+      const changed = await this.state.waitForCredentialChange(credential, () =>
+        this.readCredential(),
+      );
+      this.logger.debug(
+        {
+          providerId: this.providerId,
+          sourceKind: credential.sourceKind,
+          httpStatus: response.status,
+          credentialsChanged: changed !== null,
+        },
+        "Claude usage authentication failed",
+      );
+      if (changed) {
+        this.state.credentialChanged(credential.sourceId);
+        this.state.credentialChanged(changed.sourceId);
+        const retry = await this.callClaudeApi(changed.accessToken);
+        if (retry.kind === "available") {
+          return this.storeHttpSuccess(changed, retry.usage);
+        }
+        const nextRetryAtMs = this.state.recordAuthFailure(changed, this.now());
+        return this.cached({
+          status: "unavailable",
+          preferredSourceId: changed.sourceId,
+          nextRetryAtMs,
+        });
+      }
+
+      const nextRetryAtMs = this.state.recordAuthFailure(credential, this.now());
+      return this.cached({
+        status: "unavailable",
+        preferredSourceId: credential.sourceId,
+        nextRetryAtMs,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.debug(
+        { providerId: this.providerId, sourceKind: credential.sourceKind },
+        "Claude usage request failed",
+      );
+      return this.cached({
+        status: "error",
+        error: message,
+        preferredSourceId: credential.sourceId,
+      });
+    }
+  }
+
+  private async readLiveUsage(): Promise<
+    | { kind: "available"; usage: ProviderUsage }
+    | { kind: "not_applicable" }
+    | { kind: "unavailable" }
+  > {
+    for (const session of this.liveSessions) {
+      if (!session.getPlanUsage) continue;
+      const usage = await session.getPlanUsage();
+      if (usage.kind === "unavailable") continue;
+      if (usage.kind === "not_applicable") return usage;
+      const providerUsage = this.providerUsageFromLive(usage);
+      return {
+        kind: "available",
+        usage: this.state.storeSuccess(LIVE_USAGE_SOURCE_ID, providerUsage, this.now()),
+      };
+    }
+    return { kind: "unavailable" };
+  }
+
+  private providerUsageFromLive(
+    usage: Extract<AgentPlanUsage, { kind: "available" }>,
+  ): ProviderUsage {
+    const providerUsage: ProviderUsage = {
+      providerId: this.providerId,
+      displayName: this.displayName,
+      status: "available",
+      planLabel: usage.planLabel,
+      sourceLabel: usage.sourceLabel,
+      fetchedAt: new Date(this.now()).toISOString(),
+      windows: usage.windows.map((window) => ({
+        ...window,
+        tone: toneFromUsedPct(window.usedPct),
+      })),
+      balances: usage.balances,
+      details: usage.details,
+      error: null,
+    };
+    if (this.target.iconProviderId !== this.providerId) {
+      providerUsage.iconProviderId = this.target.iconProviderId;
+    }
+    return providerUsage;
+  }
+
+  private storeHttpSuccess(credential: ClaudeCredential, resp: ClaudeUsageResponse): ProviderUsage {
     const scoped = reconcileScopedLimits(
       legacyScopedLimits(resp),
       this.scopedLimitsFromResponse(resp.limits),
@@ -393,16 +592,22 @@ export class ClaudeQuotaProvider implements ProviderUsageFetcher {
       });
     }
 
-    return {
+    const usage: ProviderUsage = {
       providerId: this.providerId,
       displayName: this.displayName,
       status: "available",
-      planLabel: plan,
+      planLabel: buildClaudePlan(credential.subscriptionType, credential.rateLimitTier),
+      sourceLabel: "Anthropic API",
+      fetchedAt: new Date(this.now()).toISOString(),
       windows,
       balances: [],
       details,
       error: null,
     };
+    if (this.target.iconProviderId !== this.providerId) {
+      usage.iconProviderId = this.target.iconProviderId;
+    }
+    return this.state.storeSuccess(credential.sourceId, usage, this.now());
   }
 
   /**
@@ -433,46 +638,114 @@ export class ClaudeQuotaProvider implements ProviderUsageFetcher {
     return parsed;
   }
 
-  private async readCredentials(): Promise<ClaudeCredentialRecord | null> {
-    const credPath = join(this.claudeHome, ".credentials.json");
-
-    if (existsSync(credPath)) {
-      try {
-        const creds = ClaudeCredentialsSchema.parse(
-          JSON.parse(await fs.readFile(credPath, "utf8")),
-        );
-        const oauth = creds.claudeAiOauth;
-        if (oauth?.accessToken) {
-          return { oauth: { ...oauth, accessToken: oauth.accessToken } };
-        }
-      } catch {
-        // Fall through to the macOS Keychain below.
-      }
+  private async readCredential(): Promise<ClaudeCredential | null> {
+    const envToken = this.env.CLAUDE_CODE_OAUTH_TOKEN?.trim();
+    if (envToken) {
+      const sourceScope = this.target.runtimeSettings?.env?.CLAUDE_CODE_OAUTH_TOKEN
+        ? `profile:${this.providerId}`
+        : "process";
+      return {
+        sourceId: `env:${sourceScope}`,
+        sourceKind: "env",
+        fingerprint: credentialFingerprint(envToken),
+        accessToken: envToken,
+      };
     }
 
     if (this.platform === "darwin") {
-      const creds = ClaudeCredentialsSchema.safeParse(await this.readKeychainCredentials());
-      const oauth = creds.success ? creds.data.claudeAiOauth : undefined;
-      if (oauth?.accessToken) {
-        return { oauth: { ...oauth, accessToken: oauth.accessToken } };
+      const service = claudeKeychainService(this.env);
+      let payload: unknown | null = null;
+      try {
+        payload = await this.readKeychainCredentials(service);
+      } catch {
+        payload = null;
       }
+      const credential = this.credentialFromPayload(
+        payload,
+        `keychain:${service}:${claudeKeychainAccount()}`,
+        "keychain",
+      );
+      if (credential) return credential;
     }
 
-    return null;
+    const credentialPath = join(this.configDir, ".credentials.json");
+    try {
+      const raw = await fs.readFile(credentialPath, "utf8");
+      return this.credentialFromPayload(
+        JSON.parse(raw),
+        `file:${credentialPath}`,
+        "file",
+        credentialPath,
+        raw,
+      );
+    } catch {
+      return null;
+    }
   }
 
-  private async callClaudeApi(token: string): Promise<ClaudeUsageResponse | "NEEDS_AUTH"> {
-    const res = await fetchProviderApi(this.fetchApi, "https://api.anthropic.com/api/oauth/usage", {
+  private credentialFromPayload(
+    payload: unknown,
+    sourceId: string,
+    sourceKind: ClaudeCredential["sourceKind"],
+    watchPath?: string,
+    raw?: string,
+  ): ClaudeCredential | null {
+    const parsed = ClaudeCredentialsSchema.safeParse(payload);
+    const oauth = parsed.success ? parsed.data.claudeAiOauth : undefined;
+    if (!oauth?.accessToken) return null;
+    return {
+      sourceId,
+      sourceKind,
+      fingerprint: credentialFingerprint(raw ?? JSON.stringify(payload)),
+      accessToken: oauth.accessToken,
+      subscriptionType: oauth.subscriptionType,
+      rateLimitTier: oauth.rateLimitTier,
+      ...(watchPath ? { watchPath } : {}),
+    };
+  }
+
+  private unavailable(sourceLabel?: string): ProviderUsage {
+    const usage = unavailableUsage(this);
+    if (sourceLabel) usage.sourceLabel = sourceLabel;
+    if (this.target.iconProviderId !== this.providerId) {
+      usage.iconProviderId = this.target.iconProviderId;
+    }
+    return usage;
+  }
+
+  private cached(options: {
+    status: "unavailable" | "error";
+    error?: string;
+    preferredSourceId?: string;
+    nextRetryAtMs?: number;
+  }): ProviderUsage {
+    return this.state.cachedUsage({
+      providerId: this.providerId,
+      displayName: this.displayName,
+      ...(this.target.iconProviderId !== this.providerId
+        ? { iconProviderId: this.target.iconProviderId }
+        : {}),
+      nowMs: this.now(),
+      ...options,
+    });
+  }
+
+  private async callClaudeApi(
+    token: string,
+  ): Promise<
+    { kind: "available"; usage: ClaudeUsageResponse } | { kind: "needs_auth"; status: 401 | 403 }
+  > {
+    const res = await fetchProviderApi(this.fetchApi, CLAUDE_API_USAGE_URL, {
       headers: {
         Authorization: `Bearer ${token}`,
         Accept: "application/json",
         "anthropic-beta": CLAUDE_OAUTH_BETA,
       },
     });
-    // Claude Code exclusively owns OAuth refresh and credential writes. This provider
-    // only reads the current access token so it cannot race token rotation in the CLI.
-    if (res.status === 401 || res.status === 403) return "NEEDS_AUTH";
+    if (res.status === 401 || res.status === 403) {
+      return { kind: "needs_auth", status: res.status };
+    }
     if (!res.ok) throw new Error(`Claude usage API returned ${res.status}`);
-    return ClaudeUsageResponseSchema.parse(await res.json());
+    return { kind: "available", usage: ClaudeUsageResponseSchema.parse(await res.json()) };
   }
 }

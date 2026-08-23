@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { claudeKeychainAccount, readClaudeKeychainCredentials } from "./claude.js";
+import {
+  claudeKeychainAccount,
+  claudeKeychainService,
+  readClaudeKeychainCredentials,
+} from "./claude.js";
 
 const SERVICE = "Claude Code-credentials";
 
@@ -43,6 +47,23 @@ describe("readClaudeKeychainCredentials", () => {
     ]);
   });
 
+  it("uses the requested hashed service for a non-default config directory", async () => {
+    const run = vi.fn(async () => JSON.stringify({ claudeAiOauth: { accessToken: "at_work" } }));
+    const service = claudeKeychainService({ CLAUDE_CONFIG_DIR: "/tmp/claude-work" });
+
+    await readClaudeKeychainCredentials(run, "claude-code-user", service);
+
+    expect(service).toMatch(/^Claude Code-credentials-[a-f0-9]{8}$/);
+    expect(run).toHaveBeenCalledWith([
+      "find-generic-password",
+      "-a",
+      "claude-code-user",
+      "-w",
+      "-s",
+      service,
+    ]);
+  });
+
   it("falls back to the account-less lookup when no item matches the account", async () => {
     const run = vi.fn(async (args: string[]) =>
       args.includes("-a") ? null : JSON.stringify({ claudeAiOauth: { accessToken: "at_legacy" } }),
@@ -83,5 +104,34 @@ describe("readClaudeKeychainCredentials", () => {
     expect(await readClaudeKeychainCredentials(run, "claude-code-user")).toEqual({
       claudeAiOauth: { accessToken: "at_legacy" },
     });
+  });
+});
+
+describe("claudeKeychainService", () => {
+  it("uses the legacy service for the default config", () => {
+    expect(claudeKeychainService({})).toBe(SERVICE);
+  });
+
+  it("uses the secure-storage directory before the config directory", () => {
+    const withBoth = claudeKeychainService({
+      CLAUDE_CONFIG_DIR: "/tmp/config",
+      CLAUDE_SECURESTORAGE_CONFIG_DIR: "/tmp/secure",
+    });
+    const secureOnly = claudeKeychainService({
+      CLAUDE_SECURESTORAGE_CONFIG_DIR: "/tmp/secure",
+    });
+
+    expect(withBoth).toBe(secureOnly);
+  });
+
+  it("normalizes the service path to NFC before hashing", () => {
+    const decomposed = claudeKeychainService({
+      CLAUDE_CONFIG_DIR: "/tmp/cafe\u0301",
+    });
+    const composed = claudeKeychainService({
+      CLAUDE_CONFIG_DIR: "/tmp/caf\u00e9",
+    });
+
+    expect(decomposed).toBe(composed);
   });
 });

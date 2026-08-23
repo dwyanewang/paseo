@@ -532,6 +532,7 @@ import {
   AGENT_PROVIDER_DEFINITIONS,
   buildProviderRegistry,
   createAllClients,
+  getProviderUsageTargets,
 } from "./provider-registry.js";
 import { FakeOmp } from "./providers/omp/test-utils/fake-omp.js";
 
@@ -598,6 +599,29 @@ test("built-in override applies env", () => {
         CLAUDE_CONFIG_DIR: "/tmp/claude",
       },
     },
+  });
+});
+
+test("exposes isolated Claude usage targets with effective runtime settings", () => {
+  const registry = buildProviderRegistry(logger, {
+    providerOverrides: {
+      "claude-work": {
+        extends: "claude",
+        label: "Claude (Work)",
+        env: { CLAUDE_CONFIG_DIR: "/tmp/claude-work" },
+      },
+    },
+  });
+
+  const work = getProviderUsageTargets(registry).find(
+    (target) => target.providerId === "claude-work",
+  );
+  expect(work).toMatchObject({
+    providerId: "claude-work",
+    displayName: "Claude (Work)",
+    baseProviderId: "claude",
+    iconProviderId: "claude",
+    runtimeSettings: { env: { CLAUDE_CONFIG_DIR: "/tmp/claude-work" } },
   });
 });
 

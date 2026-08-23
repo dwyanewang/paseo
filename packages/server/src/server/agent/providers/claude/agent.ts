@@ -102,6 +102,7 @@ import {
   type AgentPermissionRequestKind,
   type AgentPermissionResponse,
   type AgentPermissionUpdate,
+  type AgentPlanUsage,
   type AgentPersistenceHandle,
   type AgentProviderNotice,
   type AgentPromptInput,
@@ -126,6 +127,7 @@ import {
   type ProviderRefreshContext,
   type ResolveAgentDefaultModeInput,
 } from "../../agent-sdk-types.js";
+import { normalizeClaudeSdkPlanUsage } from "./plan-usage.js";
 import { importSessionFromPersistence } from "../../provider-session-import.js";
 import { runProviderRefreshActivity } from "../../provider-refresh-deadline.js";
 import {
@@ -142,6 +144,7 @@ import { execCommand } from "../../../../utils/spawn.js";
 import { composeSystemPromptParts } from "../../system-prompt.js";
 
 const fsPromises = promises;
+const CLAUDE_PLAN_USAGE_TIMEOUT_MS = 2_000;
 const CLAUDE_SETTING_SOURCES: NonNullable<ClaudeOptions["settingSources"]> = [
   "user",
   "project",
@@ -2640,6 +2643,23 @@ class ClaudeAgentSession implements AgentSession {
       metadata: { ...this.config },
     };
     return this.persistence;
+  }
+
+  async getPlanUsage(): Promise<AgentPlanUsage> {
+    const query = this.query;
+    if (!query) {
+      return { kind: "unavailable" };
+    }
+    try {
+      const usage = await withTimeout(
+        query.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET(),
+        CLAUDE_PLAN_USAGE_TIMEOUT_MS,
+        "Claude plan usage request timed out",
+      );
+      return normalizeClaudeSdkPlanUsage(usage);
+    } catch {
+      return { kind: "unavailable" };
+    }
   }
 
   async close(): Promise<void> {

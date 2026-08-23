@@ -3,6 +3,9 @@ import type {
   ProviderUsageFetcherFactoryOptions,
   ProviderUsageFetcherManifestEntry,
 } from "./provider.js";
+import type { AgentSession } from "../../server/agent/agent-sdk-types.js";
+import type { ProviderUsageTarget } from "../../server/agent/provider-registry.js";
+import { ClaudeUsageState } from "./providers/claude-state.js";
 import { ClaudeQuotaProvider } from "./providers/claude.js";
 import { CodexQuotaProvider } from "./providers/codex.js";
 import { CopilotQuotaProvider } from "./providers/copilot.js";
@@ -13,14 +16,6 @@ import { MiniMaxQuotaProvider } from "./providers/minimax.js";
 import { ZaiQuotaProvider } from "./providers/zai.js";
 
 export const PROVIDER_USAGE_FETCHERS: readonly ProviderUsageFetcherManifestEntry[] = [
-  {
-    providerId: "claude",
-    create: (options) =>
-      new ClaudeQuotaProvider({
-        logger: options.logger,
-        fetch: options.fetch,
-      }),
-  },
   {
     providerId: "codex",
     create: (options) =>
@@ -55,8 +50,43 @@ export const PROVIDER_USAGE_FETCHERS: readonly ProviderUsageFetcherManifestEntry
   },
 ];
 
+export interface CreateProviderUsageFetchersOptions extends ProviderUsageFetcherFactoryOptions {
+  targets?: ProviderUsageTarget[];
+  targetProviderId?: string;
+  getLiveSessions?: (providerId: string) => AgentSession[];
+  claudeState?: ClaudeUsageState;
+  now?: () => number;
+}
+
+const DEFAULT_CLAUDE_TARGET: ProviderUsageTarget = {
+  providerId: "claude",
+  displayName: "Claude",
+  baseProviderId: "claude",
+  iconProviderId: "claude",
+};
+
 export function createProviderUsageFetchers(
-  options: ProviderUsageFetcherFactoryOptions,
+  options: CreateProviderUsageFetchersOptions,
 ): ProviderUsageFetcher[] {
-  return PROVIDER_USAGE_FETCHERS.map((entry) => entry.create(options));
+  const staticFetchers = PROVIDER_USAGE_FETCHERS.filter(
+    (entry) => !options.targetProviderId || entry.providerId === options.targetProviderId,
+  ).map((entry) => entry.create(options));
+  const targets = (options.targets ?? [DEFAULT_CLAUDE_TARGET]).filter(
+    (target) =>
+      target.baseProviderId === "claude" &&
+      (!options.targetProviderId || target.providerId === options.targetProviderId),
+  );
+  const claudeState = options.claudeState ?? new ClaudeUsageState();
+  const claudeFetchers = targets.map(
+    (target) =>
+      new ClaudeQuotaProvider({
+        logger: options.logger,
+        fetch: options.fetch,
+        target,
+        liveSessions: options.getLiveSessions?.(target.providerId) ?? [],
+        state: claudeState,
+        now: options.now,
+      }),
+  );
+  return [...claudeFetchers, ...staticFetchers];
 }

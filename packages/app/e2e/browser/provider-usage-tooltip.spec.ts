@@ -51,6 +51,7 @@ test.describe("provider usage tooltip", () => {
 
       await page.getByTestId("context-window-meter").hover();
       await usageFixture.waitForRequestCount(1);
+      expect(usageFixture.requestOptions()).toEqual([{ agentId: session.agentId }]);
 
       await expect(page.getByText("Mock provider", { exact: true })).toBeVisible({
         timeout: 10_000,
@@ -65,32 +66,36 @@ test.describe("provider usage tooltip", () => {
 
   test("refreshes usage again each time the tooltip is shown", async ({ page }) => {
     test.setTimeout(180_000);
-    const usageFixture = await installProviderUsageFixture(page, [
-      {
-        fetchedAt: "2026-06-19T00:00:00.000Z",
-        providers: [
-          {
-            providerId: "mock",
-            displayName: "Mock provider",
-            status: "available",
-            planLabel: "Test plan",
-            windows: [{ id: "session", label: "Session", usedPct: 41 }],
-          },
-        ],
-      },
-      {
-        fetchedAt: "2026-06-19T00:01:00.000Z",
-        providers: [
-          {
-            providerId: "mock",
-            displayName: "Mock provider",
-            status: "available",
-            planLabel: "Test plan",
-            windows: [{ id: "session", label: "Session", usedPct: 64 }],
-          },
-        ],
-      },
-    ]);
+    const usageFixture = await installProviderUsageFixture(
+      page,
+      [
+        {
+          fetchedAt: "2026-06-19T00:00:00.000Z",
+          providers: [
+            {
+              providerId: "mock",
+              displayName: "Mock provider",
+              status: "available",
+              planLabel: "Test plan",
+              windows: [{ id: "session", label: "Session", usedPct: 41 }],
+            },
+          ],
+        },
+        {
+          fetchedAt: "2026-06-19T00:01:00.000Z",
+          providers: [
+            {
+              providerId: "mock",
+              displayName: "Mock provider",
+              status: "available",
+              planLabel: "Test plan",
+              windows: [{ id: "session", label: "Session", usedPct: 64 }],
+            },
+          ],
+        },
+      ],
+      { supportsSessionScope: false },
+    );
     const session = await openMockAgent(page);
     try {
       const meter = page.getByTestId("context-window-meter");

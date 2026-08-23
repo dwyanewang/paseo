@@ -143,6 +143,12 @@ To add plan usage for a provider, add `packages/server/src/services/quota-fetche
 
 Keep the protocol shape provider-agnostic. Do not add provider-specific renderers for new limit windows; labels and generic bars should carry the UI. API responses should be parsed and normalized with Zod inside the fetcher, while the protocol boundary stays strict so old/new client compatibility is explicit.
 
+Claude usage prefers data published by an existing Claude Code session. The HTTP fallback is
+read-only under the general credential rule below: wait for Claude Code to rotate a rejected
+credential and retry once after its fingerprint changes. Claude-derived profiles are separate usage
+and cache boundaries. A replacement command without an explicit OAuth token or config directory can
+use live session data only.
+
 Kimi Code usage follows the CLI-managed credential file at `KIMI_CODE_HOME` or `~/.kimi-code/credentials/kimi-code.json`; do not probe the legacy `~/.kimi` path as the primary source for current Kimi Code installs.
 
 Cursor usage reads the desktop `state.vscdb` token first, then `cursor-agent`'s `~/.config/cursor/auth.json`. Headless hosts only have the CLI file.

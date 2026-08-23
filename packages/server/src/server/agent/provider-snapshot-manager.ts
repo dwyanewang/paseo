@@ -29,8 +29,10 @@ import type {
 } from "./provider-launch-config.js";
 import {
   buildProviderRegistry,
+  getProviderUsageTargets,
   shutdownAgentClients,
   type ProviderDefinition,
+  type ProviderUsageTarget,
 } from "./provider-registry.js";
 import { BUILTIN_PROVIDER_IDS } from "@getpaseo/protocol/provider-manifest";
 import { applyMutableProviderConfigToOverrides } from "../daemon-config-store.js";
@@ -244,6 +246,10 @@ export class ProviderSnapshotManager {
   getSnapshot(cwd?: string): ProviderSnapshotEntry[] {
     const target = resolveProviderSnapshotTarget(cwd);
     return this.getSnapshotForTarget(target);
+  }
+
+  getUsageTargets(): ProviderUsageTarget[] {
+    return getProviderUsageTargets(this.providerRegistry);
   }
 
   async refreshSnapshotForCwd(options: ProviderSnapshotRefreshOptions): Promise<void> {

@@ -14,6 +14,7 @@ interface ContextWindowMeterProps {
   totalCostUsd?: number | null;
   showPercentage?: boolean;
   serverId?: string;
+  agentId?: string;
   /** The Paseo provider key, e.g. "claude", "gemini", "codex" */
   provider?: string | null;
   /** Reserve the meter footprint and show a loading ring while usage is pending. */
@@ -102,6 +103,7 @@ export function ContextWindowMeter({
   totalCostUsd,
   showPercentage = false,
   serverId,
+  agentId,
   provider,
   pending = false,
   glyphSize,
@@ -111,7 +113,7 @@ export function ContextWindowMeter({
   const [isTooltipOpen, setIsTooltipOpen] = useState(false);
   const { view: providerUsageView, refresh: refreshProviderUsage } = useProviderUsage(
     serverId ?? null,
-    { enabled: isTooltipOpen },
+    { enabled: isTooltipOpen, agentId },
   );
   const percentage =
     maxTokens !== null && usedTokens !== null ? getUsagePercentage(maxTokens, usedTokens) : null;

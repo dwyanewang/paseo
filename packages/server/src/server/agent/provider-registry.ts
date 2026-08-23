@@ -70,6 +70,7 @@ export { AGENT_PROVIDER_DEFINITIONS, getAgentProviderDefinition };
 
 export interface ProviderDefinition extends AgentProviderDefinition {
   enabled: boolean;
+  effectiveRuntimeSettings?: ProviderRuntimeSettings;
   /**
    * The id of another *registered* provider this one extends (e.g. a Z.AI
    * profile that extends "claude"). null for built-in providers and for
@@ -99,6 +100,14 @@ export interface ProviderDefinition extends AgentProviderDefinition {
     client?: AgentClient,
     context?: ProviderRefreshContext,
   ) => Promise<ProviderCatalog>;
+}
+
+export interface ProviderUsageTarget {
+  providerId: AgentProvider;
+  displayName: string;
+  baseProviderId: AgentProvider;
+  iconProviderId: AgentProvider;
+  runtimeSettings?: ProviderRuntimeSettings;
 }
 
 export interface BuildProviderRegistryOptions {
@@ -466,6 +475,7 @@ export function wrapSessionProvider(provider: AgentProvider, inner: AgentSession
     revertConversation: inner.revertConversation?.bind(inner),
     revertFiles: inner.revertFiles?.bind(inner),
     revertBoth: inner.revertBoth?.bind(inner),
+    getPlanUsage: inner.getPlanUsage?.bind(inner),
     tryHandleOutOfBand: inner.tryHandleOutOfBand?.bind(inner),
   };
 }
@@ -606,6 +616,7 @@ function createRegistryEntry(
   return {
     ...resolved.definition,
     enabled: resolved.enabled,
+    effectiveRuntimeSettings: resolved.runtimeSettings,
     derivedFromProviderId: resolved.derivedFromProviderId,
     optionsSchema: resolved.contract.optionsSchema,
     supportsExactMcpPreapproval: resolved.contract.supportsExactMcpPreapproval,
@@ -884,6 +895,24 @@ export function getProviderIds(
   registry: Record<AgentProvider, ProviderDefinition>,
 ): AgentProvider[] {
   return Object.keys(registry);
+}
+
+export function getProviderUsageTargets(
+  registry: Record<AgentProvider, ProviderDefinition>,
+): ProviderUsageTarget[] {
+  return Object.entries(registry).flatMap(([providerId, definition]) => {
+    if (!definition.enabled) return [];
+    const baseProviderId = definition.derivedFromProviderId ?? providerId;
+    return [
+      {
+        providerId,
+        displayName: definition.label,
+        baseProviderId,
+        iconProviderId: baseProviderId,
+        runtimeSettings: definition.effectiveRuntimeSettings,
+      },
+    ];
+  });
 }
 
 // Deprecated: Use buildProviderRegistry instead

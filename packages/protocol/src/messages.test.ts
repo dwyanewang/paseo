@@ -196,6 +196,20 @@ describe("provider usage list message contract", () => {
     });
   });
 
+  test("accepts an optional agent usage scope", () => {
+    const parsed = SessionInboundMessageSchema.parse({
+      type: "provider.usage.list.request",
+      agentId: "agent-1",
+      requestId: "usage-agent-1",
+    });
+
+    expect(parsed).toEqual({
+      type: "provider.usage.list.request",
+      agentId: "agent-1",
+      requestId: "usage-agent-1",
+    });
+  });
+
   test("parses the provider usage force-refresh feature gate", () => {
     const parsed = parseServerInfoStatusPayload({
       status: "server_info",
@@ -203,6 +217,7 @@ describe("provider usage list message contract", () => {
       features: {
         providerUsageList: true,
         providerUsageForceRefresh: true,
+        providerUsageSessionScope: true,
       },
     });
 
@@ -210,6 +225,7 @@ describe("provider usage list message contract", () => {
       throw new Error("Expected server info payload to parse");
     }
     expect(parsed.features?.providerUsageForceRefresh).toBe(true);
+    expect(parsed.features?.providerUsageSessionScope).toBe(true);
   });
 
   test("accepts new providers and new usage windows as normalized data", () => {
@@ -221,6 +237,7 @@ describe("provider usage list message contract", () => {
         providers: [
           {
             providerId: "glm",
+            iconProviderId: "claude",
             displayName: "GLM coding plan",
             status: "available",
             planLabel: "GLM coding plan",
@@ -255,6 +272,7 @@ describe("provider usage list message contract", () => {
       throw new Error("Expected provider.usage.list.response");
     }
     expect(parsed.payload.providers[0]?.providerId).toBe("glm");
+    expect(parsed.payload.providers[0]?.iconProviderId).toBe("claude");
     expect(parsed.payload.providers[0]?.windows[0]?.label).toBe("Biweekly");
   });
 

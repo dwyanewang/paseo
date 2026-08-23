@@ -336,6 +336,25 @@ describe("ProviderCatalogSession", () => {
     expect(listUsage).toHaveBeenCalledWith({ forceRefresh: undefined });
   });
 
+  it("forwards an agent usage scope to the usage service", async () => {
+    const listUsage = vi.fn(async () => ({
+      fetchedAt: "2026-08-16T00:00:00.000Z",
+      providers: [],
+    }));
+    const { subsystem } = makeSubsystem({ usage: { listUsage } });
+
+    await subsystem.handleProviderUsageListRequest({
+      type: "provider.usage.list.request",
+      agentId: "agent-1",
+      requestId: "u-agent",
+    });
+
+    expect(listUsage).toHaveBeenCalledWith({
+      forceRefresh: undefined,
+      agentId: "agent-1",
+    });
+  });
+
   it("surfaces a feature-list failure inline, not as an rpc_error", async () => {
     const { subsystem, emitted } = makeSubsystem({
       host: {

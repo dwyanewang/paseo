@@ -9,11 +9,12 @@ interface ProviderUsageFixturePayload {
 
 interface ProviderUsageFixtureOptions {
   supportsForceRefresh?: boolean;
+  supportsSessionScope?: boolean;
 }
 
 export interface ProviderUsageFixture {
   requestCount(): number;
-  requestOptions(): Array<{ forceRefresh?: boolean }>;
+  requestOptions(): Array<{ forceRefresh?: boolean; agentId?: string }>;
   waitForRequestCount(count: number): Promise<void>;
 }
 
@@ -46,6 +47,7 @@ function getSessionMessage(message: WebSocketMessage): Record<string, unknown> |
 function withProviderUsageFeature(
   message: WebSocketMessage,
   supportsForceRefresh: boolean,
+  supportsSessionScope: boolean,
 ): string | null {
   const envelope = parseJson(message);
   if (!envelope || typeof envelope !== "object") {
@@ -78,6 +80,7 @@ function withProviderUsageFeature(
             : {}),
           providerUsageList: true,
           providerUsageForceRefresh: supportsForceRefresh ? true : undefined,
+          providerUsageSessionScope: supportsSessionScope ? true : undefined,
         },
       },
     },
@@ -90,8 +93,9 @@ export async function installProviderUsageFixture(
   options: ProviderUsageFixtureOptions = {},
 ): Promise<ProviderUsageFixture> {
   const supportsForceRefresh = options.supportsForceRefresh ?? true;
+  const supportsSessionScope = options.supportsSessionScope ?? true;
   let requests = 0;
-  const requestOptions: Array<{ forceRefresh?: boolean }> = [];
+  const requestOptions: Array<{ forceRefresh?: boolean; agentId?: string }> = [];
   const waiters: Array<{ count: number; resolve: () => void }> = [];
 
   function notifyWaiters() {
@@ -122,13 +126,20 @@ export async function installProviderUsageFixture(
         requests += 1;
         const requestId = sessionMessage.requestId;
         const forceRefresh = sessionMessage.forceRefresh;
+        const agentId = sessionMessage.agentId;
         if (typeof requestId !== "string") {
           throw new Error("provider.usage.list.request missing requestId");
         }
         if (forceRefresh !== undefined && typeof forceRefresh !== "boolean") {
           throw new Error("provider.usage.list.request has invalid forceRefresh");
         }
-        requestOptions.push(forceRefresh === undefined ? {} : { forceRefresh });
+        if (agentId !== undefined && typeof agentId !== "string") {
+          throw new Error("provider.usage.list.request has invalid agentId");
+        }
+        requestOptions.push({
+          ...(forceRefresh === undefined ? {} : { forceRefresh }),
+          ...(agentId === undefined ? {} : { agentId }),
+        });
         const payload = payloadForRequest();
         notifyWaiters();
         ws.send(
@@ -152,7 +163,7 @@ export async function installProviderUsageFixture(
     server.onMessage((message) => {
       const serverInfo =
         typeof message === "string"
-          ? withProviderUsageFeature(message, supportsForceRefresh)
+          ? withProviderUsageFeature(message, supportsForceRefresh, supportsSessionScope)
           : null;
       ws.send(serverInfo ?? message);
     });

@@ -739,6 +739,18 @@ export class VoiceAssistantWebSocketServer {
 
     this.providerUsageService = new ProviderUsageService({
       logger: this.logger,
+      getTargets: () => this.providerSnapshotManager.getUsageTargets(),
+      getAgentScope: (agentId) => {
+        const agent = this.agentManager.getAgent(agentId);
+        if (!agent || !agent.session) return null;
+        return { providerId: agent.provider, session: agent.session };
+      },
+      getLiveSessions: (providerId) =>
+        this.agentManager
+          .listAgents()
+          .filter((agent) => agent.provider === providerId && agent.session)
+          .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime())
+          .flatMap((agent) => (agent.session ? [agent.session] : [])),
     });
 
     this.wss = this.createWebSocketServer(server, wsConfig, auth);
@@ -1712,6 +1724,8 @@ export class VoiceAssistantWebSocketServer {
         providerUsageList: true,
         // COMPAT(providerUsageForceRefresh): added in v0.4.0, remove gate after 2027-02-19.
         providerUsageForceRefresh: true,
+        // COMPAT(providerUsageSessionScope): added in v0.5.0, remove gate after 2027-02-22.
+        providerUsageSessionScope: true,
         // COMPAT(agentDetach): added in v0.1.98, remove gate after 2026-12-19 once daemon floor >= v0.1.98.
         agentDetach: true,
         // COMPAT(agentThinkingUpdate): added in v0.2.4, remove gate after 2027-01-28.

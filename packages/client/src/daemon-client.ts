@@ -4804,12 +4804,14 @@ export class DaemonClient {
   async listProviderUsage(options?: {
     requestId?: string;
     forceRefresh?: boolean;
+    agentId?: string;
   }): Promise<ProviderUsageListPayload> {
     return this.sendNamespacedCorrelatedSessionRequest({
       requestId: options?.requestId,
       message: {
         type: "provider.usage.list.request",
         forceRefresh: options?.forceRefresh,
+        agentId: options?.agentId,
       },
     });
   }

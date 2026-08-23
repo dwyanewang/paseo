@@ -5905,6 +5905,7 @@ test("sends provider.usage.list.request and resolves provider.usage.list.respons
   const forcedUsagePromise = client.listProviderUsage({
     requestId: "usage-2",
     forceRefresh: true,
+    agentId: "agent-1",
   });
 
   expect(JSON.parse(assertStr(mock.sent[1]))).toEqual({
@@ -5912,6 +5913,7 @@ test("sends provider.usage.list.request and resolves provider.usage.list.respons
     message: {
       type: "provider.usage.list.request",
       forceRefresh: true,
+      agentId: "agent-1",
       requestId: "usage-2",
     },
   });

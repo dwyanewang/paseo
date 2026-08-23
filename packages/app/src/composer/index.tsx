@@ -270,6 +270,7 @@ function renderContextWindowMeter(
   totalCostUsd: number | null,
   showPercentage: boolean,
   serverId: string,
+  agentId: string,
   provider: string | null,
   pending: boolean,
   glyphSize: number,
@@ -285,6 +286,7 @@ function renderContextWindowMeter(
       totalCostUsd={totalCostUsd}
       showPercentage={showPercentage}
       serverId={serverId}
+      agentId={agentId}
       provider={provider}
       pending={pending}
       glyphSize={glyphSize}
@@ -1960,6 +1962,7 @@ function ComposerContentImpl({
         agentState.totalCostUsd,
         false,
         serverId,
+        agentId,
         agentState.provider,
         contextWindowPending,
         contextWindowMeterGlyphSize,
@@ -1968,6 +1971,7 @@ function ComposerContentImpl({
       contextWindowMaxTokens,
       contextWindowUsedTokens,
       agentState.totalCostUsd,
+      agentId,
       serverId,
       agentState.provider,
       contextWindowPending,

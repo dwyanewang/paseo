@@ -184,4 +184,84 @@ test.describe("provider usage settings", () => {
     await expect(card.getByText("Codex", { exact: true })).toBeVisible();
     await expect(card.getByText("71%")).toBeVisible();
   });
+
+  test("renders Claude profiles as separate usage cards", async ({ page }) => {
+    test.setTimeout(120_000);
+    const serverId = getServerId();
+    await installProviderUsageFixture(page, [
+      {
+        fetchedAt: "2026-06-19T00:00:00.000Z",
+        providers: [
+          {
+            providerId: "claude-work",
+            iconProviderId: "claude",
+            displayName: "Claude (Work)",
+            status: "available",
+            planLabel: "Team",
+            sourceLabel: "Claude Code",
+            windows: [{ id: "five_hour", label: "Session", usedPct: 18 }],
+          },
+          {
+            providerId: "claude-personal",
+            iconProviderId: "claude",
+            displayName: "Claude (Personal)",
+            status: "available",
+            planLabel: "Max",
+            sourceLabel: "Anthropic API (cached)",
+            windows: [{ id: "five_hour", label: "Session", usedPct: 43 }],
+          },
+        ],
+      },
+    ]);
+
+    await gotoAppShell(page);
+    await openSettings(page);
+    await openSettingsHostSection(page, serverId, "usage");
+
+    await expect(page.getByText("Claude (Work)", { exact: true })).toBeVisible();
+    await expect(page.getByText("Claude (Personal)", { exact: true })).toBeVisible();
+    await expect(page.getByText("18%")).toBeVisible();
+    await expect(page.getByText("43%")).toBeVisible();
+    await expect(page.getByText(/Anthropic API \(cached\)/)).toBeVisible();
+  });
+
+  test("refetches when the provider next-refresh deadline arrives", async ({ page }) => {
+    test.setTimeout(120_000);
+    const serverId = getServerId();
+    const usageFixture = await installProviderUsageFixture(page, [
+      {
+        fetchedAt: new Date().toISOString(),
+        providers: [
+          {
+            providerId: "claude",
+            displayName: "Claude",
+            status: "unavailable",
+            planLabel: null,
+            nextRefreshAt: new Date(Date.now() + 1_500).toISOString(),
+            windows: [],
+          },
+        ],
+      },
+      {
+        fetchedAt: new Date().toISOString(),
+        providers: [
+          {
+            providerId: "claude",
+            displayName: "Claude",
+            status: "available",
+            planLabel: "Max",
+            sourceLabel: "Claude Code",
+            windows: [{ id: "five_hour", label: "Session", usedPct: 52 }],
+          },
+        ],
+      },
+    ]);
+
+    await gotoAppShell(page);
+    await openSettings(page);
+    await openSettingsHostSection(page, serverId, "usage");
+    await usageFixture.waitForRequestCount(2);
+
+    await expect(page.getByText("52%")).toBeVisible({ timeout: 10_000 });
+  });
 });

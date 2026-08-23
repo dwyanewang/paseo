@@ -300,6 +300,71 @@ describe("ProviderUsageService", () => {
     expect(calls).toBe(1);
   });
 
+  it("isolates global and agent-scoped caches", async () => {
+    let calls = 0;
+    const service = new ProviderUsageService({
+      logger: createLogger(),
+      fetchers: [
+        {
+          providerId: "claude",
+          displayName: "Claude",
+          fetchUsage: async () => {
+            calls += 1;
+            return {
+              providerId: "claude",
+              displayName: "Claude",
+              status: "available",
+              planLabel: "Max",
+              windows: [{ id: "session", label: "Session", usedPct: calls }],
+            };
+          },
+        },
+      ],
+    });
+
+    await service.listUsage();
+    await service.listUsage({ agentId: "agent-1" });
+    await service.listUsage();
+    await service.listUsage({ agentId: "agent-1" });
+
+    expect(calls).toBe(2);
+  });
+
+  it("does not cache beyond a provider nextRefreshAt deadline", async () => {
+    let now = Date.parse("2026-06-19T00:00:00.000Z");
+    let calls = 0;
+    const service = new ProviderUsageService({
+      logger: createLogger(),
+      now: () => now,
+      cacheTtlMs: 60_000,
+      fetchers: [
+        {
+          providerId: "claude",
+          displayName: "Claude",
+          fetchUsage: async () => {
+            calls += 1;
+            return {
+              providerId: "claude",
+              displayName: "Claude",
+              status: "available",
+              planLabel: "Max",
+              nextRefreshAt: new Date(now + 5_000).toISOString(),
+              windows: [],
+            };
+          },
+        },
+      ],
+    });
+
+    await service.listUsage();
+    now += 4_000;
+    await service.listUsage();
+    now += 2_000;
+    await service.listUsage();
+
+    expect(calls).toBe(2);
+  });
+
   it("isolates one provider error without dropping other providers", async () => {
     const service = new ProviderUsageService({
       logger: createLogger(),
@@ -379,6 +444,15 @@ describe("real provider usage fetchers", () => {
       "CODEX_HOME",
       "MINIMAX_API_KEY",
       "MINIMAX_BASE_URL",
+      "ANTHROPIC_API_KEY",
+      "ANTHROPIC_AUTH_TOKEN",
+      "ANTHROPIC_BASE_URL",
+      "CLAUDE_CODE_OAUTH_TOKEN",
+      "CLAUDE_CODE_USE_BEDROCK",
+      "CLAUDE_CODE_USE_VERTEX",
+      "CLAUDE_CODE_USE_FOUNDRY",
+      "CLAUDE_CONFIG_DIR",
+      "CLAUDE_SECURESTORAGE_CONFIG_DIR",
     ]) {
       delete process.env[key];
     }

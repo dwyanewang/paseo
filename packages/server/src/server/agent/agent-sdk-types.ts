@@ -633,6 +633,42 @@ export interface AgentPermissionResult {
   followUpPrompt?: AgentPromptInput;
 }
 
+export interface AgentPlanUsageWindow {
+  id: string;
+  label: string;
+  usedPct: number | null;
+  remainingPct: number | null;
+  resetsAt: string | null;
+}
+
+export interface AgentPlanUsageBalance {
+  id: string;
+  label: string;
+  used: number | null;
+  remaining: number | null;
+  limit: number | null;
+  unit: "usd" | "credits" | "requests" | "tokens";
+  resetsAt: string | null;
+}
+
+export interface AgentPlanUsageDetail {
+  id: string;
+  label: string;
+  value: string;
+}
+
+export type AgentPlanUsage =
+  | {
+      kind: "available";
+      planLabel: string | null;
+      sourceLabel: string;
+      windows: AgentPlanUsageWindow[];
+      balances: AgentPlanUsageBalance[];
+      details: AgentPlanUsageDetail[];
+    }
+  | { kind: "not_applicable" }
+  | { kind: "unavailable" };
+
 export interface AgentSession {
   readonly provider: AgentProvider;
   readonly id: string | null;
@@ -668,6 +704,7 @@ export interface AgentSession {
   revertConversation?(input: { messageId: string }): Promise<void>;
   revertFiles?(input: { messageId: string }): Promise<void>;
   revertBoth?(input: { messageId: string }): Promise<void>;
+  getPlanUsage?(): Promise<AgentPlanUsage>;
   /**
    * Out-of-band prompt handler. When non-null, the manager runs the returned
    * handler instead of allocating a turn. The handler emits stream events

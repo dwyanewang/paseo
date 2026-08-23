@@ -1,8 +1,16 @@
 import type { Logger } from "pino";
 import type { ProviderUsage } from "../../server/messages.js";
+import type { AgentSession } from "../../server/agent/agent-sdk-types.js";
+import type { ProviderUsageTarget } from "../../server/agent/provider-registry.js";
 import { createProviderUsageFetchers } from "./manifest.js";
 import type { ProviderApiFetch, ProviderUsageFetcher } from "./provider.js";
+import { ClaudeUsageState } from "./providers/claude-state.js";
 import { unavailableUsage } from "./usage.js";
+
+interface ProviderUsageAgentScope {
+  providerId: string;
+  session: AgentSession;
+}
 
 export interface ProviderUsageServiceOptions {
   logger: Logger;
@@ -10,6 +18,9 @@ export interface ProviderUsageServiceOptions {
   fetch?: ProviderApiFetch;
   cacheTtlMs?: number;
   now?: () => number;
+  getTargets?: () => ProviderUsageTarget[];
+  getAgentScope?: (agentId: string) => ProviderUsageAgentScope | null;
+  getLiveSessions?: (providerId: string) => AgentSession[];
 }
 
 export interface ProviderUsageListResult {
@@ -21,53 +32,63 @@ const DEFAULT_PROVIDER_USAGE_CACHE_TTL_MS = 5 * 60 * 1000;
 
 export class ProviderUsageService {
   private readonly logger: Logger;
-  private readonly fetchers: ProviderUsageFetcher[];
+  private readonly configuredFetchers: ProviderUsageFetcher[] | null;
+  private readonly fetchApi: ProviderApiFetch | undefined;
   private readonly cacheTtlMs: number;
   private readonly now: () => number;
-  private cached: { fetchedAtMs: number; result: ProviderUsageListResult } | null = null;
-  private inFlight: Promise<ProviderUsageListResult> | null = null;
+  private readonly getTargets: () => ProviderUsageTarget[];
+  private readonly getAgentScope: (agentId: string) => ProviderUsageAgentScope | null;
+  private readonly getLiveSessions: (providerId: string) => AgentSession[];
+  private readonly claudeState = new ClaudeUsageState();
+  private readonly cached = new Map<
+    string,
+    { expiresAtMs: number; result: ProviderUsageListResult }
+  >();
+  private readonly inFlight = new Map<string, Promise<ProviderUsageListResult>>();
 
   constructor(options: ProviderUsageServiceOptions) {
     this.logger = options.logger.child({ module: "provider-usage-service" });
-    this.fetchers =
-      options.fetchers ??
-      createProviderUsageFetchers({
-        logger: this.logger,
-        fetch: options.fetch,
-      });
+    this.configuredFetchers = options.fetchers ?? null;
+    this.fetchApi = options.fetch;
     this.cacheTtlMs = options.cacheTtlMs ?? DEFAULT_PROVIDER_USAGE_CACHE_TTL_MS;
     this.now = options.now ?? Date.now;
+    this.getTargets = options.getTargets ?? (() => []);
+    this.getAgentScope = options.getAgentScope ?? (() => null);
+    this.getLiveSessions = options.getLiveSessions ?? (() => []);
   }
 
-  async listUsage(options?: { forceRefresh?: boolean }): Promise<ProviderUsageListResult> {
+  async listUsage(options?: {
+    forceRefresh?: boolean;
+    agentId?: string;
+  }): Promise<ProviderUsageListResult> {
+    const scopeKey = options?.agentId ? `agent:${options.agentId}` : "global";
     const nowMs = this.now();
-    if (
-      !options?.forceRefresh &&
-      this.cached &&
-      nowMs - this.cached.fetchedAtMs < this.cacheTtlMs
-    ) {
-      return this.cached.result;
+    const cached = this.cached.get(scopeKey);
+    if (!options?.forceRefresh && cached && nowMs < cached.expiresAtMs) {
+      return cached.result;
     }
 
-    if (this.inFlight) {
-      return this.inFlight;
+    const inFlight = this.inFlight.get(scopeKey);
+    if (inFlight) {
+      return inFlight;
     }
 
-    const request = this.fetchFreshUsage(nowMs);
-    this.inFlight = request;
+    const request = this.fetchFreshUsage(nowMs, options?.agentId);
+    this.inFlight.set(scopeKey, request);
     try {
       return await request;
     } finally {
-      if (this.inFlight === request) {
-        this.inFlight = null;
+      if (this.inFlight.get(scopeKey) === request) {
+        this.inFlight.delete(scopeKey);
       }
     }
   }
 
-  private async fetchFreshUsage(nowMs: number): Promise<ProviderUsageListResult> {
-    const settled = await Promise.allSettled(this.fetchers.map((fetcher) => fetcher.fetchUsage()));
+  private async fetchFreshUsage(nowMs: number, agentId?: string): Promise<ProviderUsageListResult> {
+    const fetchers = this.resolveFetchers(agentId);
+    const settled = await Promise.allSettled(fetchers.map((fetcher) => fetcher.fetchUsage()));
     const providers = settled.map((result, index) => {
-      const fetcher = this.fetchers[index];
+      const fetcher = fetchers[index];
       if (result.status === "fulfilled") {
         return result.value;
       }
@@ -83,7 +104,32 @@ export class ProviderUsageService {
     });
 
     const result = { fetchedAt: new Date(nowMs).toISOString(), providers };
-    this.cached = { fetchedAtMs: nowMs, result };
+    const providerDeadlines = providers.flatMap((provider) => {
+      const deadline = provider.nextRefreshAt ? Date.parse(provider.nextRefreshAt) : Number.NaN;
+      return Number.isFinite(deadline) ? [deadline] : [];
+    });
+    const expiresAtMs = Math.min(nowMs + this.cacheTtlMs, ...providerDeadlines);
+    const scopeKey = agentId ? `agent:${agentId}` : "global";
+    this.cached.set(scopeKey, { expiresAtMs, result });
     return result;
+  }
+
+  private resolveFetchers(agentId?: string): ProviderUsageFetcher[] {
+    if (this.configuredFetchers) return this.configuredFetchers;
+
+    const agentScope = agentId ? this.getAgentScope(agentId) : null;
+    if (agentId && !agentScope) return [];
+    return createProviderUsageFetchers({
+      logger: this.logger,
+      fetch: this.fetchApi,
+      targets: this.getTargets(),
+      targetProviderId: agentScope?.providerId,
+      getLiveSessions: (providerId) =>
+        agentScope && providerId === agentScope.providerId
+          ? [agentScope.session]
+          : this.getLiveSessions(providerId),
+      claudeState: this.claudeState,
+      now: this.now,
+    });
   }
 }

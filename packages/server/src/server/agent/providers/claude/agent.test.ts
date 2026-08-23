@@ -612,6 +612,13 @@ describe("ClaudeAgentSession features", () => {
       applyFlagSettings: vi.fn(async () => undefined),
       setModel: vi.fn(async () => undefined),
       getContextUsage: vi.fn(async () => undefined),
+      usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: vi.fn(async () => ({
+        subscription_type: "max",
+        rate_limits_available: true,
+        rate_limits: {
+          five_hour: { utilization: 25, resets_at: "2026-08-22T12:00:00.000Z" },
+        },
+      })),
       [Symbol.asyncIterator](): AsyncIterator<SDKMessage, void> {
         return {
           next: async () => {
@@ -628,6 +635,36 @@ describe("ClaudeAgentSession features", () => {
     });
     return { queryFactory, queryMock, launches };
   }
+
+  test("reads plan usage only from an existing SDK query", async () => {
+    const { queryFactory, queryMock } = createQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({ provider: "claude", cwd: process.cwd() });
+
+    await expect(session.getPlanUsage?.()).resolves.toEqual({ kind: "unavailable" });
+    expect(queryFactory).not.toHaveBeenCalled();
+
+    await (
+      session as unknown as {
+        ensureQuery(): Promise<unknown>;
+      }
+    ).ensureQuery();
+
+    await expect(session.getPlanUsage?.()).resolves.toMatchObject({
+      kind: "available",
+      planLabel: "Max",
+      sourceLabel: "Claude Code",
+      windows: [expect.objectContaining({ id: "five_hour", usedPct: 25 })],
+    });
+    expect(
+      queryMock.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET,
+    ).toHaveBeenCalledTimes(1);
+    await session.close();
+  });
 
   test("passes exact configured Fable 5 IDs through to Claude Code", async () => {
     const { queryFactory, queryMock } = createQueryMock();
