@@ -1,21 +1,108 @@
-import type { ForgeSearchKind } from "@getpaseo/protocol/messages";
+import type { ZodType } from "zod";
 
-export type ForgeSearchRequestKind = ForgeSearchKind | "github-issue" | "github-pr" | "pr";
-
-export function normalizeForgeSearchKinds(
-  kinds: readonly ForgeSearchRequestKind[] | undefined,
-): ForgeSearchKind[] {
-  if (!kinds) return ["issue", "change_request"];
-
-  return kinds.map((kind) => {
-    // COMPAT(githubSearchKind): legacy GitHub kind aliases retained when
-    // neutral forge search shipped in v0.2.0-beta.1. Remove after 2027-01-17
-    // together with the legacy github_search_request RPC.
-    if (kind === "github-issue") return "issue";
-    if (kind === "github-pr" || kind === "pr") return "change_request";
-    return kind;
-  });
+export interface PluginForgeSignInCommand {
+  cli: string;
+  command: string;
+  hostnameFlag?: string;
 }
+
+export interface PluginForgeDefinition {
+  id: string;
+  displayName: string;
+  changeRequestAbbrev: string;
+  changeRequestNoun: string;
+  changeRequestNumberPrefix: string;
+  issueNumberPrefix: string;
+  signIn: PluginForgeSignInCommand | null;
+  cloudHosts?: readonly string[];
+}
+
+export type PluginForgeMergeMethod = "merge" | "squash" | "rebase";
+
+export interface PluginForgeMergeCapability {
+  directMergeReady: boolean;
+  canEnableAutoMerge: boolean;
+  autoMergeEnabled: boolean;
+  canDisableAutoMerge: boolean;
+  mergeBlockedByQueue: boolean;
+  allowedMethods: PluginForgeMergeMethod[];
+  preferredMethod: PluginForgeMergeMethod | null;
+}
+
+export type PluginForgeSpecificEnvelope = { forge: string } & Record<string, unknown>;
+
+export interface PluginForgeFactsRegistration<
+  TFacts extends PluginForgeSpecificEnvelope = PluginForgeSpecificEnvelope,
+> {
+  family: TFacts["forge"];
+  schema: ZodType<TFacts>;
+  deriveMergeCapability?(facts: TFacts): PluginForgeMergeCapability;
+}
+
+export interface PluginForgeFactsContribution {
+  family: string;
+  schema: ZodType;
+  deriveMergeCapability?: (facts: unknown) => PluginForgeMergeCapability;
+}
+
+export interface PluginForgeUrlGrammar {
+  treeInfix: string;
+  blobInfix: string;
+  lineAnchorStyle: "github" | "gitlab";
+  changeRequestChecksSuffix?: string;
+  referencePaths?: readonly PluginForgeReferencePath[];
+}
+
+export interface PluginForgeReferencePath {
+  kind: "change_request" | "issue";
+  infix: string;
+}
+
+export interface PluginForgeSvgPathIcon {
+  kind: "svg-path";
+  viewBox: readonly [minX: number, minY: number, width: number, height: number];
+  path: string;
+}
+
+export interface PluginForgeClientView {
+  icon: PluginForgeSvgPathIcon;
+  brandColor?: { light: string; dark: string } | null;
+}
+
+export interface PluginForgeClientProviderContribution {
+  definition: PluginForgeDefinition;
+  facts?: PluginForgeFactsContribution;
+  urlGrammar?: PluginForgeUrlGrammar;
+  view?: PluginForgeClientView;
+}
+
+export function defineForgeFacts<TFacts extends PluginForgeSpecificEnvelope>(
+  registration: PluginForgeFactsRegistration<TFacts>,
+): PluginForgeFactsContribution {
+  return {
+    family: registration.family,
+    schema: registration.schema,
+    ...(registration.deriveMergeCapability
+      ? {
+          // The host parses facts through `schema` before calling this callback.
+          // Parsing here as well would execute Zod transforms twice.
+          deriveMergeCapability: (facts: unknown) =>
+            registration.deriveMergeCapability?.(facts as TFacts) as PluginForgeMergeCapability,
+        }
+      : {}),
+  };
+}
+
+export function defineForgeClientProvider<Definition extends PluginForgeClientProviderContribution>(
+  definition: Definition,
+): Definition {
+  return definition;
+}
+
+export type ForgeSearchKind = "issue" | "change_request";
+// COMPAT(githubSearchKind): added in v0.1.106, remove with the legacy
+// github_search_request RPC after 2026-12-28.
+export type ForgeSearchRequestKind = ForgeSearchKind | "github-issue" | "github-pr" | "pr";
 
 export interface PullRequestSummary {
   number: number;
@@ -30,24 +117,22 @@ export interface PullRequestSummary {
   updatedAt: string;
 }
 
+export interface PullRequestCheckoutRef {
+  remoteName?: string;
+  remoteUrl?: string;
+  remoteRef: string;
+}
+
 export interface PullRequestCheckoutTarget {
   number: number;
   baseRefName: string;
   headRefName: string;
   checkoutRefs?: PullRequestCheckoutRef[];
   headOwnerLogin: string | null;
-  /** Adapter-selected push URL when transport choice must follow the checkout remote. */
   preferredPushUrl?: string;
   headRepositorySshUrl: string | null;
   headRepositoryUrl: string | null;
   isCrossRepository: boolean;
-}
-
-export interface PullRequestCheckoutRef {
-  remoteName?: string;
-  /** Direct fetch URL for cross-repository heads that are not exposed on origin. */
-  remoteUrl?: string;
-  remoteRef: string;
 }
 
 export interface IssueSummary {
@@ -68,62 +153,27 @@ export interface PullRequestCheck {
   status: PullRequestCheckStatus;
   url: string | null;
   workflow?: string;
-  /** How long the check took, or how long it has been running. Formatted, never raw. */
   duration?: string;
   checkRunId?: number;
   workflowRunId?: number;
-  /** Open forge-neutral refinements such as manual, action_required, or warning. */
   traits?: string[];
 }
 
 export type PullRequestChecksStatus = "none" | "pending" | "success" | "failure";
 export type PullRequestReviewDecision = "approved" | "changes_requested" | "pending" | null;
 export type PullRequestMergeable = "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
-
-export function computeChecksStatus(checks: PullRequestCheck[]): PullRequestChecksStatus {
-  if (checks.length === 0) {
-    return "none";
-  }
-  if (checks.some((check) => check.status === "failure")) {
-    return "failure";
-  }
-  if (checks.some((check) => check.status === "pending")) {
-    return "pending";
-  }
-  return "success";
-}
-
-/**
- * Why a forge's PR/MR features are (un)available for a workspace. Replaces the
- * lossy "authenticated yes/no" boolean so the UI can offer the precise next step
- * (install the CLI vs sign in) instead of a single generic dead-end. "no_remote"
- * covers anything where the feature simply does not apply (no resolvable forge
- * remote, or no branch to look up). "error" is reserved for non-auth failures
- * where the UI should show the actual error instead of setup guidance.
- */
 export type ForgeAuthState =
   | "authenticated"
   | "unauthenticated"
   | "cli_missing"
   | "no_remote"
   | "error";
-
-/**
- * Open envelope for a forge's native merge facts on the neutral PR status.
- * Per-adapter modules own their typed fact interfaces and guards; shared server
- * code only requires the runtime facts-family tag.
- */
-export type ForgeSpecificStatusFacts = { forge: string } & Record<string, unknown>;
+export type ForgeSpecificStatusFacts = PluginForgeSpecificEnvelope;
 
 export interface CurrentPullRequestStatus {
   number?: number;
   repoOwner?: string;
   repoName?: string;
-  /**
-   * The forge's full project path (e.g. nested GitLab namespaces like
-   * `group/subgroup/repo`). Adapters that can report it precisely set it here;
-   * otherwise consumers fall back to deriving it from owner/name.
-   */
   projectPath?: string;
   url: string;
   title: string;
@@ -194,7 +244,7 @@ export interface PullRequestCreateResult {
   number: number;
 }
 
-export type PullRequestMergeMethod = "merge" | "squash" | "rebase";
+export type PullRequestMergeMethod = PluginForgeMergeMethod;
 
 export interface PullRequestCommandStatus {
   mergeable?: PullRequestMergeable;
@@ -229,15 +279,7 @@ export interface PullRequestAutoMergeResult {
   success: true;
 }
 
-export type ForgeReadOptions =
-  | {
-      force?: false;
-      reason?: string;
-    }
-  | {
-      force: true;
-      reason: string;
-    };
+export type ForgeReadOptions = { force?: false; reason?: string } | { force: true; reason: string };
 
 export type ListPullRequestsOptions = {
   cwd: string;
@@ -265,25 +307,10 @@ export type GetPullRequestTimelineOptions = {
 
 export type GetCheckDetailsOptions = {
   cwd: string;
-  /**
-   * GitHub-only: the GitHub adapter addresses the check run by owner/name. The
-   * GitLab adapter resolves the project from the cwd's remote and ignores these.
-   */
   repoOwner?: string;
   repoName?: string;
-  /**
-   * Check-run id. Optional because some checks are addressed only by
-   * workflowRunId (Gitea Actions runs carry no check-run id). Callers pass at
-   * least one of checkRunId/workflowRunId.
-   */
   checkRunId?: number;
   workflowRunId?: number;
-  /**
-   * Change request number used when check details must resolve against a
-   * specific request rather than the current branch. GitLab routes the fetch to
-   * the MR's head pipeline; Gitea-family adapters resolve the PR head SHA by
-   * number, including for terminal PRs. GitHub ignores it.
-   */
   changeRequestNumber?: number;
 } & ForgeReadOptions;
 
@@ -308,11 +335,6 @@ export interface CheckFailedJob {
   logTruncated?: boolean;
 }
 
-/**
- * Normalized lifecycle of a CI job/pipeline, neutral across forges. Adapters
- * map their forge's raw status strings onto this; readers keep the raw string
- * too (see {@link PipelineJob.rawStatus}) for display fidelity.
- */
 export type PipelineJobStatus =
   | "success"
   | "failed"
@@ -329,11 +351,6 @@ export interface PipelineJob {
   name: string;
   stage: string;
   status: PipelineJobStatus;
-  /**
-   * COMPAT(pipelineRawStatus): unread by clients but required by peers
-   * <= v0.2.0-rc.1, so adapters must keep populating it. Remove together with
-   * the wire field after 2027-01-17 once the client floor is >= v0.2.0.
-   */
   rawStatus: string;
   url: string | null;
   allowFailure: boolean;
@@ -346,15 +363,9 @@ export interface PipelineStage {
   jobs: PipelineJob[];
 }
 
-/**
- * A CI pipeline as a stage → job tree. Forges that model CI as a pipeline
- * (GitLab) populate this; forges that model it as flat check runs (GitHub)
- * leave {@link CheckDetails.pipeline} undefined and use the check-run fields.
- */
 export interface PipelineDetails {
   id: number;
   status: PipelineJobStatus;
-  /** COMPAT(pipelineRawStatus): see {@link PipelineJob.rawStatus}. */
   rawStatus: string;
   url: string | null;
   ref: string | null;
@@ -378,11 +389,6 @@ export interface CheckDetails {
   annotations: CheckAnnotation[];
   failedJobs: CheckFailedJob[];
   truncated: boolean;
-  /**
-   * Structured pipeline (stages → jobs) for forges that model CI as a pipeline.
-   * GitLab populates it; GitHub leaves it undefined and keeps using the flat
-   * check-run fields above.
-   */
   pipeline?: PipelineDetails | null;
 }
 
@@ -403,23 +409,7 @@ export interface SearchResult {
   }>;
   featuresEnabled: boolean;
   authState: ForgeAuthState;
-  /**
-   * COMPAT(githubFeaturesEnabled): legacy search result flag retained when
-   * neutral authState shipped in v0.2.0-beta.1. Remove after 2027-01-17 once
-   * supported client and daemon floors are >= v0.2.0.
-   */
   githubFeaturesEnabled?: boolean;
-}
-
-export function createUnavailableSearchResult(
-  authState: Exclude<ForgeAuthState, "authenticated">,
-): SearchResult {
-  return {
-    items: [],
-    featuresEnabled: false,
-    authState,
-    githubFeaturesEnabled: false,
-  };
 }
 
 export type SearchIssuesAndPrsOptions = {
@@ -437,36 +427,43 @@ export interface CreatePullRequestOptions {
   body?: string;
 }
 
-export interface ForgeService {
+export const PLUGIN_FORGE_SERVICE_METHODS = [
+  "listPullRequests",
+  "listIssues",
+  "getPullRequest",
+  "getPullRequestHeadRef",
+  "getPullRequestCheckoutTarget",
+  "defaultCheckoutRefs",
+  "buildPrLocalBranchName",
+  "getCurrentPullRequestStatus",
+  "getPullRequestTimeline",
+  "getCheckDetails",
+  "searchIssuesAndPrs",
+  "createPullRequest",
+  "mergePullRequest",
+  "enablePullRequestAutoMerge",
+  "disablePullRequestAutoMerge",
+  "isAuthenticated",
+  "invalidate",
+  "dispose",
+] as const;
+
+export type PluginForgeServiceMethod = (typeof PLUGIN_FORGE_SERVICE_METHODS)[number];
+
+export interface PluginForgeServerService {
   listPullRequests(options: ListPullRequestsOptions): Promise<PullRequestSummary[]>;
   listIssues(options: ListIssuesOptions): Promise<IssueSummary[]>;
   getPullRequest(options: GetPullRequestOptions): Promise<PullRequestSummary>;
   getPullRequestHeadRef(options: GetPullRequestOptions): Promise<string>;
   getPullRequestCheckoutTarget(options: GetPullRequestOptions): Promise<PullRequestCheckoutTarget>;
-  /**
-   * Refs to fetch for a change-request checkout when the resolved checkout
-   * target carries none. Adapters that expose a universal change-request head
-   * ref (GitHub's refs/pull/N/head) return it here; others let the shell fall
-   * back to the head branch.
-   */
   defaultCheckoutRefs?(params: {
     changeRequestNumber: number;
     headRef: string;
   }): PullRequestCheckoutRef[] | Promise<PullRequestCheckoutRef[]>;
-  /**
-   * Local branch name for a checked-out change request when the adapter
-   * disambiguates cross-repository heads (GitHub prefixes the fork owner).
-   * Returns undefined to keep the head ref name as-is.
-   */
   buildPrLocalBranchName?(params: {
     headRef: string;
     checkoutTarget: PullRequestCheckoutTarget;
   }): string | undefined | Promise<string | undefined>;
-  /**
-   * True when the adapter can fetch a cross-repository change-request head with
-   * no explicit refs on the checkout target (GitHub via refs/pull/N/head).
-   * Others reject a cross-repo checkout that carries no refs.
-   */
   supportsCrossRepoCheckoutWithoutRefs?: boolean;
   getCurrentPullRequestStatus(
     options: {
@@ -487,57 +484,133 @@ export interface ForgeService {
   disablePullRequestAutoMerge(
     options: DisablePullRequestAutoMergeOptions,
   ): Promise<PullRequestAutoMergeResult>;
-  /**
-   * Check whether the adapter can authenticate against the forge for `cwd`.
-   * An adapter picks exactly one of two contracts:
-   *
-   * - Resolve to `false` on any auth failure (missing CLI, expired token,
-   *   unreachable host, ...) and never reject. This is the default contract;
-   *   most adapters should implement it this way.
-   * - Reject with a classified error distinguishing the failure kind (e.g.
-   *   "CLI not installed" vs "not logged in") instead of collapsing
-   *   everything to `false`. An adapter that does this MUST also set
-   *   {@link authProbeCanThrow} to `true`, or callers have no way to know the
-   *   rejection is meaningful and will treat it as an unhandled error.
-   */
   isAuthenticated(options: { cwd: string } & ForgeReadOptions): Promise<boolean>;
-  /**
-   * True when isAuthenticated() throws a classified error (missing CLI /
-   * auth failure) on failure instead of just resolving to false. Callers that
-   * want the precise failure kind before falling back to a PR-status lookup
-   * (which can't distinguish "unauthenticated" from "no PR found") should
-   * only probe isAuthenticated() when this is set — otherwise the call
-   * cannot change the outcome and is pure overhead.
-   */
   authProbeCanThrow?: boolean;
-  retainCurrentPullRequestStatusPoll?(options: {
-    cwd: string;
-    headRef: string;
-    headSha?: string;
-    headRepositoryOwner?: string;
-    onStatus?: (status: CurrentPullRequestStatus | null) => void;
-    onError?: (error: unknown) => void;
-  }): { unsubscribe: () => void };
-  invalidate(options: { cwd: string }): void;
+  invalidate(options: { cwd: string }): void | Promise<void>;
   dispose?(): void | Promise<void>;
 }
 
-/** Parse an optional ISO timestamp to epoch ms, 0 when absent or unparseable. */
+export type ForgeService = PluginForgeServerService;
+
+export interface PluginForgeServerProviderContribution {
+  definition: PluginForgeDefinition;
+  service: PluginForgeServerService;
+  probeHost?: (host: string) => boolean | Promise<boolean>;
+}
+
+export interface PluginForgeServerProviderDescriptor {
+  definition: PluginForgeDefinition;
+  methods: PluginForgeServiceMethod[];
+  authProbeCanThrow: boolean;
+  supportsCrossRepoCheckoutWithoutRefs: boolean;
+  hasProbeHost: boolean;
+}
+
+export function defineForgeServerProvider<Definition extends PluginForgeServerProviderContribution>(
+  definition: Definition,
+): Definition {
+  return definition;
+}
+
+export function normalizeForgeSearchKinds(
+  kinds: readonly ForgeSearchRequestKind[] | undefined,
+): ForgeSearchKind[] {
+  if (!kinds) return ["issue", "change_request"];
+  return kinds.map((kind) => {
+    // COMPAT(githubSearchKind): added in v0.1.106, remove with the legacy
+    // github_search_request RPC after 2026-12-28.
+    if (kind === "github-issue") return "issue";
+    if (kind === "github-pr" || kind === "pr") return "change_request";
+    return kind;
+  });
+}
+
+export function computeChecksStatus(checks: PullRequestCheck[]): PullRequestChecksStatus {
+  if (checks.length === 0) return "none";
+  if (checks.some((check) => check.status === "failure")) return "failure";
+  if (checks.some((check) => check.status === "pending")) return "pending";
+  return "success";
+}
+
+export function createUnavailableSearchResult(
+  authState: Exclude<ForgeAuthState, "authenticated">,
+): SearchResult {
+  return {
+    items: [],
+    featuresEnabled: false,
+    authState,
+    githubFeaturesEnabled: false,
+  };
+}
+
 export function parseOptionalTime(value: string | null | undefined): number {
-  if (!value) {
-    return 0;
-  }
+  if (!value) return 0;
   const parsed = Date.parse(value);
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-/** Stable timeline ordering shared by every adapter: by createdAt, then id. */
 export function compareTimelineItems(
-  left: PullRequestTimelineItem,
-  right: PullRequestTimelineItem,
+  left: Pick<PullRequestTimelineItem, "createdAt" | "id">,
+  right: Pick<PullRequestTimelineItem, "createdAt" | "id">,
 ): number {
-  if (left.createdAt !== right.createdAt) {
-    return left.createdAt - right.createdAt;
+  return left.createdAt - right.createdAt || left.id.localeCompare(right.id);
+}
+
+export type PluginForgeErrorKind = "missing-cli" | "auth-failure" | "command-error";
+
+export interface ForgeCommandFailureParams {
+  args: string[];
+  cwd: string;
+  exitCode: number | null;
+  stderr: string;
+}
+
+export class ForgeCliMissingError extends Error {
+  readonly kind = "missing-cli" as const;
+}
+
+export class ForgeAuthenticationError extends Error {
+  readonly kind = "auth-failure" as const;
+  readonly stderr: string;
+
+  constructor(message: string, params: { stderr: string }) {
+    super(message);
+    this.stderr = params.stderr;
+    Object.defineProperty(this, "stderr", { enumerable: false });
   }
-  return left.id.localeCompare(right.id);
+}
+
+export class ForgeCommandError extends Error {
+  readonly kind = "command-error" as const;
+  readonly brand: string;
+  readonly binary: string;
+  readonly args: string[];
+  readonly cwd: string;
+  readonly exitCode: number | null;
+  readonly stderr: string;
+
+  constructor(label: { brand: string; binary: string }, params: ForgeCommandFailureParams) {
+    super(`${label.brand} CLI command failed: ${label.binary}`);
+    this.brand = label.brand;
+    this.binary = label.binary;
+    this.args = [...params.args];
+    this.cwd = params.cwd;
+    this.exitCode = params.exitCode;
+    this.stderr = params.stderr;
+    for (const key of ["brand", "binary", "args", "cwd", "stderr"] as const) {
+      Object.defineProperty(this, key, { enumerable: false });
+    }
+  }
+}
+
+export interface PluginForgeSerializedError {
+  message: string;
+  name?: string;
+  kind?: PluginForgeErrorKind;
+  stderr?: string;
+  args?: string[];
+  cwd?: string;
+  exitCode?: number | null;
+  brand?: string;
+  binary?: string;
 }
