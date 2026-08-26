@@ -26,6 +26,7 @@ function installation(clientSide: NonNullable<InstalledPlugin["clientSide"]>): I
     themes: [],
     timelineTransformers: [],
     timelineRenderers: [],
+    forgeClientProviders: [],
   };
 }
 

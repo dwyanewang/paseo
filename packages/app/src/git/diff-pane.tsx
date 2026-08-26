@@ -68,6 +68,7 @@ import { BranchSwitcher } from "@/components/branch-switcher";
 import { useGitActions } from "@/git/use-actions";
 import { GIT_ACTION_ICONS } from "@/git/action-icons";
 import { buildForgeSignInCommand, getForgePresentation, type Forge } from "@/git/forge";
+import { type ClientForgeHostSnapshot, useClientForgeHost } from "@/git/client-forge-registry";
 import { parseGitRemoteLocation } from "@getpaseo/protocol/git-remote";
 import type { ForgeAuthState } from "@getpaseo/protocol/messages";
 import { useCheckoutGitActionsStore } from "@/git/actions-store";
@@ -460,6 +461,7 @@ function buildChangesToolbarMode(input: {
 }
 
 interface ChangesPullRequestLinkModel extends Pick<PrHint, "forge" | "number" | "state" | "url"> {
+  clientForgeHost: ClientForgeHostSnapshot;
   onOpen: () => void;
 }
 
@@ -490,6 +492,7 @@ interface ChangesHeaderProps {
 
 interface BuildChangesHeaderModelInput {
   branchName: string | null;
+  clientForgeHost: ClientForgeHostSnapshot;
   committedDescription?: string;
   compact: boolean;
   cwd: string;
@@ -515,7 +518,11 @@ function buildChangesHeaderModel(input: BuildChangesHeaderModelInput): {
       cwd: input.cwd,
       gitActions: input.compact ? input.gitActions : null,
       pullRequest: input.pullRequest
-        ? { ...input.pullRequest, onOpen: input.onOpenPullRequest }
+        ? {
+            ...input.pullRequest,
+            clientForgeHost: input.clientForgeHost,
+            onOpen: input.onOpenPullRequest,
+          }
         : null,
       serverId: input.serverId,
       workspaceId: input.workspaceId,
@@ -652,7 +659,7 @@ function ChangesRepositoryToolbar({
 
 function ChangesPullRequestLink({ model }: { model: ChangesPullRequestLinkModel }) {
   const { t } = useTranslation();
-  const presentation = getForgePresentation(model.forge);
+  const presentation = getForgePresentation(model.forge, model.clientForgeHost);
   const label = `${presentation.numberPrefix}${model.number}`;
   return (
     <Tooltip delayDuration={300} enabledOnDesktop enabledOnMobile={false}>
@@ -690,7 +697,7 @@ function ChangesPullRequestExternalLink({
   model: ChangesPullRequestLinkModel;
 }) {
   const { t } = useTranslation();
-  const presentation = getForgePresentation(model.forge);
+  const presentation = getForgePresentation(model.forge, model.clientForgeHost);
   const label = t("workspace.git.pr.actions.openOn", { brand: presentation.brandLabel });
   const handlePress = useCallback(() => {
     void openExternalUrl(model.url);
@@ -1232,12 +1239,13 @@ function buildForgeSetupMessage(input: {
   action: ForgeSetupAction;
   forge: Forge;
   host: string | null;
+  clientForgeHost: ClientForgeHostSnapshot;
   t: TFunction;
 }): string | null {
   if (!input.action) {
     return null;
   }
-  const { brandLabel, signInCli } = getForgePresentation(input.forge);
+  const { brandLabel, signInCli } = getForgePresentation(input.forge, input.clientForgeHost);
   // A forge with no known CLI (an unknown/third-party forge rendered neutrally)
   // has no install/sign-in command to interpolate — show neutral guidance
   // rather than the GitLab-specific callout or a null command.
@@ -1247,7 +1255,7 @@ function buildForgeSetupMessage(input: {
   if (input.action === "install_cli") {
     return input.t("workspace.git.forgeSetup.installCli", { cli: signInCli, brand: brandLabel });
   }
-  const command = buildForgeSignInCommand(input.forge, input.host);
+  const command = buildForgeSignInCommand(input.forge, input.host, input.clientForgeHost);
   return input.t("workspace.git.forgeSetup.signIn", { command, brand: brandLabel });
 }
 
@@ -1578,6 +1586,7 @@ export function ChangesSurface({
   const { settings: appSettings } = useAppSettings();
   const { preferences, updatePreferences } = useChangesPreferences();
   const { t } = useTranslation();
+  const clientForgeHost = useClientForgeHost(serverId);
   const isMobile = useIsCompactFormFactor();
   const canUseSplitLayout = isWeb && !isMobile;
   const instanceState = changesState ?? defaultChangesState;
@@ -1713,9 +1722,10 @@ export function ChangesSurface({
         action: forgeSetupAction,
         forge,
         host: parseForgeHost(status?.remoteUrl),
+        clientForgeHost,
         t,
       }),
-    [forgeSetupAction, forge, status?.remoteUrl, t],
+    [clientForgeHost, forgeSetupAction, forge, status?.remoteUrl, t],
   );
   const handleToggleDesktopTree = useCallback(() => {
     updateState({ ...instanceState, treeVisible: !desktopTreeVisible });
@@ -1992,6 +2002,7 @@ export function ChangesSurface({
     () =>
       buildChangesHeaderModel({
         branchName: currentBranchName,
+        clientForgeHost,
         committedDescription: committedDiffDescription,
         compact: isMobile,
         cwd,
@@ -2008,6 +2019,7 @@ export function ChangesSurface({
       }),
     [
       committedDiffDescription,
+      clientForgeHost,
       currentBranchName,
       cwd,
       diffMode,
