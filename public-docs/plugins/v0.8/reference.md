@@ -1568,6 +1568,106 @@ Inputs and outputs are validated on both sides. RPC names start with a lowercase
 
 Backend handlers receive the same `PaseoApi` as `{ paseo }`. Their connection belongs to the subprocess and closes when the plugin stops. It does not subscribe to timelines or catalog events until plugin code subscribes. Follow the [SDK event contract](../../sdk/events.md) for cleanup and timeline replacements. Backend code can use Node APIs and dependencies installed in the plugin directory.
 
+## Add a Git Forge provider
+
+A Forge provider uses one shared definition and separate server and client registrations. Keep
+runtime code under its matching directory and wire it from the matching entry:
+
+```ts
+// index.server.ts
+import type { PluginServerContext } from "@getpaseo/plugin/server";
+import { acmeServerProvider } from "./server/acme";
+
+export default function contribute(server: PluginServerContext) {
+  server.addForgeServerProvider(acmeServerProvider);
+  return () => {};
+}
+```
+
+```ts
+// index.client.ts
+import type { PluginClientContext } from "@getpaseo/plugin/client";
+import { acmeClientProvider } from "./client/acme";
+
+export default function contribute(client: PluginClientContext) {
+  client.addForgeClientProvider(acmeClientProvider);
+  return () => {};
+}
+```
+
+The server provider lives under `server/`:
+
+```ts
+import { defineForgeServerProvider } from "@getpaseo/plugin/server";
+import { acmeDefinition } from "../shared/acme-definition";
+import { createAcmeService } from "./acme-service";
+
+export const acmeServerProvider = defineForgeServerProvider({
+  definition: acmeDefinition,
+  service: createAcmeService(),
+});
+```
+
+`service` implements `PluginForgeServerService`. It owns authentication, vendor API or CLI calls,
+change-request status and search, checks, activity, create/merge commands, and checkout targets.
+The complete interface is required; reject an unsupported command with a clear error. Throw
+`ForgeCliMissingError`, `ForgeAuthenticationError`, or `ForgeCommandError` from
+`@getpaseo/plugin/server` when the daemon must distinguish setup and authentication failures. If
+`isAuthenticated()` throws those classified errors, set `authProbeCanThrow: true`; otherwise return
+`false` on authentication failure. Return explicit `checkoutRefs` for cross-repository heads. Set
+`supportsCrossRepoCheckoutWithoutRefs: true` only when the Forge exposes a universal fetch ref that
+does not need those entries.
+
+The client provider stays under `client/` and contains no Node imports. Put its Zod facts schema and
+provider definition under `shared/`:
+
+```ts
+import { defineForgeClientProvider, defineForgeFacts } from "@getpaseo/plugin";
+import { acmeDefinition } from "../shared/acme-definition";
+import { AcmeFactsSchema } from "../shared/acme-facts";
+
+const facts = defineForgeFacts({
+  family: "acme",
+  schema: AcmeFactsSchema,
+  deriveMergeCapability: ({ ready }) => ({
+    directMergeReady: ready,
+    canEnableAutoMerge: false,
+    autoMergeEnabled: false,
+    canDisableAutoMerge: false,
+    mergeBlockedByQueue: false,
+    allowedMethods: ["merge"],
+    preferredMethod: "merge",
+  }),
+});
+
+export const acmeClientProvider = defineForgeClientProvider({
+  definition: acmeDefinition,
+  facts,
+  view: {
+    icon: { kind: "svg-path", viewBox: [0, 0, 24, 24], path: "..." },
+    brandColor: { light: "#7C3AED", dark: "#A78BFA" },
+  },
+});
+```
+
+The optional client fields are:
+
+- `facts`: Zod validation and merge-capability derivation for the open `forgeSpecific` envelope;
+- `urlGrammar`: tree, blob, line-anchor, checks-page, and pasted-reference syntax;
+- `view`: one validated SVG path and light/dark brand colors.
+
+Provider IDs and facts families match `^[a-z0-9][a-z0-9._-]*$`. The provider ID must not collide
+with a built-in or another plugin provider on that host. `cloudHosts` lists known public hosts. Add
+`probeHost` to the server provider only when a self-hosted host can be recognized through existing
+local authentication; do not send credentials or anonymous probes to a remote-derived hostname.
+
+Forge contributions are scoped to their daemon. Reload, disable, removal, subprocess failure, and
+the global plugin switch unregister the adapter, stop status polling, clear resolver state, and
+remove its client presentation. Cross-repository checkout refs can set `remoteUrl` when the head is
+not fetchable through an existing Git remote.
+
+See the repository's `plugin-examples/codeup` directory for a complete provider.
+
 ## Debug backend output
 
 Backend contributions can write to stdout and stderr with normal Node logging:
