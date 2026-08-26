@@ -1,4 +1,10 @@
 import type {
+  PluginForgeSerializedError,
+  PluginForgeServerProviderDescriptor,
+  PluginForgeServiceMethod,
+} from "@getpaseo/plugin/server";
+import { PLUGIN_FORGE_SERVICE_METHODS } from "@getpaseo/plugin/server";
+import type {
   ProviderConnectRequest,
   ProviderCatalogOptions,
   ProviderEvent,
@@ -45,6 +51,13 @@ export type PluginProcessRequest =
       input: ProviderInput;
     }
   | { type: "provider.close"; connectionId: string }
+  | {
+      type: "invoke_forge";
+      requestId: string;
+      providerId: string;
+      method: PluginForgeServiceMethod | "probeHost";
+      input: unknown;
+    }
   | { type: "shutdown" }
   | { type: "paseo_frame"; data: string | Uint8Array; isBinary: boolean }
   | { type: "paseo_close" };
@@ -57,9 +70,12 @@ export type PluginProcessMessage =
       methods: string[];
       providers: PluginProviderMetadata[];
       hooks?: { events: string[]; before: string[] };
+      forgeProviders: PluginForgeServerProviderDescriptor[];
     }
   | { type: "result"; requestId: string; output: unknown }
   | { type: "error"; requestId: string; error: string }
+  | { type: "forge_result"; requestId: string; output: unknown }
+  | { type: "forge_error"; requestId: string; error: PluginForgeSerializedError }
   | { type: "fatal"; error: string }
   | {
       type: "provider.connected";
@@ -95,6 +111,47 @@ const providerConnectRequestSchema = z
   .object({
     versions: z.array(z.number().int().positive()),
     capabilities: z.array(z.string()),
+  })
+  .strict();
+const forgeDefinitionSchema = z
+  .object({
+    id: z.string().regex(/^[a-z0-9][a-z0-9._-]*$/),
+    displayName: z.string().trim().min(1),
+    changeRequestAbbrev: z.string().trim().min(1),
+    changeRequestNoun: z.string().trim().min(1),
+    changeRequestNumberPrefix: z.string().trim().min(1),
+    issueNumberPrefix: z.string().trim().min(1),
+    signIn: z
+      .object({
+        cli: z.string().trim().min(1),
+        command: z.string().trim().min(1),
+        hostnameFlag: z.string().trim().min(1).optional(),
+      })
+      .strict()
+      .nullable(),
+    cloudHosts: z.array(z.string().trim().min(1)).optional(),
+  })
+  .strict();
+const forgeProviderDescriptorSchema = z
+  .object({
+    definition: forgeDefinitionSchema,
+    methods: z.array(z.enum(PLUGIN_FORGE_SERVICE_METHODS)),
+    authProbeCanThrow: z.boolean(),
+    supportsCrossRepoCheckoutWithoutRefs: z.boolean(),
+    hasProbeHost: z.boolean(),
+  })
+  .strict();
+const forgeSerializedErrorSchema = z
+  .object({
+    message: z.string(),
+    name: z.string().optional(),
+    kind: z.enum(["missing-cli", "auth-failure", "command-error"]).optional(),
+    stderr: z.string().optional(),
+    args: z.array(z.string()).optional(),
+    cwd: z.string().optional(),
+    exitCode: z.number().nullable().optional(),
+    brand: z.string().optional(),
+    binary: z.string().optional(),
   })
   .strict();
 const frameFields = {
@@ -166,6 +223,15 @@ export const PluginProcessRequestSchema: z.ZodType<PluginProcessRequest> = z.dis
       })
       .strict(),
     z.object({ type: z.literal("provider.close"), connectionId: z.string().min(1) }).strict(),
+    z
+      .object({
+        type: z.literal("invoke_forge"),
+        requestId: z.string().min(1),
+        providerId: z.string().min(1),
+        method: z.union([z.enum(PLUGIN_FORGE_SERVICE_METHODS), z.literal("probeHost")]),
+        input: z.unknown(),
+      })
+      .strict(),
     z.object({ type: z.literal("shutdown") }).strict(),
     z.object({ type: z.literal("paseo_frame"), ...frameFields }).strict(),
     z.object({ type: z.literal("paseo_close") }).strict(),
@@ -183,6 +249,7 @@ export const PluginProcessMessageSchema: z.ZodType<PluginProcessMessage> = z.dis
         methods: z.array(z.string()),
         providers: z.array(providerMetadataSchema),
         hooks: hooksSchema.optional(),
+        forgeProviders: z.array(forgeProviderDescriptorSchema),
       })
       .strict(),
     z
@@ -190,6 +257,16 @@ export const PluginProcessMessageSchema: z.ZodType<PluginProcessMessage> = z.dis
       .strict(),
     z
       .object({ type: z.literal("error"), requestId: z.string().min(1), error: z.string() })
+      .strict(),
+    z
+      .object({ type: z.literal("forge_result"), requestId: z.string().min(1), output: z.unknown() })
+      .strict(),
+    z
+      .object({
+        type: z.literal("forge_error"),
+        requestId: z.string().min(1),
+        error: forgeSerializedErrorSchema,
+      })
       .strict(),
     z.object({ type: z.literal("fatal"), error: z.string() }).strict(),
     z
