@@ -210,7 +210,6 @@ describe("plugin runtime entries", () => {
       ).rejects.toThrow("plugin shared");
     },
   );
-
   it.each([
     'import type { PluginClientContext } from "@getpaseo/plugin/client"; export type Context = PluginClientContext;',
     'export type { PluginClientContext } from "@getpaseo/plugin/client";',
