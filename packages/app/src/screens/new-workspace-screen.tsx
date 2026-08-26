@@ -133,6 +133,7 @@ import {
   createWorkspaceAgentInBackground,
 } from "./new-workspace/background-handoff";
 import { useNewWorkspaceScreenPresence } from "./new-workspace/screen-presence";
+import { type ClientForgeHostSnapshot, useClientForgeHost } from "@/git/client-forge-registry";
 
 const ThemedFolderPlus = withUnistyles(FolderPlus);
 const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
@@ -527,6 +528,7 @@ function NewWorkspacePickerOption({
   onPress,
   itemById,
   isPending,
+  clientForgeHost,
 }: {
   option: ComboboxOptionType;
   selected: boolean;
@@ -534,6 +536,7 @@ function NewWorkspacePickerOption({
   onPress: () => void;
   itemById: Map<string, PickerItem>;
   isPending: boolean;
+  clientForgeHost: ClientForgeHostSnapshot;
 }) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
@@ -552,7 +555,7 @@ function NewWorkspacePickerOption({
   return (
     <PickerOptionItem
       testID={testID}
-      label={pickerItemLabel(item)}
+      label={pickerItemLabel(item, clientForgeHost)}
       description={description}
       selected={selected}
       active={active}
@@ -1631,6 +1634,7 @@ export function NewWorkspaceScreen({
     projectId,
     displayName: displayNameProp,
   });
+  const clientForgeHost = useClientForgeHost(selectedServerId);
   // COMPAT(workspaceMultiplicity): added in v0.1.97, drop the gate when floor >= v0.1.97
   const supportsWorkspaceMultiplicity = useHostFeature(selectedServerId, "workspaceMultiplicity");
   const supportsForgeSearch = useHostFeature(selectedServerId, "forgeSearch");
@@ -1835,13 +1839,14 @@ export function NewWorkspaceScreen({
         branchDetails,
         prItems,
         baseItem,
+        clientForgeHost,
       }),
-    [baseItem, branchDetails, prItems],
+    [baseItem, branchDetails, clientForgeHost, prItems],
   );
   const triggerLabel = useMemo(() => {
     const displayItem = itemById.get(selectedOptionId);
-    return displayItem ? pickerItemLabel(displayItem) : "main";
-  }, [itemById, selectedOptionId]);
+    return displayItem ? pickerItemLabel(displayItem, clientForgeHost) : "main";
+  }, [clientForgeHost, itemById, selectedOptionId]);
   const selectPickerItem = useCallback(
     (item: PickerItem) => {
       const nextAttachments = syncPickerPrAttachment({
@@ -2253,8 +2258,15 @@ export function NewWorkspaceScreen({
       selected: boolean;
       active: boolean;
       onPress: () => void;
-    }) => <NewWorkspacePickerOption {...props} itemById={itemById} isPending={isPending} />,
-    [isPending, itemById],
+    }) => (
+      <NewWorkspacePickerOption
+        {...props}
+        itemById={itemById}
+        isPending={isPending}
+        clientForgeHost={clientForgeHost}
+      />
+    ),
+    [clientForgeHost, isPending, itemById],
   );
 
   const renderProjectOption = useCallback(
