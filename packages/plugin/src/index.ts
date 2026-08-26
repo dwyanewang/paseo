@@ -20,3 +20,19 @@ export {
   type PluginAttachmentSearchPayload,
 } from "./attachments.js";
 export { defineRpc, type PluginRpcContract, type RpcInput, type RpcOutput } from "./rpc.js";
+export {
+  defineForgeClientProvider,
+  defineForgeFacts,
+  type PluginForgeClientProviderContribution,
+  type PluginForgeClientView,
+  type PluginForgeDefinition,
+  type PluginForgeFactsRegistration,
+  type PluginForgeFactsContribution,
+  type PluginForgeMergeCapability,
+  type PluginForgeMergeMethod,
+  type PluginForgeReferencePath,
+  type PluginForgeSignInCommand,
+  type PluginForgeSpecificEnvelope,
+  type PluginForgeSvgPathIcon,
+  type PluginForgeUrlGrammar,
+} from "./forge.js";
