@@ -62,14 +62,14 @@ import {
   cancelComposerAgent,
   dispatchComposerAgentMessage,
   editQueuedComposerMessage,
-  findGithubItemByOption,
-  isAttachmentSelectedForGithubItem,
+  findForgeItemByOption,
+  isAttachmentSelectedForForgeItem,
   openComposerAttachment,
   pickAndPersistImages,
   queueComposerMessage,
   removeComposerAttachmentAtIndex,
   sendQueuedComposerMessageNow,
-  toggleGithubAttachmentFromPicker,
+  toggleForgeAttachmentFromPicker,
   uploadFileAttachments,
   type AttachmentPersister,
   type QueueWriter,
@@ -96,6 +96,7 @@ import {
 } from "@/attachments/service";
 import { resolveAgentControlsMode } from "@/composer/agent-controls/mode";
 import { resolveComposerInputMode, type ComposerInputMode } from "@/composer/input-mode";
+import { resolveActiveSendBehavior } from "./input/state";
 import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import type { KeyboardActionDefinition } from "@/keyboard/keyboard-action-dispatcher";
@@ -131,7 +132,7 @@ import { useCheckoutStatusQuery } from "@/git/use-status-query";
 import { useCheckoutPrStatusQuery } from "@/git/use-pr-status-query";
 import { getForgePresentation } from "@/git/forge";
 import { ForgeBrandIcon } from "@/git/forge-icon";
-import { useComposerGithubAutoAttach } from "./github/auto-attach";
+import { useComposerForgeAutoAttach } from "./forge-auto-attach";
 import { readClipboardImage } from "./clipboard-image";
 import { normalizeNativePastedImages, type NativePastedFile } from "./native-pasted-image";
 import { PluginResourceAttachmentPill, usePluginAttachmentPicker } from "@/plugins";
@@ -923,8 +924,8 @@ interface ComposerProps {
   submitIcon?: "arrow" | "return";
   /** Externally controlled loading state. When true, disables the submit button. */
   isSubmitLoading?: boolean;
-  /** When true, waits for pasted GitHub links to resolve before enabling submit. */
-  waitForGithubAutoAttachOnSubmit?: boolean;
+  /** When true, waits for pasted forge links to resolve before enabling submit. */
+  waitForForgeAutoAttachOnSubmit?: boolean;
   submitBehavior?: "clear" | "preserve-and-lock";
   /** When true, blurs the input immediately when submitting. */
   blurOnSubmit?: boolean;
@@ -935,8 +936,8 @@ interface ComposerProps {
   attachmentScopeKeys?: readonly string[];
   onOpenWorkspaceAttachment?: (attachment: WorkspaceComposerAttachment) => void;
   onChangeAttachments: (updater: AttachmentListUpdater) => void;
-  onGithubPrDetected?: () => void;
-  onGithubPrAutoAttach?: (item: ForgeSearchItem) => void;
+  onForgeChangeRequestDetected?: () => void;
+  onForgeChangeRequestAutoAttach?: (item: ForgeSearchItem) => void;
   cwd: string;
   clearDraft: (lifecycle: "sent" | "abandoned") => void;
   /** When true, auto-focuses the text input on web. */
@@ -1147,7 +1148,7 @@ function ComposerContentImpl({
   submitButtonTestID,
   submitIcon = "arrow",
   isSubmitLoading = false,
-  waitForGithubAutoAttachOnSubmit = false,
+  waitForForgeAutoAttachOnSubmit = false,
   submitBehavior = "clear",
   blurOnSubmit = false,
   value,
@@ -1157,8 +1158,8 @@ function ComposerContentImpl({
   attachmentScopeKeys = EMPTY_ATTACHMENT_SCOPE_KEYS,
   onOpenWorkspaceAttachment,
   onChangeAttachments,
-  onGithubPrDetected,
-  onGithubPrAutoAttach,
+  onForgeChangeRequestDetected,
+  onForgeChangeRequestAutoAttach,
   cwd,
   clearDraft,
   autoFocus = false,
@@ -1234,7 +1235,7 @@ function ComposerContentImpl({
   const supportsForgeSearch = useSessionStore(
     (state) => state.sessions[serverId]?.serverInfo?.features?.forgeSearch === true,
   );
-  const githubAutoAttach = useComposerGithubAutoAttach({
+  const forgeAutoAttach = useComposerForgeAutoAttach({
     text: userInput,
     remoteUrl: resolveCheckoutRemoteUrl(checkoutStatusQuery.status),
     attachments,
@@ -1244,8 +1245,8 @@ function ComposerContentImpl({
     cwd,
     supportsForgeSearch,
     setAttachments: setSelectedAttachments,
-    onPullRequestDetected: onGithubPrDetected,
-    onPullRequestAdded: onGithubPrAutoAttach,
+    onChangeRequestDetected: onForgeChangeRequestDetected,
+    onChangeRequestAdded: onForgeChangeRequestAutoAttach,
   });
   const [cursorIndex, setCursorIndex] = useState(0);
   const cursorPublication = useMemo(() => new AfterPaintPublication<number>(setCursorIndex), []);
@@ -1476,6 +1477,20 @@ function ComposerContentImpl({
   const beginAgentCancellation = useSessionStore((state) => state.beginAgentCancellation);
   const settleAgentCancellation = useSessionStore((state) => state.settleAgentCancellation);
   const isAgentRunning = hasActiveTurn;
+  // Queueing behind a permission prompt would strand the message: the turn is
+  // parked until the request is answered.
+  const hasPendingPermission = useSessionStore((state) => {
+    const pendingPermissions = state.sessions[serverId]?.pendingPermissions;
+    if (!pendingPermissions) return false;
+    for (const permission of pendingPermissions.values()) {
+      if (permission.agentId === agentId) return true;
+    }
+    return false;
+  });
+  const activeSendBehavior = resolveActiveSendBehavior(
+    appSettings.sendBehavior,
+    hasPendingPermission,
+  );
   const hasAgent = agentState.status !== null;
 
   const queueWriter = useMemo<QueueWriter>(
@@ -1719,7 +1734,7 @@ function ComposerContentImpl({
 
   const handleRemoveAttachment = useCallback(
     (index: number) => {
-      githubAutoAttach.markGithubAttachmentRemoved(selectedAttachments[index]);
+      forgeAutoAttach.markForgeAttachmentRemoved(selectedAttachments[index]);
       const didRemoveWorkspaceAttachment = removeAttachment({
         selectedAttachments,
         index,
@@ -1731,7 +1746,7 @@ function ComposerContentImpl({
         removeComposerAttachmentAtIndex({ attachments: prev, index, deleteAttachments }),
       );
     },
-    [githubAutoAttach, removeAttachment, selectedAttachments, setSelectedAttachments],
+    [forgeAutoAttach, removeAttachment, selectedAttachments, setSelectedAttachments],
   );
 
   const handleOpenAttachment = useCallback(
@@ -2067,10 +2082,10 @@ function ComposerContentImpl({
 
   const handleToggleGithubItem = useCallback(
     (item: ForgeSearchItem) => {
-      const nextAttachments = toggleGithubAttachmentFromPicker({
+      const nextAttachments = toggleForgeAttachmentFromPicker({
         current: attachments,
         item,
-        markGithubAttachmentRemoved: githubAutoAttach.markGithubAttachmentRemoved,
+        markForgeAttachmentRemoved: forgeAutoAttach.markForgeAttachmentRemoved,
       });
       setSelectedAttachments(nextAttachments);
       setIsGithubPickerOpen(false);
@@ -2078,7 +2093,7 @@ function ComposerContentImpl({
     },
     [
       attachments,
-      githubAutoAttach,
+      forgeAutoAttach,
       setSelectedAttachments,
       setGithubSearchQuery,
       setIsGithubPickerOpen,
@@ -2139,11 +2154,11 @@ function ComposerContentImpl({
 
   const renderGithubPickerOption = useCallback(
     ({ option, active }: { option: ComboboxOption; selected: boolean; active: boolean }) => {
-      const item = findGithubItemByOption(githubSearchItems, option.id);
+      const item = findForgeItemByOption(githubSearchItems, option.id);
       if (!item) {
         return <View key={option.id} />;
       }
-      const selected = isAttachmentSelectedForGithubItem(selectedAttachments, item);
+      const selected = isAttachmentSelectedForForgeItem(selectedAttachments, item);
       return (
         <GithubPickerOption
           key={option.id}
@@ -2205,7 +2220,7 @@ function ComposerContentImpl({
   const isSubmitLoadingVisible =
     isProcessing || isSubmitLoading || isUploadingFile || pendingNativeImagePastes > 0;
   const isSubmitDisabled =
-    isSubmitLoadingVisible || (waitForGithubAutoAttachOnSubmit && githubAutoAttach.isResolving);
+    isSubmitLoadingVisible || (waitForForgeAutoAttachOnSubmit && forgeAutoAttach.isResolving);
 
   // Disable drops while submitting/uploading: the submit path clears and restores attachments,
   // so a drop in that window would be lost or land on a locked draft. `disabled` hides the
@@ -2302,7 +2317,7 @@ function ComposerContentImpl({
                   voiceServerId={serverId}
                   voiceAgentId={agentId}
                   isAgentRunning={isAgentRunning}
-                  defaultSendBehavior={appSettings.sendBehavior}
+                  defaultSendBehavior={activeSendBehavior}
                   onQueue={handleQueue}
                   onSubmitLoadingPress={submitLoadingPressHandler}
                   onKeyPress={handleCommandKeyPress}

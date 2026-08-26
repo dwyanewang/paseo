@@ -1050,6 +1050,9 @@ export const SetVoiceModeMessageSchema = z.object({
   requestId: z.string().optional(),
 });
 
+// COMPAT(githubAttachmentKinds): legacy wire attachment retained when
+// forge-neutral attachments shipped in v0.2.0-beta.1. Stop emitting it after
+// 2027-01-17 once supported client and daemon floors are >= v0.2.0.
 export const GitHubPrAttachmentSchema = z.object({
   type: z.literal("github_pr"),
   mimeType: z.literal("application/github-pr"),
@@ -1074,6 +1077,9 @@ export const ForgeChangeRequestAttachmentSchema = z.object({
   headRefName: z.string().nullable().optional(),
 });
 
+// COMPAT(githubAttachmentKinds): legacy wire attachment retained when
+// forge-neutral attachments shipped in v0.2.0-beta.1. Stop emitting it after
+// 2027-01-17 once supported client and daemon floors are >= v0.2.0.
 export const GitHubIssueAttachmentSchema = z.object({
   type: z.literal("github_issue"),
   mimeType: z.literal("application/github-issue"),
@@ -1565,8 +1571,9 @@ const GitSetupOptionsSchema = z.object({
   refName: z.string().min(1).optional(),
   action: z.enum(["branch-off", "checkout"]).optional(),
   checkoutSource: ChangeRequestCheckoutSourceSchema.optional(),
-  // COMPAT(githubPrNumber): added in v0.1.106, remove after 2026-12-28 once
-  // clients send checkoutSource.
+  // COMPAT(githubPrNumber): legacy GitHub checkout input retained when
+  // checkoutSource shipped in v0.2.0-beta.1. Remove after 2027-01-17 once the
+  // supported client floor is >= v0.2.0.
   githubPrNumber: z.number().int().positive().optional(),
 });
 
@@ -2111,8 +2118,9 @@ export const CheckoutForgeSetAutoMergeRequestSchema = z.object({
   requestId: z.string(),
 });
 
-// COMPAT(githubAutoMergeRpc): added in v0.1.106, remove after 2026-12-28 once
-// all supported clients use checkout.forge.set_auto_merge.*.
+// COMPAT(githubAutoMergeRpc): legacy RPC retained when
+// checkout.forge.set_auto_merge.* shipped in v0.2.0-beta.1. Stop serving and
+// consuming it after 2027-01-17 once client and daemon floors are >= v0.2.0.
 export const CheckoutGithubSetAutoMergeRequestSchema = z.object({
   type: z.literal("checkout.github.set_auto_merge.request"),
   cwd: z.string(),
@@ -2181,8 +2189,9 @@ export const CheckoutForgeGetCheckDetailsRequestSchema =
     type: z.literal("checkout.forge.get_check_details.request"),
   });
 
-// COMPAT(githubCheckDetailsRpc): added in v0.1.106, remove after 2026-12-28 once
-// all supported clients use checkout.forge.get_check_details.*.
+// COMPAT(githubCheckDetailsRpc): legacy RPC retained when
+// checkout.forge.get_check_details.* shipped in v0.2.0-beta.1. Stop serving
+// and consuming it after 2027-01-17 once client and daemon floors are >= v0.2.0.
 export const CheckoutGithubGetCheckDetailsRequestSchema =
   CheckoutCheckDetailsRequestPayloadSchema.extend({
     type: z.literal("checkout.github.get_check_details.request"),
@@ -2275,8 +2284,9 @@ export const ForgeSearchItemSchema = GitHubSearchItemSchema.extend({
   kind: z.enum(["issue", "change_request"]),
 });
 
-// COMPAT(githubSearchKind): added in v0.1.106, remove with the legacy
-// github_search_request RPC after 2026-12-28.
+// COMPAT(githubSearchKind): legacy GitHub kind aliases retained when neutral
+// forge search shipped in v0.2.0-beta.1. Remove after 2027-01-17 together with
+// the legacy github_search_request RPC.
 export const ForgeSearchKindSchema = z.enum([
   "issue",
   "change_request",
@@ -2296,8 +2306,9 @@ export const ForgeSearchRequestSchema = z.object({
   requestId: z.string(),
 });
 
-// COMPAT(githubSearchRpc): added in v0.1.106, remove after 2026-12-28 once
-// clients use forge.search.*.
+// COMPAT(githubSearchRpc): legacy RPC retained when forge.search.* shipped in
+// v0.2.0-beta.1. Stop serving and consuming it after 2027-01-17 once client
+// and daemon floors are >= v0.2.0.
 export const GitHubSearchRequestSchema = z.object({
   type: z.literal("github_search_request"),
   cwd: z.string(),
@@ -2365,8 +2376,9 @@ export const CreatePaseoWorktreeRequestSchema = z.object({
   refName: z.string().min(1).optional(),
   action: z.enum(["branch-off", "checkout"]).optional(),
   checkoutSource: ChangeRequestCheckoutSourceSchema.optional(),
-  // COMPAT(githubPrNumber): added in v0.1.106, remove after 2026-12-28 once
-  // clients send checkoutSource: { kind: "change_request", forge, number }.
+  // COMPAT(githubPrNumber): legacy GitHub checkout input retained when
+  // checkoutSource shipped in v0.2.0-beta.1. Remove after 2027-01-17 once the
+  // supported client floor is >= v0.2.0.
   githubPrNumber: z.number().int().positive().optional(),
   requestId: z.string(),
 });
@@ -2477,8 +2489,9 @@ export const WorkspaceCreateRequestSchema = z.object({
       // New branch name for branch-off. The worktree path may use a different slug.
       branchName: z.string().min(1).optional(),
       checkoutSource: ChangeRequestCheckoutSourceSchema.optional(),
-      // COMPAT(githubPrNumber): added in v0.1.106, remove after 2026-12-28 once
-      // clients send checkoutSource.
+      // COMPAT(githubPrNumber): legacy GitHub checkout input retained when
+      // checkoutSource shipped in v0.2.0-beta.1. Remove after 2027-01-17 once
+      // the supported client floor is >= v0.2.0.
       githubPrNumber: z.number().int().positive().optional(),
       worktreeSlug: z.string().optional(),
     }),
@@ -2555,6 +2568,7 @@ export const FileExplorerRequestSchema = z.object({
   mode: z.enum(["list", "file"]),
   requestId: z.string(),
   acceptBinary: z.boolean().optional(),
+  maxBytes: z.number().int().positive().optional(),
 });
 
 export const FileVersionSchema = z.discriminatedUnion("status", [
@@ -3300,15 +3314,25 @@ export const ServerInfoStatusPayloadSchema = z
         directorySync: z.boolean().optional(),
         // COMPAT(workspaceLabels): added in v0.5.0, remove after 2027-08-14.
         workspaceLabels: z.boolean().optional(),
-        // COMPAT(checkoutForgeSetAutoMerge): added in v0.1.106, remove old
-        // checkoutGithubSetAutoMerge fallback after 2026-12-28.
+        // COMPAT(checkoutForgeSetAutoMerge): added in v0.2.0-beta.1. Remove the
+        // feature gate and checkoutGithubSetAutoMerge fallback after 2027-01-17
+        // once the supported daemon floor is >= v0.2.0.
         checkoutForgeSetAutoMerge: z.boolean().optional(),
+        // COMPAT(checkoutGithubSetAutoMerge): added in v0.1.75 and retained as
+        // the fallback for checkoutForgeSetAutoMerge. Stop advertising and
+        // consuming it after 2027-01-17 once supported floors are >= v0.2.0.
         checkoutGithubSetAutoMerge: z.boolean().optional(),
-        // COMPAT(githubCheckDetails): added in v0.1.92, remove gate after 2026-12-08.
+        // COMPAT(githubCheckDetails): added in v0.1.92 and retained as the
+        // fallback for forgeCheckDetails. Stop advertising and consuming it
+        // after 2027-01-17 once supported floors are >= v0.2.0.
         githubCheckDetails: z.boolean().optional(),
-        // COMPAT(forgeCheckDetails): added in v0.1.106, remove githubCheckDetails fallback after 2026-12-28.
+        // COMPAT(forgeCheckDetails): added in v0.2.0-beta.1. Remove the feature
+        // gate and githubCheckDetails fallback after 2027-01-17 once the
+        // supported daemon floor is >= v0.2.0.
         forgeCheckDetails: z.boolean().optional(),
-        // COMPAT(forgeSearch): added in v0.1.106, remove github_search fallback after 2026-12-28.
+        // COMPAT(forgeSearch): added in v0.2.0-beta.1. Remove the feature gate
+        // and github_search fallback after 2027-01-17 once the supported daemon
+        // floor is >= v0.2.0.
         forgeSearch: z.boolean().optional(),
         // COMPAT(daemonStatusRpc): added in v0.1.76, remove gate after 2026-11-18.
         daemonStatusRpc: z.boolean().optional(),
@@ -3324,6 +3348,10 @@ export const ServerInfoStatusPayloadSchema = z
         pluginManagement: z.boolean().optional(),
         // COMPAT(pluginLogs): added in v0.4.0, remove gate after 2027-08-16.
         pluginLogs: z.boolean().optional(),
+        // COMPAT(pluginThemes): added in v0.5.0, remove gate after 2027-08-20.
+        // A daemon that predates this flag keeps `addTheme` in the server bundle it compiles,
+        // so a theme plugin cannot start there at all.
+        pluginThemes: z.boolean().optional(),
         // COMPAT(skillManagement): added in v0.4.0, remove gate after 2027-08-16.
         skillManagement: z.boolean().optional(),
         // COMPAT(terminalRestoreModes): added in v0.1.81, remove gate after 2026-11-23.
@@ -3388,7 +3416,8 @@ export const ServerInfoStatusPayloadSchema = z
         providerRemoval: z.boolean().optional(),
         // COMPAT(importSessionWorkspaceTarget): added in v0.1.110, remove gate after 2027-01-16.
         importSessionWorkspaceTarget: z.boolean().optional(),
-        // COMPAT(forgeProviders): added in v0.1.106, drop the gate when daemon floor >= v0.1.106.
+        // COMPAT(forgeProviders): added in v0.2.0-beta.1. Drop the gate after
+        // 2027-01-17 once the supported daemon floor is >= v0.2.0.
         // Daemon advertises pluggable non-GitHub forge support (the forge registry);
         // the client gates non-GitHub setup UI on it.
         forgeProviders: z.boolean().optional(),
@@ -3659,6 +3688,8 @@ export const WorkspaceGitHubRuntimePayloadSchema = z
               url: z.string().nullable(),
               workflow: z.string().optional(),
               duration: z.string().optional(),
+              // Open so future forge-neutral refinements remain parse-compatible.
+              traits: z.array(z.string()).optional(),
             }),
           )
           .optional(),
@@ -3733,10 +3764,14 @@ export const WorkspaceDescriptorPayloadSchema = z
       .optional(),
     scripts: z.array(WorkspaceScriptPayloadSchema).default([]),
     gitRuntime: WorkspaceGitRuntimePayloadSchema,
+    // COMPAT(githubRuntimeName): legacy wire-field name now carries
+    // forge-neutral runtime data. Introduce and migrate to a neutral
+    // forgeRuntime field before consumers stop using this name. Target cleanup
+    // after 2027-01-17 once the supported client floor is >= v0.2.0.
     githubRuntime: WorkspaceGitHubRuntimePayloadSchema,
-    // COMPAT(forge): added in v0.1.106, remove after 2026-12-27. The forge resolved
-    // for this workspace, so the sidebar/hover-card render the right brand mark.
-    // Old daemons omit it; absent means the client falls back to GitHub.
+    // COMPAT(forge): added in v0.2.0-beta.1. Treat an absent forge as GitHub
+    // until 2027-01-17; remove the consumer fallback once the supported daemon
+    // floor is >= v0.2.0.
     forge: z.string().optional(),
     project: ProjectPlacementPayloadSchema.optional(),
     // COMPAT(directorySync): sequence of this latest directory projection.
@@ -4261,6 +4296,14 @@ export const FetchAgentTimelineResponseMessageSchema = z.object({
     mergeWindow: z.boolean().optional(),
     entries: z.array(AgentTimelineEntryPayloadSchema),
     error: z.string().nullable(),
+  }),
+});
+
+export const AgentTimelineReplacementMessageSchema = z.object({
+  type: z.literal("agent.timeline.replacement"),
+  payload: z.object({
+    agentId: z.string(),
+    epoch: z.string(),
   }),
 });
 
@@ -4819,7 +4862,8 @@ const CheckoutPrGithubStatusSchema = CheckoutPrGithubStatusObjectSchema.optional
 const CheckoutPrForgeSpecificSchema = z.unknown().optional();
 
 export const CheckoutPrStatusSchema = z.object({
-  // COMPAT(forge): added in v0.1.106, remove the default after 2026-12-27 once daemon floor >= v0.1.106.
+  // COMPAT(forge): added in v0.2.0-beta.1. Remove the GitHub default after
+  // 2027-01-17 once the supported daemon floor is >= v0.2.0.
   forge: z.string().optional().default("github"),
   projectPath: z.string().optional(),
   number: z.number().optional(),
@@ -4849,6 +4893,8 @@ export const CheckoutPrStatusSchema = z.object({
         duration: z.string().optional(),
         checkRunId: z.number().optional(),
         workflowRunId: z.number().optional(),
+        // Open so future forge-neutral refinements remain parse-compatible.
+        traits: z.array(z.string()).optional(),
       }),
     )
     .optional()
@@ -4877,12 +4923,12 @@ const CheckoutPrStatusPayloadSchema = z.object({
   cwd: z.string(),
   status: CheckoutPrStatusSchema.nullable(),
   githubFeaturesEnabled: z.boolean(),
-  // COMPAT(forgeAuthState): added in v0.1.106, remove after 2026-12-27. Optional richer
-  // signal that supersedes githubFeaturesEnabled. The legacy boolean stays for old clients
-  // and may remain true for non-auth error payloads so old clients still show the error.
-  // Drop the boolean once the daemon floor >= v0.1.106.
+  // COMPAT(forgeAuthState): added in v0.2.0-beta.1. Remove the legacy
+  // githubFeaturesEnabled normalization after 2027-01-17 once the supported
+  // daemon floor is >= v0.2.0.
   authState: ForgeAuthStateSchema,
-  // COMPAT(forge): added in v0.1.106, remove the default after 2026-12-27 once daemon floor >= v0.1.106.
+  // COMPAT(forge): added in v0.2.0-beta.1. Remove the GitHub default after
+  // 2027-01-17 once the supported daemon floor is >= v0.2.0.
   forge: z.string().optional().default("github"),
   error: CheckoutErrorSchema.nullable(),
   requestId: z.string(),
@@ -5016,8 +5062,9 @@ export const CheckoutForgeSetAutoMergeResponseSchema = z.object({
   }),
 });
 
-// COMPAT(githubAutoMergeRpc): added in v0.1.106, remove after 2026-12-28 once
-// all supported clients use checkout.forge.set_auto_merge.*.
+// COMPAT(githubAutoMergeRpc): legacy RPC retained when
+// checkout.forge.set_auto_merge.* shipped in v0.2.0-beta.1. Stop serving and
+// consuming it after 2027-01-17 once client and daemon floors are >= v0.2.0.
 export const CheckoutGithubSetAutoMergeResponseSchema = z.object({
   type: z.literal("checkout.github.set_auto_merge.response"),
   payload: z.object({
@@ -5090,7 +5137,11 @@ const CheckoutPipelineJobSchema = z.object({
   name: z.string(),
   stage: z.string(),
   status: z.string(),
-  rawStatus: z.string(),
+  // COMPAT(pipelineRawStatus): no client reads this, but peers <= v0.2.0-rc.1
+  // validate it as required, so daemons must keep emitting it. Optional since
+  // this schema so future daemons may omit it; delete the field and its
+  // emission after 2027-01-17 once the supported client floor is >= v0.2.0.
+  rawStatus: z.string().optional(),
   url: z.string().nullable().optional().default(null),
   allowFailure: z.boolean().optional().default(false),
   durationSeconds: z.number().nullable().optional().default(null),
@@ -5105,7 +5156,8 @@ const CheckoutPipelineStageSchema = z.object({
 const CheckoutPipelineSchema = z.object({
   id: z.number(),
   status: z.string(),
-  rawStatus: z.string(),
+  // COMPAT(pipelineRawStatus): see CheckoutPipelineJobSchema.rawStatus.
+  rawStatus: z.string().optional(),
   url: z.string().nullable().optional().default(null),
   ref: z.string().nullable().optional().default(null),
   sha: z.string().nullable().optional().default(null),
@@ -5148,8 +5200,9 @@ export const CheckoutForgeGetCheckDetailsResponseSchema = z.object({
   }),
 });
 
-// COMPAT(githubCheckDetailsRpc): added in v0.1.106, remove after 2026-12-28 once
-// all supported clients use checkout.forge.get_check_details.*.
+// COMPAT(githubCheckDetailsRpc): legacy RPC retained when
+// checkout.forge.get_check_details.* shipped in v0.2.0-beta.1. Stop serving
+// and consuming it after 2027-01-17 once client and daemon floors are >= v0.2.0.
 export const CheckoutGithubGetCheckDetailsResponseSchema = z.object({
   type: z.literal("checkout.github.get_check_details.response"),
   payload: z.object({
@@ -5270,9 +5323,9 @@ export const PullRequestTimelineResponseSchema = z.object({
       error: PullRequestTimelineErrorSchema.nullable().optional().default(null),
       requestId: z.string().optional().default(""),
       githubFeaturesEnabled: z.boolean().optional().default(true),
-      // COMPAT(forgeAuthState): added in v0.1.106, remove after 2026-12-27. Optional richer
-      // signal that supersedes githubFeaturesEnabled, mirroring CheckoutPrStatusPayloadSchema.
-      // Drop the boolean once the daemon floor >= v0.1.106.
+      // COMPAT(forgeAuthState): added in v0.2.0-beta.1. Remove the legacy
+      // githubFeaturesEnabled normalization after 2027-01-17 once the supported
+      // daemon floor is >= v0.2.0.
       authState: ForgeAuthStateSchema,
     })
     .optional()
@@ -5392,8 +5445,9 @@ export const ForgeSearchResponseSchema = z.object({
   payload: ForgeSearchResponsePayloadSchema,
 });
 
-// COMPAT(githubSearchRpc): added in v0.1.106, remove after 2026-12-28 once
-// clients use forge.search.*.
+// COMPAT(githubSearchRpc): legacy RPC retained when forge.search.* shipped in
+// v0.2.0-beta.1. Stop serving and consuming it after 2027-01-17 once client
+// and daemon floors are >= v0.2.0.
 export const GitHubSearchResponseSchema = z.object({
   type: z.literal("github_search_response"),
   payload: GitHubSearchResponsePayloadSchema,
@@ -6220,6 +6274,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ArchiveWorkspaceResponseMessageSchema,
   FetchAgentResponseMessageSchema,
   FetchAgentTimelineResponseMessageSchema,
+  AgentTimelineReplacementMessageSchema,
   AgentTimelineListPromptsResponseMessageSchema,
   ProviderSubagentListResponseMessageSchema,
   ProviderSubagentTimelineResponseMessageSchema,
@@ -6827,6 +6882,7 @@ export const WSHelloMessageSchema = z.object({
       [CLIENT_CAPS.providerSubagents]: z.boolean().optional(),
       [CLIENT_CAPS.projectUpdates]: z.boolean().optional(),
       [CLIENT_CAPS.compactProviderSnapshots]: z.boolean().optional(),
+      [CLIENT_CAPS.timelineReplacementInvalidation]: z.boolean().optional(),
       [CLIENT_CAPS.browserHost]: BrowserAutomationHostCapabilitySchema.optional(),
     })
     .passthrough()
