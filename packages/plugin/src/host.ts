@@ -17,6 +17,7 @@ import type {
   PluginTimelineTransformerContribution,
   PluginWorkspacePanelContribution,
 } from "./contracts.js";
+import type { PluginForgeClientProviderContribution } from "./forge.js";
 import { PluginRpcProvider } from "./rpc-context.js";
 import { PaseoApiProvider } from "./paseo-context.js";
 import { callPluginRpc } from "./rpc.js";
@@ -32,6 +33,7 @@ interface PluginCollector {
   addTheme(contribution: PluginThemeContribution): void;
   addTimelineTransformer(contribution: PluginTimelineTransformerContribution): void;
   addTimelineRenderer(contribution: PluginTimelineRendererContribution): void;
+  addForgeClientProvider(contribution: PluginForgeClientProviderContribution): void;
 }
 
 export interface PluginRegistrationCollector {
@@ -44,6 +46,7 @@ export interface PluginRegistrationCollector {
   themes: PluginThemeContribution[];
   timelineTransformers: PluginTimelineTransformerContribution[];
   timelineRenderers: PluginTimelineRendererContribution[];
+  forgeClientProviders: PluginForgeClientProviderContribution[];
 }
 
 export function createPluginContext(
@@ -59,6 +62,7 @@ export function createPluginContext(
   | "addTheme"
   | "addTimelineTransformer"
   | "addTimelineRenderer"
+  | "addForgeClientProvider"
 > {
   return {
     addSurface(id, Component) {
@@ -87,6 +91,9 @@ export function createPluginContext(
     },
     addTimelineRenderer(contribution) {
       collector.addTimelineRenderer(contribution);
+    },
+    addForgeClientProvider(contribution) {
+      collector.addForgeClientProvider(contribution);
     },
   };
 }

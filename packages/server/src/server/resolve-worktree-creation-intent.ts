@@ -182,16 +182,23 @@ async function resolvePrCheckoutIntent(
 
   const baseRefName =
     checkoutTarget.baseRefName.trim() || (await resolveDefaultBranch(params.repoRoot, deps));
-  const defaultRefs = service.defaultCheckoutRefs?.({
-    changeRequestNumber: params.changeRequestNumber,
-    headRef,
-  }) ?? [{ remoteName: "origin", remoteRef: `refs/heads/${headRef}` }];
-  const localBranchName = service.buildPrLocalBranchName?.({ headRef, checkoutTarget });
+  const defaultRefs = service.defaultCheckoutRefs
+    ? await service.defaultCheckoutRefs({
+        changeRequestNumber: params.changeRequestNumber,
+        headRef,
+      })
+    : [{ remoteName: "origin", remoteRef: `refs/heads/${headRef}` }];
+  const localBranchName = service.buildPrLocalBranchName
+    ? await service.buildPrLocalBranchName({ headRef, checkoutTarget })
+    : undefined;
   const headRepositoryOwner = checkoutTarget.isCrossRepository
     ? checkoutTarget.headOwnerLogin?.trim() || undefined
     : undefined;
   const pushRemoteUrl = checkoutTarget.isCrossRepository
-    ? checkoutTarget.headRepositorySshUrl || checkoutTarget.headRepositoryUrl || undefined
+    ? checkoutTarget.preferredPushUrl ||
+      checkoutTarget.headRepositorySshUrl ||
+      checkoutTarget.headRepositoryUrl ||
+      undefined
     : undefined;
   const trackOriginHead = !checkoutTarget.isCrossRepository;
 

@@ -77,7 +77,7 @@ interface SourceRange {
 }
 
 const REGISTRATIONS_REMOVED_BY_TARGET: Record<PluginBuildTarget, ReadonlySet<string>> = {
-  client: new Set(["handle"]),
+  client: new Set(["handle", "addForgeServerProvider"]),
   server: new Set([
     "addSurface",
     "addSidebarItem",
@@ -88,6 +88,7 @@ const REGISTRATIONS_REMOVED_BY_TARGET: Record<PluginBuildTarget, ReadonlySet<str
     "addTheme",
     "addTimelineTransformer",
     "addTimelineRenderer",
+    "addForgeClientProvider",
   ]),
 };
 

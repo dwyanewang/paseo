@@ -117,6 +117,44 @@ export default function contribute(plugin: PluginContext) {
       expect(serverBundle).not.toContain("Invalid plugin RPC method");
     },
   );
+
+  it("keeps Forge client and server providers in their matching bundles", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-forge-compiler-"));
+    temporaryDirectories.push(directory);
+    const entryPath = path.join(directory, "index.ts");
+    await Promise.all([
+      writeFile(
+        path.join(directory, "codeup.client.ts"),
+        `export const clientProvider = { definition: { id: "codeup" }, marker: "CLIENT_FORGE_MARKER" };`,
+      ),
+      writeFile(
+        path.join(directory, "codeup.server.ts"),
+        `export const serverProvider = { definition: { id: "codeup" }, marker: "SERVER_FORGE_MARKER" };`,
+      ),
+      writeFile(
+        entryPath,
+        `import type { PluginContext } from "@getpaseo/plugin";
+import { clientProvider } from "./codeup.client";
+import { serverProvider } from "./codeup.server";
+
+export default function contribute(plugin: PluginContext) {
+  plugin.addForgeClientProvider(clientProvider as never);
+  plugin.addForgeServerProvider(serverProvider as never);
+  return () => undefined;
+}
+`,
+      ),
+    ]);
+
+    const { clientBundle, serverBundle } = await compilePlugin(entryPath);
+
+    expect(clientBundle).toContain("CLIENT_FORGE_MARKER");
+    expect(clientBundle).not.toContain("SERVER_FORGE_MARKER");
+    expect(clientBundle).not.toContain("addForgeServerProvider");
+    expect(serverBundle).toContain("SERVER_FORGE_MARKER");
+    expect(serverBundle).not.toContain("CLIENT_FORGE_MARKER");
+    expect(serverBundle).not.toContain("addForgeClientProvider");
+  });
 });
 
 describe("plugin contribution targets", () => {
