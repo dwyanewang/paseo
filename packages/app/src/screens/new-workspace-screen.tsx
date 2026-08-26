@@ -118,6 +118,7 @@ import {
 } from "./workspace/terminals/state";
 import { captureWorkspaceDraftCleanup } from "./new-workspace/background-handoff";
 import { useNewWorkspaceScreenPresence } from "./new-workspace/screen-presence";
+import { type ClientForgeHostSnapshot, useClientForgeHost } from "@/git/client-forge-registry";
 
 function useIsNewWorkspaceDraftHandoffActive(input: {
   draftId: string | undefined;
@@ -181,6 +182,7 @@ function noopClearDraft() {}
 
 // Stable reference so the keyboard-action handler doesn't re-register each render.
 const PROJECT_PICK_ACTIONS: readonly KeyboardActionId[] = ["workspace.project.pick"];
+
 
 interface WorkspaceIsolationState {
   isolation: "local" | "worktree";
@@ -882,6 +884,7 @@ export function NewWorkspaceScreen({
     projectId,
     displayName: displayNameProp,
   });
+  const clientForgeHost = useClientForgeHost(selectedServerId);
   // COMPAT(workspaceMultiplicity): added in v0.1.97, drop the gate when floor >= v0.1.97
   const supportsWorkspaceMultiplicity = useHostFeature(selectedServerId, "workspaceMultiplicity");
   const supportsForgeSearch = useHostFeature(selectedServerId, "forgeSearch");
@@ -1097,13 +1100,14 @@ export function NewWorkspaceScreen({
         branchDetails,
         prItems,
         baseItem,
+        clientForgeHost,
       }),
-    [baseItem, branchDetails, prItems],
+    [baseItem, branchDetails, clientForgeHost, prItems],
   );
   const triggerLabel = useMemo(() => {
     const displayItem = itemById.get(selectedOptionId);
-    return displayItem ? pickerItemLabel(displayItem) : "main";
-  }, [itemById, selectedOptionId]);
+    return displayItem ? pickerItemLabel(displayItem, clientForgeHost) : "main";
+  }, [clientForgeHost, itemById, selectedOptionId]);
   const selectPickerItem = useCallback(
     (item: PickerItem) => {
       const nextAttachments = syncPickerPrAttachment({
@@ -1440,6 +1444,7 @@ export function NewWorkspaceScreen({
     updateFormPreferences,
     withConnectedClient,
   ]);
+
 
   const agentControlsWithDisabled = useMemo(
     () =>

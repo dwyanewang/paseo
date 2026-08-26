@@ -20,6 +20,7 @@ import type {
   PluginCleanup,
 } from "../contracts.js";
 import type { PluginIconProps, PluginSerializableIcon } from "../icons.js";
+import type { PluginForgeClientProviderContribution } from "../forge.js";
 
 export interface PluginHostProps {
   theme: PluginTheme;
@@ -202,6 +203,7 @@ export interface PluginClientContext extends PluginCommandCapabilities, PluginCl
   addTimelineRenderer<Schema extends ZodType>(
     contribution: PluginTimelineRendererContribution<Schema>,
   ): PluginCleanup;
+  addForgeClientProvider(contribution: PluginForgeClientProviderContribution): PluginCleanup;
   openPanel(id: string, options: PluginClientOpenPanelOptions): void;
 }
 

@@ -10,6 +10,7 @@ import { resolveAppVersion } from "@/utils/app-version";
 import { createPluginClientRuntime } from "./client-runtime";
 import { runPluginClientBundle } from "./evaluate";
 import type { InstalledPlugin } from "./types";
+import { clientForgeRegistry } from "@/git/client-forge-registry";
 
 type CatalogPlugin = Awaited<ReturnType<DaemonClient["getPluginCatalog"]>>[number];
 
@@ -65,6 +66,7 @@ export class PluginRegistry {
     const removed = previous.filter((plugin) => !preserved.includes(plugin));
     if (removed.length > 0) {
       this.byHost.set(serverId, preserved);
+      this.syncForgeHost(serverId, preserved);
       this.publish();
       for (const plugin of removed) this.dispose(plugin);
     }
@@ -106,6 +108,7 @@ export class PluginRegistry {
           themes: [],
           timelineTransformers: [],
           timelineRenderers: [],
+          forgeClientProviders: [],
         };
         const unsubscribeTranslations = installation.i18n.subscribe(() => this.publish());
         installation.lifetime.signal.addEventListener("abort", unsubscribeTranslations, {
@@ -146,6 +149,7 @@ export class PluginRegistry {
       }
     }
     this.byHost.set(serverId, installed);
+    this.syncForgeHost(serverId, installed);
     if (
       installed.length !== catalog.length ||
       installed.length !== previous.length ||
@@ -170,7 +174,24 @@ export class PluginRegistry {
       if (key.startsWith(`${serverId}/`)) this.evaluationErrors.delete(key);
     }
     this.byHost.delete(serverId);
+    clientForgeRegistry.removeHost(serverId);
     this.publish();
+  }
+
+  private syncForgeHost(serverId: string, installed: InstalledPlugin[]): void {
+    const conflicts = clientForgeRegistry.replaceHost(
+      serverId,
+      installed.flatMap((plugin) =>
+        plugin.forgeClientProviders.map((contribution) => ({
+          pluginId: plugin.id,
+          contribution,
+        })),
+      ),
+    );
+    for (const conflict of conflicts) {
+      this.evaluationErrors.set(`${serverId}/${conflict.pluginId}`, conflict.message);
+      console.warn(`[Plugins] ${serverId}/${conflict.pluginId}: ${conflict.message}`);
+    }
   }
 
   private dispose(plugin: InstalledPlugin): void {
