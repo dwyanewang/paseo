@@ -29,3 +29,19 @@ export {
   type PluginSerializableIcon,
   type PluginSvgIcon,
 } from "./icons.js";
+export {
+  defineForgeClientProvider,
+  defineForgeFacts,
+  type PluginForgeClientProviderContribution,
+  type PluginForgeClientView,
+  type PluginForgeDefinition,
+  type PluginForgeFactsRegistration,
+  type PluginForgeFactsContribution,
+  type PluginForgeMergeCapability,
+  type PluginForgeMergeMethod,
+  type PluginForgeReferencePath,
+  type PluginForgeSignInCommand,
+  type PluginForgeSpecificEnvelope,
+  type PluginForgeSvgPathIcon,
+  type PluginForgeUrlGrammar,
+} from "./forge.js";
