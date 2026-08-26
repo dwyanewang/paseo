@@ -14,7 +14,7 @@ category: Plugins
 See the [plugin roadmap](https://github.com/getpaseo/paseo/labels/plugins) for planned contribution
 surfaces and their current status.
 
-Paseo plugins add native workspace panels, composer pills, Command Center items, global surfaces, app themes, daemon behavior, and composer attachment sources. They run on every Paseo client connected to the host, including mobile.
+Paseo plugins add native workspace panels, composer pills, Command Center items, global surfaces, app themes, daemon behavior, Git Forge providers, and composer attachment sources. They run on every Paseo client connected to the host, including mobile.
 
 > **Trust every plugin you add.** `paseo plugin add` and `paseo plugin install` mean “I trust this codebase.” Server code and Git preparation commands run unsandboxed with the daemon user's access on the daemon host; client contributions run inside Paseo. Dependencies and future updates are part of that decision. With `--host`, commands run on the remote daemon host.
 
@@ -198,5 +198,5 @@ security behavior.
 
 ## Next
 
-- [Plugin reference](/docs/plugins/reference), add daemon behavior, use the Paseo SDK, contribute themes and attachments, and manage lifecycle.
+- [Plugin reference](/docs/plugins/reference), add daemon behavior, use the Paseo SDK, contribute themes, Forge providers, and attachments, and manage lifecycle.
 - [TypeScript SDK](/docs/sdk), the workspace, agent, provider, and config API exposed inside plugins.

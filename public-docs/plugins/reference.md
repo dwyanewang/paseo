@@ -1,6 +1,6 @@
 ---
 title: Plugin reference
-description: Local plugin files, client and server runtimes, platform limits, contributions, RPCs, lifecycle, hosts, and CLI commands.
+description: Local plugin files, client and server runtimes, platform limits, contributions, RPCs, Forge providers, lifecycle, hosts, and CLI commands.
 nav: Reference
 order: 46
 category: Plugins
@@ -16,6 +16,7 @@ Local plugins are directory sources installed into one Paseo daemon. A plugin ca
 - dark themes in Settings → Appearance;
 - schema-validated RPC handlers running beside the daemon;
 - normal Paseo operations through the TypeScript SDK;
+- native Git Forge providers for status, search, review, merge, and checkout;
 - searchable external resources in the message composer.
 
 Plugin code is trusted and unsandboxed. Client surfaces run in the Paseo app. Backend contributions run in a subprocess with access to the daemon machine, including its files, processes, credentials, and network.
@@ -68,16 +69,16 @@ Paseo builds separate client and server bundles from `index.ts`. It rejects impo
 
 Paseo provides these modules to client code:
 
-| Module                          | Use it for                            |
-| ------------------------------- | ------------------------------------- |
-| `@getpaseo/plugin`              | Contribution contracts and data hooks |
-| `@getpaseo/plugin/react-native` | Paseo UI components and UI hooks      |
-| `@getpaseo/plugin/server`       | Shared RPC and attachment contracts   |
-| `@tanstack/react-query`         | Request state and caching             |
-| `react`                         | Components and hooks                  |
-| `react/jsx-runtime`             | Compiled JSX                          |
-| `react-native`                  | Cross-platform UI                     |
-| `zod`                           | Shared schemas                        |
+| Module                          | Use it for                                                     |
+| ------------------------------- | -------------------------------------------------------------- |
+| `@getpaseo/plugin`              | Contribution contracts, data hooks, client Forge contributions |
+| `@getpaseo/plugin/react-native` | Paseo UI components and UI hooks                               |
+| `@getpaseo/plugin/server`       | Shared RPC, attachment, and server Forge contracts             |
+| `@tanstack/react-query`         | Request state and caching                                      |
+| `react`                         | Components and hooks                                           |
+| `react/jsx-runtime`             | Compiled JSX                                                   |
+| `react-native`                  | Cross-platform UI                                              |
+| `zod`                           | Shared schemas                                                 |
 
 These exact module specifiers use the host's runtime instances. A client bundle that requests another host module fails with `Module "<name>" is not available in plugin client code`.
 
@@ -759,6 +760,96 @@ export default function contribute(plugin: PluginContext) {
 Inputs and outputs are validated on both sides. RPC names start with a lowercase letter and contain lowercase letters, numbers, dots, hyphens, or underscores. `useRpc()` returns a typed async function. Use TanStack Query for request state, caching, and mutations.
 
 Backend handlers receive the same `PaseoApi` as `{ paseo }`. Their connection belongs to the subprocess and closes when the plugin stops. Backend code can use Node APIs and dependencies installed in the plugin directory.
+
+## Add a Git Forge provider
+
+A Forge provider uses one shared definition and two runtime registrations:
+
+```ts
+import type { PluginContext } from "@getpaseo/plugin";
+import { acmeClientProvider } from "./acme.client";
+import { acmeServerProvider } from "./acme.server";
+
+export default function contribute(plugin: PluginContext) {
+  plugin.addForgeServerProvider(acmeServerProvider);
+  plugin.addForgeClientProvider(acmeClientProvider);
+  return () => {};
+}
+```
+
+The server provider lives in `*.server.ts`:
+
+```ts
+import { defineForgeServerProvider } from "@getpaseo/plugin/server";
+import { acmeDefinition } from "./acme-definition.shared";
+import { createAcmeService } from "./acme-service.server";
+
+export const acmeServerProvider = defineForgeServerProvider({
+  definition: acmeDefinition,
+  service: createAcmeService(),
+});
+```
+
+`service` implements `PluginForgeServerService`. It owns authentication, vendor API or CLI calls,
+change-request status and search, checks, activity, create/merge commands, and checkout targets.
+The complete interface is required; return a rejected promise with a clear unsupported-operation
+message for a command the vendor cannot perform. Throw `ForgeCliMissingError`,
+`ForgeAuthenticationError`, or `ForgeCommandError` from
+`@getpaseo/plugin/server` when the daemon must distinguish setup and authentication failures. If
+`isAuthenticated()` throws those classified errors, set `authProbeCanThrow: true`; otherwise return
+`false` on authentication failure. Return explicit `checkoutRefs` for cross-repository heads. Set
+`supportsCrossRepoCheckoutWithoutRefs: true` only when the forge exposes a universal fetch ref that
+does not need those entries.
+
+The client provider lives in `*.client.ts` and stays free of Node imports:
+
+```ts
+import { defineForgeClientProvider, defineForgeFacts } from "@getpaseo/plugin";
+import { z } from "zod";
+import { acmeDefinition } from "./acme-definition.shared";
+
+const facts = defineForgeFacts({
+  family: "acme",
+  schema: z.object({ forge: z.literal("acme"), ready: z.boolean() }),
+  deriveMergeCapability: ({ ready }) => ({
+    directMergeReady: ready,
+    canEnableAutoMerge: false,
+    autoMergeEnabled: false,
+    canDisableAutoMerge: false,
+    mergeBlockedByQueue: false,
+    allowedMethods: ["merge"],
+    preferredMethod: "merge",
+  }),
+});
+
+export const acmeClientProvider = defineForgeClientProvider({
+  definition: acmeDefinition,
+  facts,
+  view: {
+    icon: { kind: "svg-path", viewBox: [0, 0, 24, 24], path: "..." },
+    brandColor: { light: "#7C3AED", dark: "#A78BFA" },
+  },
+});
+```
+
+The optional client fields are:
+
+- `facts`: Zod validation and merge-capability derivation for the open `forgeSpecific` envelope;
+- `urlGrammar`: tree, blob, line-anchor, checks-page, and pasted-reference syntax;
+- `view`: one validated SVG path and light/dark brand colors.
+
+Provider IDs and facts families match `^[a-z0-9][a-z0-9._-]*$`. The provider ID must not collide
+with a built-in or another plugin provider on that daemon. `cloudHosts` lists known public hosts.
+Add `probeHost` to the server provider only when a self-hosted host can be recognized through
+existing local authentication; do not send credentials or anonymous probes to a remote-derived
+hostname.
+
+Forge contributions are scoped to their daemon. Reload, disable, removal, subprocess failure, and
+the global plugin switch unregister the adapter, stop status polling, clear resolver state, and
+remove its client presentation. Cross-repository checkout refs can set `remoteUrl` when the head is
+not fetchable through an existing Git remote.
+
+See the repository's `plugin-examples/codeup` directory for a complete provider.
 
 ## Debug backend output
 
