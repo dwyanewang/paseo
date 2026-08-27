@@ -111,7 +111,35 @@ try {
   assert.equal(result.status, 0, result.stderr);
   assert.equal(existsSync(state), false);
 
-  console.log("serve-dist: 10 checks passed");
+  result = run(["prepare-build", "--target", "windows"]);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(existsSync(apk), true, "a Windows-only build must preserve the prior APK source");
+  assert.equal(existsSync(zip), false);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  writeFileSync(zip, "windows-only-zip");
+
+  const windowsReservation = createServer();
+  const windowsPort = await listen(windowsReservation);
+  await close(windowsReservation);
+  result = run(["--target", "windows", String(windowsPort), "60"]);
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  assert.match(result.stdout, /目标: windows/);
+  writeFileSync(zip, "windows-only-refreshed-zip");
+  result = run(["keep", String(windowsPort), "60"]);
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  const zipResponse = await fetch(
+    `http://127.0.0.1:${windowsPort}/paseo-desktop-win-x64-${version}.zip`,
+  );
+  assert.equal(zipResponse.status, 200);
+  assert.equal(await zipResponse.text(), "windows-only-refreshed-zip");
+  const missingApkResponse = await fetch(
+    `http://127.0.0.1:${windowsPort}/paseo-android-${version}.apk`,
+  );
+  assert.equal(missingApkResponse.status, 404);
+  result = run(["stop"]);
+  assert.equal(result.status, 0, result.stderr);
+
+  console.log("serve-dist: 11 checks passed");
 } finally {
   run(["stop"]);
   rmSync(root, { recursive: true, force: true });

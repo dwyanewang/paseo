@@ -7,14 +7,19 @@ usage() {
 Usage: bash dwyanewang/build-paseo-artifacts.sh --build-root PATH \
   (--preflight-state PATH | --skip-preflight) [options]
 
-Build and verify the Paseo server, Android ARM64 APK, and Windows x64 zip from
-the dedicated product worktree. The script owns stage logging, resource
-profiles, terminal-webview cleanup, final artifact verification, and the
-download service.
+Build and verify selected Paseo artifacts from the dedicated product worktree.
+The default remains server + Android ARM64 APK + Windows x64 zip. The script
+owns stage logging, resource profiles, temporary local overlays,
+terminal-webview cleanup, final artifact verification, and the download service.
 
   --build-root PATH       Dedicated product build worktree (required).
   --preflight-state PATH  State written by prepare-rw-main-for-build.sh.
   --skip-preflight        Build the current clean checkout without synchronizing.
+  --local-branch BRANCH   Temporarily merge a local branch for this build only.
+                          Repeatable; requires --skip-preflight and never fetches,
+                          changes the overlay manifest, or moves rw-main.
+  --target TARGET         Artifact target: server, android, or windows. Repeatable;
+                          desktop is accepted as an alias for windows. Default: all.
   --run-dir PATH          New directory for logs and the sourceable result file.
   --download-port PORT    Download service port (default: 8800).
   --download-ttl SECONDS  Download service lifetime (default: 10800).
@@ -35,6 +40,9 @@ fail() {
 build_root_arg=
 preflight_state_arg=
 skip_preflight=0
+declare -a local_branches=()
+declare -A requested_targets=()
+target_option_seen=0
 run_dir_arg=
 download_port=8800
 download_ttl=10800
@@ -59,6 +67,32 @@ while (($# > 0)); do
     --skip-preflight)
       skip_preflight=1
       shift
+      ;;
+    --local-branch)
+      (($# >= 2)) || fail "missing value for --local-branch" 2
+      local_branches+=("$2")
+      shift 2
+      ;;
+    --target)
+      (($# >= 2)) || fail "missing value for --target" 2
+      target_option_seen=1
+      case "$2" in
+        all)
+          requested_targets[server]=1
+          requested_targets[android]=1
+          requested_targets[windows]=1
+          ;;
+        server | android | windows)
+          requested_targets[$2]=1
+          ;;
+        desktop)
+          requested_targets[windows]=1
+          ;;
+        *)
+          fail "unknown build target: $2 (expected server, android, windows, or desktop)" 2
+          ;;
+      esac
+      shift 2
       ;;
     --run-dir)
       (($# >= 2)) || fail "missing value for --run-dir" 2
@@ -102,6 +136,23 @@ fi
 if [[ -z "$preflight_state_arg" ]] && ((skip_preflight == 0)); then
   fail "exactly one of --preflight-state and --skip-preflight is required" 2
 fi
+if ((${#local_branches[@]} > 0)) && ((skip_preflight == 0)); then
+  fail "--local-branch requires --skip-preflight" 2
+fi
+if ((target_option_seen == 0)); then
+  requested_targets[server]=1
+  requested_targets[android]=1
+  requested_targets[windows]=1
+fi
+build_server_target=${requested_targets[server]:-0}
+build_android_target=${requested_targets[android]:-0}
+build_windows_target=${requested_targets[windows]:-0}
+declare -a selected_target_names=()
+((build_server_target)) && selected_target_names+=(server)
+((build_android_target)) && selected_target_names+=(android)
+((build_windows_target)) && selected_target_names+=(windows)
+selected_targets_csv=$(IFS=,; printf '%s' "${selected_target_names[*]}")
+((build_android_target || build_windows_target)) || serve_dist=0
 [[ "$download_port" =~ ^[0-9]+$ ]] || fail "download port must be numeric: $download_port" 2
 [[ "$download_ttl" =~ ^[0-9]+$ ]] || fail "download TTL must be numeric: $download_ttl" 2
 download_port=$((10#$download_port))
@@ -138,6 +189,24 @@ canonical_common_dir() {
   realpath -e -- "$common_dir"
 }
 
+find_worktree_for_branch() {
+  local branch_ref="refs/heads/$1"
+  git -C "$control_root" worktree list --porcelain | awk -v wanted="$branch_ref" '
+    /^worktree / {
+      path = $0
+      sub(/^worktree /, "", path)
+    }
+    /^branch / && $2 == wanted { print path }
+  '
+}
+
+dependency_inputs_changed() {
+  local old_ref=$1 new_ref=$2
+  ! git -C "$build_root" diff --quiet "$old_ref..$new_ref" -- \
+    package.json package-lock.json ':(glob)**/package.json' \
+    ':(glob)patches/**' scripts/postinstall-patches.mjs
+}
+
 [[ "$(canonical_common_dir "$control_root")" == "$(canonical_common_dir "$build_root")" ]] ||
   fail "control and build worktrees do not belong to the same Git repository"
 
@@ -160,8 +229,36 @@ build_branch=$(git -C "$build_root" symbolic-ref --quiet --short HEAD) ||
   fail "build worktree is detached: $build_root"
 [[ -z "$(git -C "$build_root" status --porcelain)" ]] ||
   fail "build worktree is not clean: $build_root"
+if ((${#local_branches[@]} > 0)); then
+  [[ "$build_branch" == rw-main ]] ||
+    fail "local overlay builds must start from rw-main (current: $build_branch)"
+fi
 control_start_head=$(git -C "$control_root" rev-parse HEAD)
 build_start_head=$(git -C "$build_root" rev-parse HEAD)
+build_base_branch=$build_branch
+build_base_head=$build_start_head
+
+declare -A seen_local_branches=()
+declare -a local_branch_heads=()
+for local_branch in "${local_branches[@]}"; do
+  git check-ref-format --branch "$local_branch" >/dev/null ||
+    fail "invalid local branch: $local_branch"
+  case "$local_branch" in
+    main | rw-base | rw-main | chore/build-paseo)
+      fail "local overlay uses a reserved branch: $local_branch"
+      ;;
+  esac
+  [[ -z "${seen_local_branches[$local_branch]:-}" ]] ||
+    fail "duplicate --local-branch value: $local_branch" 2
+  git -C "$build_root" show-ref --verify --quiet "refs/heads/$local_branch" ||
+    fail "local overlay branch does not exist: $local_branch"
+  local_worktree=$(find_worktree_for_branch "$local_branch")
+  if [[ -n "$local_worktree" && -n "$(git -C "$local_worktree" status --porcelain)" ]]; then
+    fail "worktree for local overlay branch is dirty: $local_worktree"
+  fi
+  seen_local_branches[$local_branch]=1
+  local_branch_heads+=("$(git -C "$build_root" rev-parse "$local_branch")")
+done
 
 run_id=$(date +%Y%m%d-%H%M%S)-$$
 if [[ -n "$run_dir_arg" ]]; then
@@ -185,6 +282,8 @@ terminal_webview=packages/app/src/terminal/webview/terminal-emulator-webview-htm
 terminal_restore_needed=0
 distribution_cleanup_needed=0
 result_temp=
+local_overlay_branch=
+local_overlay_cleanup_needed=0
 android_native_pid=
 windows_pid=
 android_native_log="$run_dir/android-native-assemble.branch.log"
@@ -192,6 +291,29 @@ windows_log="$run_dir/windows-artifacts.branch.log"
 android_native_bundle_gate=not-checked
 artifact_parallel_mode=not-evaluated
 mem_available_bytes=0
+
+restore_local_overlay() {
+  ((local_overlay_cleanup_needed)) || return 0
+  local current_branch restore_status=0
+  if git -C "$build_root" rev-parse --quiet --verify MERGE_HEAD >/dev/null; then
+    git -C "$build_root" merge --abort || restore_status=$?
+  fi
+  current_branch=$(git -C "$build_root" symbolic-ref --quiet --short HEAD || true)
+  if [[ "$current_branch" == "$local_overlay_branch" ]]; then
+    git -C "$build_root" switch --quiet "$build_base_branch" || restore_status=$?
+  elif [[ "$current_branch" != "$build_base_branch" ]]; then
+    printf 'build-paseo-artifacts: local overlay cleanup found unexpected branch: %s\n' \
+      "${current_branch:-detached}" >&2
+    restore_status=1
+  fi
+  if git -C "$build_root" show-ref --verify --quiet "refs/heads/$local_overlay_branch"; then
+    git -C "$build_root" branch -D "$local_overlay_branch" >/dev/null || restore_status=$?
+  fi
+  if ((restore_status == 0)); then
+    local_overlay_cleanup_needed=0
+  fi
+  return "$restore_status"
+}
 
 write_exit_status() {
   local status=$1 status_temp
@@ -264,6 +386,14 @@ finish() {
       ((status != 0)) || status=1
     fi
   fi
+  if ((local_overlay_cleanup_needed)); then
+    if restore_local_overlay; then
+      printf '%s\n' 'build-paseo-artifacts: restored rw-main after the temporary local overlay.'
+    else
+      printf '%s\n' 'build-paseo-artifacts: failed to restore the build worktree after the temporary local overlay.' >&2
+      ((status != 0)) || status=1
+    fi
+  fi
   write_exit_status "$status"
   if ((status == 0)); then
     printf 'PASEO_ARTIFACT_BUILD_STATUS=ready\n'
@@ -285,6 +415,61 @@ stage() {
   printf -v line '[%s] %s' "$(date '+%Y-%m-%d %H:%M:%S %z')" "$1"
   printf '%s\n' "$line"
   printf '%s\n' "$line" >>"$stage_log"
+}
+
+prepare_local_overlay() {
+  local branch_index branch_name branch_head candidate_suffix
+
+  ((${#local_branches[@]} > 0)) || return 0
+  candidate_suffix="$(date +%Y%m%d-%H%M%S)-$$"
+  local_overlay_branch="rw-local-build-$candidate_suffix"
+  git -C "$build_root" show-ref --verify --quiet "refs/heads/$local_overlay_branch" &&
+    fail "temporary local overlay branch already exists: $local_overlay_branch"
+
+  stage "local-overlay: create $local_overlay_branch from $build_base_branch $build_base_head"
+  git -C "$build_root" switch --quiet --create "$local_overlay_branch" "$build_base_head"
+  local_overlay_cleanup_needed=1
+  for ((branch_index = 0; branch_index < ${#local_branches[@]}; branch_index++)); do
+    branch_name=${local_branches[$branch_index]}
+    branch_head=${local_branch_heads[$branch_index]}
+    [[ "$(git -C "$build_root" rev-parse "$branch_name")" == "$branch_head" ]] ||
+      fail "local overlay branch moved before merge: $branch_name"
+    stage "local-overlay: merge $branch_name at $branch_head"
+    GIT_MERGE_AUTOEDIT=no git -C "$build_root" merge --no-ff --no-edit "$branch_head"
+  done
+
+  if dependency_inputs_changed "$build_base_head" HEAD; then
+    stage "local-overlay: install dependencies changed by the temporary candidate"
+    (cd "$build_root" && npm install)
+    dependencies_reinstalled=1
+  else
+    dependencies_reinstalled=0
+  fi
+  [[ -z "$(git -C "$build_root" status --porcelain)" ]] ||
+    fail "local overlay dependency preparation left tracked or untracked changes"
+
+  stage "local-overlay: refresh generated workspace declarations"
+  (
+    cd "$build_root"
+    npm run build --workspace=@getpaseo/relay
+    npm run build:client
+    npm run build:plugin
+  )
+  stage "local-overlay: run format, typecheck, and lint readiness checks"
+  (
+    cd "$build_root"
+    npm run format:check
+    npm run typecheck
+    npm run lint
+  )
+  [[ -z "$(git -C "$build_root" status --porcelain)" ]] ||
+    fail "local overlay readiness checks left tracked or untracked changes"
+
+  build_branch=$local_overlay_branch
+  build_start_head=$(git -C "$build_root" rev-parse HEAD)
+  rw_main_rebuilt=1
+  preflight_mode=local-overlay
+  stage "local-overlay: candidate ready at $build_start_head"
 }
 
 print_branch_log() {
@@ -592,83 +777,143 @@ cd "$build_root"
 command -v mise >/dev/null || fail "mise is required"
 mise install
 eval "$(mise activate bash)"
-[[ -n "${ANDROID_HOME:-}" ]] || fail "ANDROID_HOME was not set by the repository mise config"
-export ANDROID_SDK_ROOT="$ANDROID_HOME"
+if ((build_android_target)); then
+  [[ -n "${ANDROID_HOME:-}" ]] || fail "ANDROID_HOME was not set by the repository mise config"
+  export ANDROID_SDK_ROOT="$ANDROID_HOME"
+fi
 paseo_wineprefix=${PASEO_WINEPREFIX:-"${HOME:?}/.local/share/paseo/wineprefix"}
 export WINEPREFIX="$paseo_wineprefix"
 export PASEO_BUILD_ROOT="$build_root"
 
-[[ -z "$(git status --porcelain -- "$terminal_webview")" ]] ||
-  fail "terminal-webview has pre-existing changes: $build_root/$terminal_webview"
-
-stage "prepare-build: clear exact old artifacts and write this run's marker"
-bash "$control_root/dwyanewang/serve-dist.sh" prepare-build
-terminal_restore_needed=1
-stage "terminal-webview: regenerate embedded HTML"
-(cd packages/app && npm run build:terminal-webview)
-
-stage "server: build workspace artifacts"
-if ((rw_main_rebuilt && !dependencies_reinstalled)); then
-  npm run build:highlight
-  npm run build --workspace=@getpaseo/server
-  npm run build --workspace=@getpaseo/cli
-  server_build_mode=incremental-after-rw-main-rebuild
-else
-  npm run build:server
-  server_build_mode=full
-fi
-server_artifact="$build_root/packages/server/dist/server/server/exports.js"
-cli_artifact="$build_root/packages/cli/dist/index.js"
-[[ -s "$server_artifact" ]] || fail "server entry artifact is missing or empty: $server_artifact"
-[[ -s "$cli_artifact" ]] || fail "CLI entry artifact is missing or empty: $cli_artifact"
-compgen -G "$build_root/packages/protocol/dist/*.js" >/dev/null ||
-  fail "protocol JavaScript artifacts are missing"
-stage "server: CLI, server, and protocol artifacts verified"
-
-resource_profile_dir="$build_root/.dev/build-profiles/$run_id"
-stage "android: Expo prebuild"
-(cd packages/app && CI=1 npx cross-env APP_VARIANT=production expo prebuild --platform android)
-stage "android: configure Metro 8 workers and local-balanced Hermes"
-bash "$control_root/dwyanewang/configure-android-build.sh" \
-  --build-root "$build_root" \
-  --metro-workers 8 \
-  --hermes-profile local-balanced
-
-stage "android: Metro/Hermes first phase (profile: $resource_profile_dir)"
-(
-  cd packages/app/android
-  bash "$control_root/dwyanewang/profile-build-resources.sh" \
-    --label android-metro-hermes \
-    --output-dir "$resource_profile_dir" \
-    -- ./gradlew :app:createBundleReleaseJsAndAssets \
-    --no-daemon --no-parallel --max-workers=1 \
-    -Dorg.gradle.jvmargs="-Xmx2g -XX:MaxMetaspaceSize=768m" \
-    -PreactNativeArchitectures=arm64-v8a
-)
-android_bundle="$build_root/packages/app/android/app/build/generated/assets/createBundleReleaseJsAndAssets/index.android.bundle"
-[[ -s "$android_bundle" ]] || fail "Android bundle is missing or empty: $android_bundle"
-
-export PYTHONPATH= PYTHONHOME= WINEDEBUG=-all CI=1
-stage "artifact branches: launch Android ARM64 native assemble; gate Windows on the bundle producer"
-printf 'PASEO_PARALLEL_BRANCH_LOG=android-native-assemble|%s\n' "$android_native_log"
-printf 'PASEO_PARALLEL_BRANCH_LOG=windows-artifacts|%s\n' "$windows_log"
-run_profiled_artifact_branches
-
-native_transcript="$resource_profile_dir/android-native-assemble.transcript.log"
-grep -Fx '> Task :app:createBundleReleaseJsAndAssets UP-TO-DATE' "$native_transcript" >/dev/null ||
-  fail "second Android phase did not keep the bundle producer UP-TO-DATE: $native_transcript"
-apk_artifact="$build_root/packages/app/android/app/build/outputs/apk/release/app-release.apk"
-[[ -s "$apk_artifact" ]] || fail "Android APK is missing or empty: $apk_artifact"
-stage "android: APK and second-phase bundle producer verified"
+prepare_local_overlay
 
 version=$(node -e '
   const pkg = require(process.argv[1]);
   if (typeof pkg.version !== "string" || !/^[0-9A-Za-z][0-9A-Za-z.+-]*$/.test(pkg.version)) process.exit(1);
   process.stdout.write(pkg.version);
 ' "$build_root/package.json") || fail "could not read a safe package version"
-zip_artifact="$build_root/packages/desktop/release/Paseo-Setup-${version}-x64.zip"
-[[ -s "$zip_artifact" ]] || fail "Windows zip is missing or empty: $zip_artifact"
-stage "windows: profiled x64 zip verified"
+
+[[ -z "$(git status --porcelain -- "$terminal_webview")" ]] ||
+  fail "terminal-webview has pre-existing changes: $build_root/$terminal_webview"
+
+declare -a serve_target_args=()
+if ((build_android_target && !build_windows_target)); then
+  serve_target_args=(--target android)
+elif ((build_windows_target && !build_android_target)); then
+  serve_target_args=(--target windows)
+fi
+if ((build_android_target || build_windows_target)); then
+  stage "prepare-build: clear exact selected artifacts and write this run's marker ($selected_targets_csv)"
+  bash "$control_root/dwyanewang/serve-dist.sh" prepare-build "${serve_target_args[@]}"
+  terminal_restore_needed=1
+  stage "terminal-webview: regenerate embedded HTML"
+  (cd packages/app && npm run build:terminal-webview)
+else
+  stage "prepare-build: server-only selection has no downloadable artifact marker"
+fi
+
+server_artifact_path="$build_root/packages/server/dist/server/server/exports.js"
+cli_artifact_path="$build_root/packages/cli/dist/index.js"
+server_artifact=
+apk_artifact=
+zip_artifact=
+server_build_mode=not-selected
+if ((build_server_target || build_windows_target)); then
+  stage "server: build workspace artifacts required by selected targets"
+  if ((rw_main_rebuilt && !dependencies_reinstalled)); then
+    npm run build:highlight
+    npm run build --workspace=@getpaseo/server
+    npm run build --workspace=@getpaseo/cli
+    server_build_mode=incremental-after-rw-main-rebuild
+  else
+    npm run build:server
+    server_build_mode=full
+  fi
+  [[ -s "$server_artifact_path" ]] ||
+    fail "server entry artifact is missing or empty: $server_artifact_path"
+  [[ -s "$cli_artifact_path" ]] || fail "CLI entry artifact is missing or empty: $cli_artifact_path"
+  compgen -G "$build_root/packages/protocol/dist/*.js" >/dev/null ||
+    fail "protocol JavaScript artifacts are missing"
+  ((build_server_target)) && server_artifact=$server_artifact_path
+  stage "server: CLI, server, and protocol artifacts verified"
+elif ((build_android_target)); then
+  stage "android: build app workspace dependencies"
+  npm run build:app-deps
+  server_build_mode=app-deps-only
+  compgen -G "$build_root/packages/protocol/dist/*.js" >/dev/null ||
+    fail "protocol JavaScript artifacts are missing"
+fi
+
+resource_profile_dir=
+if ((build_android_target || build_windows_target)); then
+  resource_profile_dir="$build_root/.dev/build-profiles/$run_id"
+fi
+if ((build_android_target)); then
+  stage "android: Expo prebuild"
+  (cd packages/app && CI=1 npx cross-env APP_VARIANT=production expo prebuild --platform android)
+  stage "android: configure Metro 8 workers and local-balanced Hermes"
+  bash "$control_root/dwyanewang/configure-android-build.sh" \
+    --build-root "$build_root" \
+    --metro-workers 8 \
+    --hermes-profile local-balanced
+
+  stage "android: Metro/Hermes first phase (profile: $resource_profile_dir)"
+  (
+    cd packages/app/android
+    bash "$control_root/dwyanewang/profile-build-resources.sh" \
+      --label android-metro-hermes \
+      --output-dir "$resource_profile_dir" \
+      -- ./gradlew :app:createBundleReleaseJsAndAssets \
+      --no-daemon --no-parallel --max-workers=1 \
+      -Dorg.gradle.jvmargs="-Xmx2g -XX:MaxMetaspaceSize=768m" \
+      -PreactNativeArchitectures=arm64-v8a
+  )
+  android_bundle="$build_root/packages/app/android/app/build/generated/assets/createBundleReleaseJsAndAssets/index.android.bundle"
+  [[ -s "$android_bundle" ]] || fail "Android bundle is missing or empty: $android_bundle"
+fi
+
+export PYTHONPATH= PYTHONHOME= WINEDEBUG=-all CI=1
+if ((build_android_target && build_windows_target)); then
+  stage "artifact branches: launch Android ARM64 native assemble; gate Windows on the bundle producer"
+  printf 'PASEO_PARALLEL_BRANCH_LOG=android-native-assemble|%s\n' "$android_native_log"
+  printf 'PASEO_PARALLEL_BRANCH_LOG=windows-artifacts|%s\n' "$windows_log"
+  run_profiled_artifact_branches
+elif ((build_android_target)); then
+  artifact_parallel_mode=android-only
+  stage "android: launch ARM64 native assemble without a Windows branch"
+  printf 'PASEO_PARALLEL_BRANCH_LOG=android-native-assemble|%s\n' "$android_native_log"
+  launch_android_native_branch
+  wait_for_android_bundle_gate
+  wait_for_active_branches
+  print_branch_log android-native-assemble "$android_native_log"
+elif ((build_windows_target)); then
+  artifact_parallel_mode=windows-only
+  android_native_bundle_gate=not-selected
+  stage "windows: launch standalone profiled x64 artifact chain"
+  printf 'PASEO_PARALLEL_BRANCH_LOG=windows-artifacts|%s\n' "$windows_log"
+  launch_windows_branch
+  wait_for_active_branches
+  print_branch_log windows-artifacts "$windows_log"
+else
+  artifact_parallel_mode=not-applicable
+  android_native_bundle_gate=not-selected
+fi
+
+native_transcript=
+if ((build_android_target)); then
+  native_transcript="$resource_profile_dir/android-native-assemble.transcript.log"
+  grep -Fx '> Task :app:createBundleReleaseJsAndAssets UP-TO-DATE' "$native_transcript" >/dev/null ||
+    fail "second Android phase did not keep the bundle producer UP-TO-DATE: $native_transcript"
+  apk_artifact="$build_root/packages/app/android/app/build/outputs/apk/release/app-release.apk"
+  [[ -s "$apk_artifact" ]] || fail "Android APK is missing or empty: $apk_artifact"
+  stage "android: APK and second-phase bundle producer verified"
+fi
+
+if ((build_windows_target)); then
+  zip_artifact="$build_root/packages/desktop/release/Paseo-Setup-${version}-x64.zip"
+  [[ -s "$zip_artifact" ]] || fail "Windows zip is missing or empty: $zip_artifact"
+  stage "windows: profiled x64 zip verified"
+fi
 
 restore_terminal_webview
 stage "cleanup: terminal-webview restored"
@@ -680,20 +925,59 @@ stage "cleanup: terminal-webview restored"
   fail "control HEAD changed during artifact generation: $control_root"
 [[ "$(git -C "$build_root" rev-parse HEAD)" == "$build_start_head" ]] ||
   fail "build HEAD changed during artifact generation: $build_root"
+for ((local_index = 0; local_index < ${#local_branches[@]}; local_index++)); do
+  current_local_head=$(git -C "$build_root" rev-parse "${local_branches[$local_index]}")
+  [[ "$current_local_head" == "${local_branch_heads[$local_index]}" ]] ||
+    fail "local overlay branch moved during artifact generation: ${local_branches[$local_index]}"
+done
 if [[ "$preflight_mode" == ready-state ]]; then
   [[ "$(git -C "$control_root" rev-parse refs/heads/main)" == "$main_after" ]] ||
     fail "main moved during artifact generation; rerun preflight"
   [[ "$(git -C "$control_root" rev-parse refs/heads/rw-base)" == "$rw_base_after" ]] ||
     fail "rw-base moved during artifact generation; rerun preflight"
 fi
+if [[ "$preflight_mode" == local-overlay ]]; then
+  restore_local_overlay || fail "could not restore rw-main after the temporary local overlay"
+  stage "local-overlay: restored $build_base_branch and removed the temporary candidate"
+  [[ "$(git -C "$build_root" symbolic-ref --quiet --short HEAD)" == "$build_base_branch" ]] ||
+    fail "build worktree did not return to $build_base_branch"
+  [[ "$(git -C "$build_root" rev-parse HEAD)" == "$build_base_head" ]] ||
+    fail "$build_base_branch moved during the local overlay build"
+  [[ -z "$(git -C "$build_root" status --porcelain)" ]] ||
+    fail "build worktree is not clean after restoring the local overlay"
+fi
 
 download_service_started=0
-metro_summary="$resource_profile_dir/android-metro-hermes.summary"
-native_summary="$resource_profile_dir/android-native-assemble.summary"
-windows_summary="$resource_profile_dir/windows-artifacts.summary"
-windows_transcript="$resource_profile_dir/windows-artifacts.transcript.log"
-stat --printf='PASEO_ARTIFACT_STAT=%n|%s|%y\n' \
-  "$server_artifact" "$apk_artifact" "$zip_artifact"
+metro_summary=
+native_summary=
+windows_summary=
+windows_transcript=
+android_profile_dir=
+windows_profile_dir=
+android_native_branch_log_result=
+windows_branch_log_result=
+declare -a artifact_stats=()
+declare -a resource_summaries=()
+if ((build_server_target)); then
+  artifact_stats+=("$server_artifact")
+fi
+if ((build_android_target)); then
+  android_profile_dir=$resource_profile_dir
+  android_native_branch_log_result=$android_native_log
+  metro_summary="$resource_profile_dir/android-metro-hermes.summary"
+  native_summary="$resource_profile_dir/android-native-assemble.summary"
+  artifact_stats+=("$apk_artifact")
+  resource_summaries+=("$metro_summary" "$native_summary")
+fi
+if ((build_windows_target)); then
+  windows_profile_dir=$resource_profile_dir
+  windows_branch_log_result=$windows_log
+  windows_summary="$resource_profile_dir/windows-artifacts.summary"
+  windows_transcript="$resource_profile_dir/windows-artifacts.transcript.log"
+  artifact_stats+=("$zip_artifact")
+  resource_summaries+=("$windows_summary")
+fi
+stat --printf='PASEO_ARTIFACT_STAT=%n|%s|%y\n' "${artifact_stats[@]}"
 summary_keys=(
   exit_status
   systemd_cleanup_degraded
@@ -705,7 +989,7 @@ summary_keys=(
   swap_peak_bytes
   minimum_host_mem_available_bytes
 )
-for summary in "$metro_summary" "$native_summary" "$windows_summary"; do
+for summary in "${resource_summaries[@]}"; do
   [[ -s "$summary" ]] || fail "resource summary is missing or empty: $summary"
   for summary_key in "${summary_keys[@]}"; do
     grep -q "^${summary_key}=" "$summary" ||
@@ -729,7 +1013,8 @@ if ((serve_dist)); then
   # The long-lived download server must not inherit the artifact-build lock.
   (
     eval "exec ${build_lock_fd}>&-"
-    exec bash "$control_root/dwyanewang/serve-dist.sh" "$download_port" "$download_ttl"
+    exec bash "$control_root/dwyanewang/serve-dist.sh" \
+      "${serve_target_args[@]}" "$download_port" "$download_ttl"
   )
   download_service_started=1
   distribution_cleanup_needed=1
@@ -748,23 +1033,31 @@ result_temp=$(mktemp "${result_file}.tmp.XXXXXX")
   printf 'paseo_artifact_stage_log=%q\n' "$stage_log"
   printf 'paseo_artifact_exit_status_file=%q\n' "$exit_status_file"
   printf 'paseo_artifact_total_seconds=%q\n' "$total_seconds"
+  printf 'paseo_artifact_targets=%q\n' "$selected_targets_csv"
   printf 'paseo_artifact_preflight_mode=%q\n' "$preflight_mode"
   printf 'paseo_artifact_server_build_mode=%q\n' "$server_build_mode"
   printf 'paseo_artifact_server=%q\n' "$server_artifact"
   printf 'paseo_artifact_apk=%q\n' "$apk_artifact"
   printf 'paseo_artifact_windows_zip=%q\n' "$zip_artifact"
-  printf 'paseo_artifact_android_profile_dir=%q\n' "$resource_profile_dir"
+  printf 'paseo_artifact_android_profile_dir=%q\n' "$android_profile_dir"
   printf 'paseo_artifact_android_metro_summary=%q\n' "$metro_summary"
   printf 'paseo_artifact_android_native_summary=%q\n' "$native_summary"
-  printf 'paseo_artifact_windows_profile_dir=%q\n' "$resource_profile_dir"
+  printf 'paseo_artifact_windows_profile_dir=%q\n' "$windows_profile_dir"
   printf 'paseo_artifact_windows_summary=%q\n' "$windows_summary"
   printf 'paseo_artifact_windows_transcript=%q\n' "$windows_transcript"
   printf 'paseo_artifact_parallel_mode=%q\n' "$artifact_parallel_mode"
   printf 'paseo_artifact_android_native_bundle_gate=%q\n' "$android_native_bundle_gate"
   printf 'paseo_artifact_parallel_mem_available_bytes=%q\n' "$mem_available_bytes"
   printf 'paseo_artifact_parallel_min_available_bytes=%q\n' "$parallel_min_available_bytes"
-  printf 'paseo_artifact_android_native_branch_log=%q\n' "$android_native_log"
-  printf 'paseo_artifact_windows_branch_log=%q\n' "$windows_log"
+  printf 'paseo_artifact_android_native_branch_log=%q\n' "$android_native_branch_log_result"
+  printf 'paseo_artifact_windows_branch_log=%q\n' "$windows_branch_log_result"
+  printf 'paseo_artifact_local_overlay_count=%q\n' "${#local_branches[@]}"
+  for ((local_index = 0; local_index < ${#local_branches[@]}; local_index++)); do
+    printf 'paseo_artifact_local_overlay_branch_%s=%q\n' \
+      "$local_index" "${local_branches[$local_index]}"
+    printf 'paseo_artifact_local_overlay_head_%s=%q\n' \
+      "$local_index" "${local_branch_heads[$local_index]}"
+  done
   printf 'paseo_artifact_download_service_started=%q\n' "$download_service_started"
   printf 'paseo_artifact_download_port=%q\n' "$download_port"
   printf 'paseo_artifact_download_ttl=%q\n' "$download_ttl"
@@ -773,12 +1066,13 @@ chmod 600 "$result_temp"
 mv -- "$result_temp" "$result_file"
 distribution_cleanup_needed=0
 
-stage "complete: server, Android, Windows, cleanup, and requested distribution succeeded"
+stage "complete: selected targets ($selected_targets_csv), cleanup, and requested distribution succeeded"
 printf 'PASEO_ARTIFACT_BUILD_VERSION=%s\n' "$version"
 printf 'PASEO_ARTIFACT_BUILD_TOTAL_SECONDS=%s\n' "$total_seconds"
-printf 'PASEO_ARTIFACT_SERVER=%s\n' "$server_artifact"
-printf 'PASEO_ARTIFACT_APK=%s\n' "$apk_artifact"
-printf 'PASEO_ARTIFACT_WINDOWS_ZIP=%s\n' "$zip_artifact"
-printf 'PASEO_ANDROID_PROFILE_DIR=%s\n' "$resource_profile_dir"
-printf 'PASEO_WINDOWS_PROFILE_DIR=%s\n' "$resource_profile_dir"
+printf 'PASEO_ARTIFACT_TARGETS=%s\n' "$selected_targets_csv"
+[[ -z "$server_artifact" ]] || printf 'PASEO_ARTIFACT_SERVER=%s\n' "$server_artifact"
+[[ -z "$apk_artifact" ]] || printf 'PASEO_ARTIFACT_APK=%s\n' "$apk_artifact"
+[[ -z "$zip_artifact" ]] || printf 'PASEO_ARTIFACT_WINDOWS_ZIP=%s\n' "$zip_artifact"
+((build_android_target == 0)) || printf 'PASEO_ANDROID_PROFILE_DIR=%s\n' "$resource_profile_dir"
+((build_windows_target == 0)) || printf 'PASEO_WINDOWS_PROFILE_DIR=%s\n' "$resource_profile_dir"
 printf 'PASEO_ARTIFACT_RESULT_FILE=%s\n' "$result_file"

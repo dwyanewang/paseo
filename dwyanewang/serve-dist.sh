@@ -13,6 +13,10 @@ STATE_FILE="$RUNTIME_ROOT/server.state"
 BUILD_STAMP="$RUNTIME_ROOT/build.started"
 TAILSCALE_CONTAINER=paseo-tailscale-download
 KEEP=0
+TARGETS_EXPLICIT=0
+TARGET_ANDROID=0
+TARGET_WINDOWS=0
+TARGETS_CSV=
 
 die() {
   echo "❌ $*" >&2
@@ -36,6 +40,42 @@ validate_ttl() {
   printf '%s\n' "$value"
 }
 
+select_target() {
+  local target=$1
+  TARGETS_EXPLICIT=1
+  case "$target" in
+    android)
+      TARGET_ANDROID=1
+      ;;
+    windows | desktop)
+      TARGET_WINDOWS=1
+      ;;
+    all)
+      TARGET_ANDROID=1
+      TARGET_WINDOWS=1
+      ;;
+    *)
+      die "未知分发目标: $target（仅支持 android、windows/desktop 或 all）"
+      ;;
+  esac
+}
+
+finalize_targets() {
+  local default_all=${1:-0}
+  if ((TARGETS_EXPLICIT == 0 && default_all)); then
+    TARGET_ANDROID=1
+    TARGET_WINDOWS=1
+  fi
+  ((TARGET_ANDROID || TARGET_WINDOWS)) || die "至少选择一个可下载目标: android 或 windows"
+  if ((TARGET_ANDROID && TARGET_WINDOWS)); then
+    TARGETS_CSV=android,windows
+  elif ((TARGET_ANDROID)); then
+    TARGETS_CSV=android
+  else
+    TARGETS_CSV=windows
+  fi
+}
+
 load_version() {
   local package_json="$BUILD_ROOT/package.json"
   [[ -f "$package_json" ]] || die "找不到版本源: $package_json"
@@ -51,26 +91,71 @@ load_version() {
 prepare_build() {
   local stamp_tmp
   load_version
+  finalize_targets 1
   mkdir -p "$RUNTIME_ROOT"
-  rm -f -- "$APK" "$ZIP"
+  ((TARGET_ANDROID == 0)) || rm -f -- "$APK"
+  ((TARGET_WINDOWS == 0)) || rm -f -- "$ZIP"
   stamp_tmp="${BUILD_STAMP}.tmp.$$"
-  printf '%s\n' "$VER" >"$stamp_tmp"
+  {
+    printf '%s\n' 'paseo-serve-dist-v2'
+    printf '%s\n' "$VER"
+    printf '%s\n' "$TARGETS_CSV"
+  } >"$stamp_tmp"
   mv -f -- "$stamp_tmp" "$BUILD_STAMP"
-  echo "✅ 已开始 Paseo $VER 构建并清除精确目标产物"
-  echo "   APK: $APK"
-  echo "   ZIP: $ZIP"
+  echo "✅ 已开始 Paseo $VER 构建并清除所选目标产物 ($TARGETS_CSV)"
+  ((TARGET_ANDROID == 0)) || echo "   APK: $APK"
+  ((TARGET_WINDOWS == 0)) || echo "   ZIP: $ZIP"
+}
+
+load_build_stamp() {
+  local stamp_header stamp_version stamp_targets extra
+  [[ -f "$BUILD_STAMP" ]] || die "缺少本轮构建标记；先运行: bash $SCRIPT_PATH prepare-build"
+  IFS= read -r stamp_header <"$BUILD_STAMP" || die "无法读取本轮构建标记"
+  if [[ "$stamp_header" == paseo-serve-dist-v2 ]]; then
+    {
+      IFS= read -r stamp_header
+      IFS= read -r stamp_version
+      IFS= read -r stamp_targets
+      IFS= read -r extra || true
+    } <"$BUILD_STAMP"
+    [[ -z "$extra" ]] || die "本轮构建标记包含多余数据"
+    STAMP_VERSION=$stamp_version
+    STAMP_TARGETS=$stamp_targets
+  else
+    STAMP_VERSION=$stamp_header
+    STAMP_TARGETS=android,windows
+  fi
+  case "$STAMP_TARGETS" in
+    android | windows | android,windows) ;;
+    *) die "本轮构建标记包含无效目标: $STAMP_TARGETS" ;;
+  esac
 }
 
 require_current_artifacts() {
-  local stamped_version
-  [[ -f "$BUILD_STAMP" ]] || die "缺少本轮构建标记；先运行: bash $SCRIPT_PATH prepare-build"
-  IFS= read -r stamped_version <"$BUILD_STAMP"
-  [[ "$stamped_version" == "$VER" ]] ||
-    die "构建标记版本是 $stamped_version，当前版本是 $VER；请重新完整打包"
-  [[ -f "$APK" ]] || die "找不到本轮 APK: $APK"
-  [[ -f "$ZIP" ]] || die "找不到本轮 Windows zip: $ZIP"
-  [[ "$APK" -nt "$BUILD_STAMP" ]] || die "APK 早于本轮构建标记，拒绝分发旧包: $APK"
-  [[ "$ZIP" -nt "$BUILD_STAMP" ]] || die "Windows zip 早于本轮构建标记，拒绝分发旧包: $ZIP"
+  load_build_stamp
+  [[ "$STAMP_VERSION" == "$VER" ]] ||
+    die "构建标记版本是 $STAMP_VERSION，当前版本是 $VER；请重新打包"
+  if ((TARGETS_EXPLICIT == 0)); then
+    case "$STAMP_TARGETS" in
+      android) TARGET_ANDROID=1 ;;
+      windows) TARGET_WINDOWS=1 ;;
+      android,windows)
+        TARGET_ANDROID=1
+        TARGET_WINDOWS=1
+        ;;
+    esac
+  fi
+  finalize_targets 0
+  [[ "$TARGETS_CSV" == "$STAMP_TARGETS" ]] ||
+    die "请求分发目标是 $TARGETS_CSV，本轮构建目标是 $STAMP_TARGETS"
+  if ((TARGET_ANDROID)); then
+    [[ -f "$APK" ]] || die "找不到本轮 APK: $APK"
+    [[ "$APK" -nt "$BUILD_STAMP" ]] || die "APK 早于本轮构建标记，拒绝分发旧包: $APK"
+  fi
+  if ((TARGET_WINDOWS)); then
+    [[ -f "$ZIP" ]] || die "找不到本轮 Windows zip: $ZIP"
+    [[ "$ZIP" -nt "$BUILD_STAMP" ]] || die "Windows zip 早于本轮构建标记，拒绝分发旧包: $ZIP"
+  fi
 }
 
 port_is_listening() {
@@ -158,8 +243,11 @@ refresh_files() {
   local temp
   mkdir -p "$RUNTIME_ROOT" "$DIST"
   temp=$(mktemp -d "$RUNTIME_ROOT/stage.XXXXXX")
-  if ! cp -- "$APK" "$temp/paseo-android-${VER}.apk" ||
-    ! cp -- "$ZIP" "$temp/paseo-desktop-win-x64-${VER}.zip"; then
+  if ((TARGET_ANDROID)) && ! cp -- "$APK" "$temp/paseo-android-${VER}.apk"; then
+    rm -rf -- "$temp"
+    die "复制分发产物失败"
+  fi
+  if ((TARGET_WINDOWS)) && ! cp -- "$ZIP" "$temp/paseo-desktop-win-x64-${VER}.zip"; then
     rm -rf -- "$temp"
     die "复制分发产物失败"
   fi
@@ -256,13 +344,17 @@ start_server() {
 usage() {
   cat <<EOF
 用法:
-  bash $SCRIPT_PATH prepare-build       # 构建前写标记并清除精确目标产物
-  bash $SCRIPT_PATH [PORT] [TTL]        # 默认端口 8800、存活 10800 秒
-  bash $SCRIPT_PATH keep [PORT] [TTL]   # 刷新本轮产物，不重置已有计时
+  bash $SCRIPT_PATH prepare-build [--target android|windows]
+                                      # 构建前写标记并清除所选目标；默认两端
+  bash $SCRIPT_PATH [--target TARGET] [PORT] [TTL]
+                                      # 默认按构建标记分发，端口 8800、存活 10800 秒
+  bash $SCRIPT_PATH keep [--target TARGET] [PORT] [TTL]
+                                      # 刷新本轮产物，不重置已有计时
   bash $SCRIPT_PATH stop                # 只停止本脚本管理的下载服务
 EOF
 }
 
+ACTION=serve
 case "${1:-}" in
   __serve)
     [[ $# == 3 ]] || exit 2
@@ -270,9 +362,8 @@ case "${1:-}" in
     exit
     ;;
   prepare-build)
-    [[ $# == 1 ]] || die "prepare-build 不接受额外参数"
-    prepare_build
-    exit
+    ACTION=prepare-build
+    shift
     ;;
   stop)
     [[ $# == 1 ]] || die "stop 不接受端口参数"
@@ -286,9 +377,11 @@ case "${1:-}" in
     ;;
   keep)
     KEEP=1
+    ACTION=serve
     shift
     ;;
   restart)
+    ACTION=serve
     shift
     ;;
   -h | --help)
@@ -296,6 +389,18 @@ case "${1:-}" in
     exit
     ;;
 esac
+
+while [[ "${1:-}" == --target ]]; do
+  (($# >= 2)) || die "--target 缺少值"
+  select_target "$2"
+  shift 2
+done
+
+if [[ "$ACTION" == prepare-build ]]; then
+  [[ $# == 0 ]] || die "prepare-build 只接受 --target 参数"
+  prepare_build
+  exit
+fi
 
 [[ $# -le 2 ]] || die "参数过多；使用 --help 查看用法"
 PORT=$(validate_port "${1:-8800}")
@@ -332,10 +437,10 @@ IP=$(vm_ip)
 
 echo "============================================"
 echo " ✅ Paseo 下载服务已启动并确认监听"
-echo " 版本: $VER   端口: $PORT"
+echo " 版本: $VER   目标: $TARGETS_CSV   端口: $PORT"
 echo " 存活: ${TTL}s ($((TTL / 3600))h$(((TTL % 3600) / 60))m)，到点自动停服并清理"
 show_access_urls "$PORT"
-echo "   - paseo-android-${VER}.apk"
-echo "   - paseo-desktop-win-x64-${VER}.zip"
+((TARGET_ANDROID == 0)) || echo "   - paseo-android-${VER}.apk"
+((TARGET_WINDOWS == 0)) || echo "   - paseo-desktop-win-x64-${VER}.zip"
 echo " 提前停服: bash $SCRIPT_PATH stop"
 echo "============================================"

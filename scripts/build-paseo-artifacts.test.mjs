@@ -87,6 +87,7 @@ function createFixture({ dependenciesReinstalled = 0, rwMainRebuilt = 0 } = {}) 
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), "paseo-build-artifacts-"));
   const controlRoot = path.join(fixtureRoot, "control");
   const buildRoot = path.join(fixtureRoot, "build");
+  const featureRoot = path.join(fixtureRoot, "feature-local");
   const binRoot = path.join(fixtureRoot, "bin");
   const androidHome = path.join(fixtureRoot, "android-sdk");
   const commandLog = path.join(fixtureRoot, "commands.log");
@@ -145,7 +146,20 @@ version=$(node -p "require('$PASEO_BUILD_ROOT/package.json').version")
 apk="$PASEO_BUILD_ROOT/packages/app/android/app/build/outputs/apk/release/app-release.apk"
 zip="$PASEO_BUILD_ROOT/packages/desktop/release/Paseo-Setup-$version-x64.zip"
 if [[ "\${1:-}" == prepare-build ]]; then
-  rm -f -- "$apk" "$zip"
+  shift
+  target_android=1
+  target_windows=1
+  if [[ "\${1:-}" == --target ]]; then
+    target_android=0
+    target_windows=0
+    case "$2" in
+      android) target_android=1 ;;
+      windows) target_windows=1 ;;
+      *) exit 2 ;;
+    esac
+  fi
+  ((target_android == 0)) || rm -f -- "$apk"
+  ((target_windows == 0)) || rm -f -- "$zip"
   exit 0
 fi
 if [[ -n "\${PASEO_TEST_LONG_LIVED_DOWNLOAD_PID_FILE:-}" ]]; then
@@ -261,6 +275,13 @@ fi
   git(controlRoot, "add", "dwyanewang");
   git(controlRoot, "commit", "-m", "test: add build controls");
 
+  git(controlRoot, "branch", "feature/local", "rw-main");
+  git(controlRoot, "worktree", "add", featureRoot, "feature/local");
+  writeFileSync(path.join(featureRoot, "local-feature.txt"), "local overlay\n");
+  git(featureRoot, "add", "local-feature.txt");
+  git(featureRoot, "commit", "-m", "test: add local overlay feature");
+  const localBranchHead = git(featureRoot, "rev-parse", "HEAD");
+
   writeExecutable(
     path.join(binRoot, "mise"),
     `#!/usr/bin/env bash
@@ -367,6 +388,8 @@ fi
       PATH: `${binRoot}:${process.env.PATH}`,
     },
     fixtureRoot,
+    localBranch: "feature/local",
+    localBranchHead,
     preflightState,
     script: path.join(controlsRoot, "build-paseo-artifacts.sh"),
     terminalRelative,
@@ -434,6 +457,20 @@ test("rejects the main daemon port before starting a build", () => {
   assert.match(result.stderr, /main daemon port 6767/);
 });
 
+test("requires skip-preflight for temporary local branches", () => {
+  const result = run(repoRoot, "bash", [
+    sourceScript,
+    "--build-root",
+    "/does/not/exist",
+    "--preflight-state",
+    "/does/not/exist",
+    "--local-branch",
+    "feature/local",
+  ]);
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /--local-branch requires --skip-preflight/);
+});
+
 test("runs the complete three-platform artifact chain from one ready state", () => {
   withFixture({}, (fixture) => {
     const result = runBuild(fixture, "successful");
@@ -478,6 +515,157 @@ test("runs the complete three-platform artifact chain from one ready state", () 
     );
     assert.equal(git(fixture.buildRoot, "status", "--porcelain"), "");
     assertBuildLockAvailable(fixture);
+  });
+});
+
+test("builds only the Windows artifact while retaining its server prerequisites", () => {
+  withFixture({}, (fixture) => {
+    const result = runBuild(fixture, "windows-only", ["--target", "desktop"], { ANDROID_HOME: "" });
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.match(result.stdout, /PASEO_ARTIFACT_TARGETS=windows/);
+    assert.match(result.stdout, /PASEO_ARTIFACT_WINDOWS_ZIP=/);
+    assert.doesNotMatch(result.stdout, /PASEO_ARTIFACT_APK=/);
+
+    const commandLog = readFileSync(fixture.commandLog, "utf8");
+    assert.match(commandLog, /serve\|prepare-build --target windows/);
+    assert.match(commandLog, /npm\|run build:server/);
+    assert.match(commandLog, /profile\|windows-artifacts/);
+    assert.match(commandLog, /serve\|--target windows 8800 10800/);
+    assert.doesNotMatch(commandLog, /expo prebuild --platform android/);
+    assert.doesNotMatch(commandLog, /profile\|android-/);
+
+    const resultState = readFileSync(
+      path.join(fixture.buildRoot, ".dev/windows-only/result.env"),
+      "utf8",
+    );
+    assert.match(resultState, /paseo_artifact_targets=windows/);
+    assert.match(resultState, /paseo_artifact_parallel_mode=windows-only/);
+    assert.match(resultState, /paseo_artifact_android_native_bundle_gate=not-selected/);
+  });
+});
+
+test("builds only Android with app dependencies and no Windows or server artifact", () => {
+  withFixture({}, (fixture) => {
+    const result = runBuild(fixture, "android-only", ["--target", "android", "--no-serve-dist"]);
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.match(result.stdout, /PASEO_ARTIFACT_TARGETS=android/);
+    assert.match(result.stdout, /PASEO_ARTIFACT_APK=/);
+    assert.doesNotMatch(result.stdout, /PASEO_ARTIFACT_SERVER=/);
+    assert.doesNotMatch(result.stdout, /PASEO_ARTIFACT_WINDOWS_ZIP=/);
+
+    const commandLog = readFileSync(fixture.commandLog, "utf8");
+    assert.match(commandLog, /npm\|run build:app-deps/);
+    assert.match(commandLog, /profile\|android-native-assemble/);
+    assert.doesNotMatch(commandLog, /npm\|run build:server/);
+    assert.doesNotMatch(commandLog, /profile\|windows-artifacts/);
+    const resultState = readFileSync(
+      path.join(fixture.buildRoot, ".dev/android-only/result.env"),
+      "utf8",
+    );
+    assert.match(resultState, /paseo_artifact_server_build_mode=app-deps-only/);
+    assert.match(resultState, /paseo_artifact_parallel_mode=android-only/);
+  });
+});
+
+test("builds only the server and skips app preparation and distribution", () => {
+  withFixture({}, (fixture) => {
+    const result = runBuild(fixture, "server-only", ["--target", "server"]);
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.match(result.stdout, /PASEO_ARTIFACT_TARGETS=server/);
+    assert.match(result.stdout, /PASEO_ARTIFACT_SERVER=/);
+    const commandLog = readFileSync(fixture.commandLog, "utf8");
+    assert.match(commandLog, /npm\|run build:server/);
+    assert.doesNotMatch(commandLog, /build:terminal-webview/);
+    assert.doesNotMatch(commandLog, /serve\|/);
+    assert.doesNotMatch(commandLog, /profile\|/);
+    assert.match(
+      readFileSync(path.join(fixture.buildRoot, ".dev/server-only/result.env"), "utf8"),
+      /paseo_artifact_download_service_started=0/,
+    );
+  });
+});
+
+test("temporarily merges a local branch without synchronization and restores rw-main", () => {
+  withFixture({}, (fixture) => {
+    const runDir = path.join(fixture.buildRoot, ".dev", "local-overlay-windows");
+    const result = run(
+      fixture.controlRoot,
+      "bash",
+      [
+        fixture.script,
+        "--build-root",
+        fixture.buildRoot,
+        "--skip-preflight",
+        "--local-branch",
+        fixture.localBranch,
+        "--target",
+        "windows",
+        "--run-dir",
+        runDir,
+        "--no-serve-dist",
+      ],
+      fixture.env,
+    );
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.match(result.stdout, /local-overlay: candidate ready/);
+    assert.match(result.stdout, /local-overlay: restored rw-main/);
+
+    const commandLog = readFileSync(fixture.commandLog, "utf8");
+    assertOrdered(commandLog, [
+      "npm|run build --workspace=@getpaseo/relay",
+      "npm|run build:client",
+      "npm|run build:plugin",
+      "npm|run format:check",
+      "npm|run typecheck",
+      "npm|run lint",
+      "profile|windows-artifacts",
+    ]);
+    assert.equal(git(fixture.buildRoot, "branch", "--show-current"), "rw-main");
+    assert.equal(
+      git(fixture.controlRoot, "rev-parse", fixture.localBranch),
+      fixture.localBranchHead,
+    );
+    assert.equal(existsSync(path.join(fixture.buildRoot, "local-feature.txt")), false);
+    const temporaryBranches = git(fixture.controlRoot, "branch", "--list", "rw-local-build-*");
+    assert.equal(temporaryBranches, "");
+
+    const resultState = readFileSync(path.join(runDir, "result.env"), "utf8");
+    assert.match(resultState, /paseo_artifact_preflight_mode=local-overlay/);
+    assert.match(resultState, /paseo_artifact_local_overlay_count=1/);
+    assert.match(resultState, /paseo_artifact_local_overlay_branch_0=feature\/local/);
+    assert.match(
+      resultState,
+      new RegExp(`paseo_artifact_local_overlay_head_0=${fixture.localBranchHead}`),
+    );
+  });
+});
+
+test("restores rw-main when a local-overlay artifact branch fails", () => {
+  withFixture({}, (fixture) => {
+    const runDir = path.join(fixture.buildRoot, ".dev", "failed-local-overlay");
+    const result = run(
+      fixture.controlRoot,
+      "bash",
+      [
+        fixture.script,
+        "--build-root",
+        fixture.buildRoot,
+        "--skip-preflight",
+        "--local-branch",
+        fixture.localBranch,
+        "--target",
+        "windows",
+        "--run-dir",
+        runDir,
+        "--no-serve-dist",
+      ],
+      { ...fixture.env, PASEO_TEST_FAIL_LABEL: "windows-artifacts" },
+    );
+    assert.equal(result.status, 7, `${result.stdout}\n${result.stderr}`);
+    assert.equal(git(fixture.buildRoot, "branch", "--show-current"), "rw-main");
+    assert.equal(git(fixture.buildRoot, "status", "--porcelain"), "");
+    assert.equal(git(fixture.controlRoot, "branch", "--list", "rw-local-build-*"), "");
+    assert.equal(existsSync(path.join(runDir, "result.env")), false);
   });
 });
 
