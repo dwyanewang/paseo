@@ -85,6 +85,11 @@ describe("checkout query keys", () => {
       true,
     );
     expect(
+      queryClient.getQueryState(
+        draftAgentCommandsQueryKey({ serverId, draftConfig: { provider: "codex", cwd } }),
+      )?.isInvalidated,
+    ).toBe(true);
+    expect(
       queryClient.getQueryState(checkoutCommitsQueryKey(serverId, "/tmp/other"))?.isInvalidated,
     ).toBe(false);
     expect(queryClient.getQueryState(draftCommandsKey)?.isInvalidated).toBe(true);
@@ -131,6 +136,16 @@ describe("checkout query keys", () => {
     queryClient.setQueryData(checkoutStatusQueryKey(serverId, otherCwd), { isGit: true });
     queryClient.setQueryData(checkoutPrStatusQueryKey(serverId, cwd), { status: { number: 12 } });
     queryClient.setQueryData(checkoutCommitsQueryKey(serverId, cwd), { commits: [] });
+    const draftCommandsKey = draftAgentCommandsQueryKey({
+      serverId,
+      draftConfig: { provider: "codex", cwd },
+    });
+    const otherDraftCommandsKey = draftAgentCommandsQueryKey({
+      serverId: otherServerId,
+      draftConfig: { provider: "codex", cwd },
+    });
+    queryClient.setQueryData(draftCommandsKey, []);
+    queryClient.setQueryData(otherDraftCommandsKey, []);
     queryClient.setQueryData(checkoutCommitsQueryKey(otherServerId, cwd), { commits: [] });
     queryClient.setQueryData(prPaneTimelineQueryKey({ serverId, cwd, prNumber: 12 }), {
       items: [],
@@ -161,6 +176,8 @@ describe("checkout query keys", () => {
     expect(queryClient.getQueryState(checkoutCommitsQueryKey(serverId, cwd))?.isInvalidated).toBe(
       true,
     );
+    expect(queryClient.getQueryState(draftCommandsKey)?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(otherDraftCommandsKey)?.isInvalidated).toBe(false);
     expect(
       queryClient.getQueryState(checkoutCommitsQueryKey(otherServerId, cwd))?.isInvalidated,
     ).toBe(false);

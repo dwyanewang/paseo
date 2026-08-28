@@ -1,5 +1,5 @@
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
-import type { QueryClient } from "@tanstack/react-query";
+import type { Query, QueryClient } from "@tanstack/react-query";
 import { normalizeWorkspacePath } from "@/utils/workspace-identity";
 
 export const AGENT_COMMANDS_QUERY_ROOT = "agentCommands";
@@ -53,10 +53,19 @@ export function isDraftAgentCommandsQueryForCwd(input: {
   cwd: string;
 }): boolean {
   return (
+    isDraftAgentCommandsQueryForServer(input) &&
+    input.queryKey[5] === normalizeAgentCommandsCwd(input.cwd)
+  );
+}
+
+function isDraftAgentCommandsQueryForServer(input: {
+  queryKey: readonly unknown[];
+  serverId: string;
+}): boolean {
+  return (
     input.queryKey[0] === AGENT_COMMANDS_QUERY_ROOT &&
     input.queryKey[1] === input.serverId &&
-    input.queryKey[2] === "draft" &&
-    input.queryKey[5] === normalizeAgentCommandsCwd(input.cwd)
+    input.queryKey[2] === "draft"
   );
 }
 
@@ -72,15 +81,57 @@ export async function invalidateDraftAgentCommandsForCwd(input: {
   cwd: string;
   timing: DraftAgentCommandsRefreshTiming;
 }): Promise<void> {
+  const predicate = (query: Query) =>
+    isDraftAgentCommandsQueryForCwd({
+      queryKey: query.queryKey,
+      serverId: input.serverId,
+      cwd: input.cwd,
+    });
+  await invalidateDraftAgentCommands({ ...input, predicate });
+}
+
+export async function invalidateDraftAgentCommandsForServer(input: {
+  queryClient: QueryClient;
+  serverId: string;
+  timing: DraftAgentCommandsRefreshTiming;
+}): Promise<void> {
+  const predicate = (query: Query) =>
+    isDraftAgentCommandsQueryForServer({
+      queryKey: query.queryKey,
+      serverId: input.serverId,
+    });
+  await invalidateDraftAgentCommands({ ...input, predicate });
+}
+
+async function invalidateDraftAgentCommands(input: {
+  queryClient: QueryClient;
+  timing: DraftAgentCommandsRefreshTiming;
+  predicate: (query: Query) => boolean;
+}): Promise<void> {
+  const hasInFlightQuery =
+    input.timing === "next-open" &&
+    input.queryClient
+      .getQueryCache()
+      .findAll({ predicate: input.predicate })
+      .some((query) => query.state.fetchStatus !== "idle");
+  const cancellation = hasInFlightQuery
+    ? input.queryClient.cancelQueries({ predicate: input.predicate })
+    : undefined;
+
+  // Mark stale immediately so a menu opening in the same turn observes the invalidation. If an
+  // in-flight query was canceled, repeat the mark afterward because cancellation restores its
+  // prior state and clears isInvalidated.
   await input.queryClient.invalidateQueries({
     refetchType: input.timing === "next-open" ? "none" : undefined,
-    predicate: (query) =>
-      isDraftAgentCommandsQueryForCwd({
-        queryKey: query.queryKey,
-        serverId: input.serverId,
-        cwd: input.cwd,
-      }),
+    predicate: input.predicate,
   });
+  if (cancellation) {
+    await cancellation;
+    await input.queryClient.invalidateQueries({
+      refetchType: "none",
+      predicate: input.predicate,
+    });
+  }
 }
 
 export function agentCommandsQueryKey(input: {

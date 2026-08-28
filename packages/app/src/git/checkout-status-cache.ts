@@ -71,10 +71,10 @@ export function applyCheckoutStatusUpdateFromEvent({
   const statusQueryKey = checkoutStatusQueryKey(serverId, payload.cwd);
   const previousStatus = queryClient.getQueryData<CheckoutStatusPayload>(statusQueryKey);
   const checkoutIdentityChanged =
-    previousStatus !== undefined &&
-    (previousStatus.isGit !== payload.isGit ||
-      previousStatus.currentBranch !== payload.currentBranch ||
-      previousStatus.headOid !== payload.headOid);
+    previousStatus === undefined ||
+    previousStatus.isGit !== payload.isGit ||
+    previousStatus.currentBranch !== payload.currentBranch ||
+    previousStatus.headOid !== payload.headOid;
   queryClient.setQueryData(statusQueryKey, cachePayload);
   void queryClient.invalidateQueries({
     queryKey: checkoutCommitsQueryKey(serverId, payload.cwd),
