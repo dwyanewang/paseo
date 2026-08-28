@@ -2,7 +2,7 @@
 # sync-rw-main-branches.sh removes merged PRs; new entries are explicit only.
 # Each entry records the main/head pair last semantically reviewed.
 
-fix/project-skill-cache-invalidation # PR #2585 # reviewed-main:4de913fb82d2c6f433b1291a1870281ee4a0eacb # reviewed-head:a2e5fb192706cd563bf202f86375fe7b9d181eb1
-fix/android-keyboard-covers-input # PR #2467 # reviewed-main:4de913fb82d2c6f433b1291a1870281ee4a0eacb # reviewed-head:6e300c9fd1cf915c7e5007ca86b6d77c82a09b00
-refactor/provider-history-read # PR #2388 # reviewed-main:4de913fb82d2c6f433b1291a1870281ee4a0eacb # reviewed-head:041ec2e14a423f65b017ca21eb081c58468822e8
-feat/file-image-preview # PR #2822 # reviewed-main:4de913fb82d2c6f433b1291a1870281ee4a0eacb # reviewed-head:65c51826060302d6fe69792a02400dbfd3407e40
+fix/project-skill-cache-invalidation # PR #2585 # reviewed-main:1fc52505448df01d6a53cc7a034f550540795c0a # reviewed-head:1e7ff450889f02c977d2718194c50ef05218fc2f
+fix/android-keyboard-covers-input # PR #2467 # reviewed-main:1fc52505448df01d6a53cc7a034f550540795c0a # reviewed-head:8541863f8a5736e767cdb0b96c1b311df0548eeb
+refactor/provider-history-read # PR #2388 # reviewed-main:1fc52505448df01d6a53cc7a034f550540795c0a # reviewed-head:041ec2e14a423f65b017ca21eb081c58468822e8
+feat/file-image-preview # PR #2822 # reviewed-main:1fc52505448df01d6a53cc7a034f550540795c0a # reviewed-head:65c51826060302d6fe69792a02400dbfd3407e40
