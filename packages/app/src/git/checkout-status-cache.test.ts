@@ -103,7 +103,7 @@ function createQueryClient(): QueryClient {
 // Mirrors how autocomplete consumes draft commands: the query is only enabled while the command
 // menu is open (use-agent-autocomplete.ts), and provider discovery never expires on its own.
 // Counting discoveries is the only way to tell "marked stale" apart from "refetched".
-function mountCommandMenu(queryClient: QueryClient) {
+function mountCommandMenu(queryClient: QueryClient, loadCommands?: () => Promise<unknown[]>) {
   const queryKey = draftAgentCommandsQueryKey({
     serverId,
     draftConfig: { provider: "codex", cwd },
@@ -113,7 +113,7 @@ function mountCommandMenu(queryClient: QueryClient) {
     queryKey: [...queryKey],
     queryFn: async () => {
       discoveryCount += 1;
-      return [];
+      return (await loadCommands?.()) ?? [];
     },
     enabled,
     staleTime: Number.POSITIVE_INFINITY,
@@ -329,6 +329,33 @@ describe("applyCheckoutStatusUpdateFromEvent", () => {
     });
     menu.open();
 
+    await menu.settled(2);
+    menu.unsubscribe();
+  });
+
+  it("keeps the next-open invalidation after an in-flight discovery settles", async () => {
+    const queryClient = createQueryClient();
+    let resolveDiscovery!: (commands: unknown[]) => void;
+    const discovery = new Promise<unknown[]>((resolve) => {
+      resolveDiscovery = resolve;
+    });
+    const menu = mountCommandMenu(queryClient, () => discovery);
+    queryClient.setQueryData(checkoutStatusQueryKey(serverId, cwd), checkoutStatus());
+    menu.open();
+    await vi.waitFor(() => expect(menu.discoveryCount()).toBe(1));
+
+    applyCheckoutStatusUpdateFromEvent({
+      queryClient,
+      serverId,
+      message: checkoutStatusUpdate(checkoutStatus({ isDirty: true, requestId: "push-2" })),
+    });
+    resolveDiscovery([]);
+
+    await vi.waitFor(() =>
+      expect(queryClient.getQueryState(menu.queryKey)?.isInvalidated).toBe(true),
+    );
+    menu.close();
+    menu.open();
     await menu.settled(2);
     menu.unsubscribe();
   });
