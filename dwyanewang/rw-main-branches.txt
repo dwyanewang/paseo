@@ -4,5 +4,5 @@
 
 fix/project-skill-cache-invalidation # PR #2585 # reviewed-main:1fc52505448df01d6a53cc7a034f550540795c0a # reviewed-head:1e7ff450889f02c977d2718194c50ef05218fc2f
 fix/android-keyboard-covers-input # PR #2467 # reviewed-main:1fc52505448df01d6a53cc7a034f550540795c0a # reviewed-head:8541863f8a5736e767cdb0b96c1b311df0548eeb
-refactor/provider-history-read # PR #2388 # reviewed-main:1fc52505448df01d6a53cc7a034f550540795c0a # reviewed-head:041ec2e14a423f65b017ca21eb081c58468822e8
+refactor/provider-history-read # PR #2388 # reviewed-main:1fc52505448df01d6a53cc7a034f550540795c0a # reviewed-head:1e6f5632be9f2220656dfea1c8f002e98841a1ee
 feat/file-image-preview # PR #2822 # reviewed-main:1fc52505448df01d6a53cc7a034f550540795c0a # reviewed-head:65c51826060302d6fe69792a02400dbfd3407e40
