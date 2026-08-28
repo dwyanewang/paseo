@@ -1686,6 +1686,10 @@ export function NewWorkspaceScreen({
     terminalSubmitLabel,
     launchFocusKey,
   } = useTerminalComposerState({ launchTarget, terminalProfiles, terminalPromptText });
+  const terminalTextReplacement = useMemo(
+    () => ({ key: launchFocusKey, text: terminalComposerValue }),
+    [launchFocusKey, terminalComposerValue],
+  );
 
   useEffect(() => {
     const trimmed = pickerSearchQuery.trim();
@@ -2468,6 +2472,7 @@ export function NewWorkspaceScreen({
           {formStack}
           {isTerminalLaunch ? (
             <Composer
+              key="terminal"
               externalKeyboardShift
               inputMode="terminal"
               readOnly={!terminalTakesPrompt}
@@ -2485,7 +2490,7 @@ export function NewWorkspaceScreen({
               blurOnSubmit={true}
               value={terminalComposerValue}
               onChangeText={setTerminalPromptText}
-              textReplacementKey={launchFocusKey}
+              textReplacement={terminalTextReplacement}
               attachments={NO_TERMINAL_ATTACHMENTS}
               onChangeAttachments={noopChangeAttachments}
               cwd={selectedSourceDirectory ?? ""}
@@ -2495,6 +2500,7 @@ export function NewWorkspaceScreen({
             />
           ) : (
             <Composer
+              key="chat"
               externalKeyboardShift
               agentId={draftKey}
               serverId={selectedServerId}
@@ -2510,7 +2516,7 @@ export function NewWorkspaceScreen({
               blurOnSubmit={true}
               value={chatDraft.text}
               onChangeText={chatDraft.editText}
-              textReplacementKey={chatDraft.textReplacementKey}
+              textReplacement={chatDraft.textReplacement}
               attachments={chatDraft.attachments}
               attachmentScopeKeys={visibleDraftContextScopeKeys}
               onChangeAttachments={chatDraft.setAttachments}
