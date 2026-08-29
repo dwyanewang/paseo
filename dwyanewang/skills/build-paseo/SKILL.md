@@ -38,7 +38,10 @@ bash "$paseo_chore_root/dwyanewang/prepare-rw-main-for-build.sh" \
   --push
 ```
 
-- 退出码 `3`：读取输出的 `PASEO_REVIEW_REQUEST_FILE` 并把值保存为 `paseo_review_request_file`。只有一个简单待审分支时由主代理审查；有至少两个独立待审分支时，按 request 中冻结的精确 SHA 区间启动最多 3 个只读 reviewer subagent 并行审查，禁止它们改文件、移动 refs 或运行测试。每项固定返回分支名、main/head 区间、`keep|remove|partial|uncertain`、提交/路径证据和所需动作。主代理核对待审集合和全部坐标；`partial` 则回源功能分支修整、定向验证并推送，`uncertain` 则询问用户。只有全部为 `keep|remove` 时，传 `--accept-review-request "$paseo_review_request_file"` 和必要的 `--remove-branch` 重跑；不要退回 main-only 接受方式。
+- 退出码 `3`：读取输出的 `PASEO_REVIEW_REQUEST_FILE` 并把值保存为 `paseo_review_request_file`。只有一个简单待审分支时由主代理审查；有至少两个独立待审分支时，按 request 中冻结的精确 SHA 区间启动最多 3 个只读 reviewer subagent 并行审查，禁止它们改文件、移动 refs 或运行测试。每项固定返回分支名、main/head 区间、`keep|remove|partial`、提交/路径证据和所需动作。主代理核对待审集合和全部坐标，并由 AI 自行完成接受决策；不向用户请求人工确认。
+- rebase 后优先使用报告中的 `git range-diff`：若旧 feature commits 均能与新 commits 对应，且变化仅限冲突解决带来的必要调整，执行增量语义审查；否则执行完整区间审查。AI 必须继续查看冲突解决 diff、路径和验证结果，不能仅凭 patch 等价自动接受。
+- `partial` 则回源功能分支修整、定向验证并推送。`uncertain` 只作为 AI 内部中间态：继续扩大证据范围；仍无法证明上游完整吸收时默认 `keep`，不得自动 `remove`。只有全部为 `keep|remove` 时，传 `--accept-review-request "$paseo_review_request_file"` 和必要的 `--remove-branch` 重跑；不要退回 main-only 接受方式。
+- 完整同步的前置命令会在语义审查 request 输出前运行一次只读 mergeability 预检：在临时 detached worktree 中按真实顺序模拟 `rw-base + main + overlays` 的合并。冲突会立即报告具体 overlay 和文件并停止，先回源分支 rebase/修复；预检不移动 `rw-base`/`rw-main`、不改清单、不安装依赖，也不运行构建。
 - 退出码 `4`：清单已更新但尚未 ready。运行 `npm run format`，确认仅有预期清单改动，提交并推送 `chore/build-paseo`，再不带增删参数重跑。
 - 其他非零退出：停止并诊断。readiness gate 未成功，不得启动任一产物构建。
 

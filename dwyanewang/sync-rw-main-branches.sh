@@ -19,6 +19,8 @@ belong in rw-base and are managed by manage-rw-base.sh.
   --accept-main-review SHA  Confirm pending reviews at this exact main SHA.
   --accept-branch-head BRANCH SHA
                             Freeze one reviewed branch at this exact current head.
+  --check-mergeability      Simulate rw-base + overlays before reporting or
+                            accepting review; do not move product refs.
   --dry-run                 Print the proposed manifest diff without changing it.
   --help                    Show this help.
 
@@ -27,6 +29,7 @@ EOF
 }
 
 dry_run=0
+check_mergeability=0
 accept_main_review=
 accept_review_request=
 declare -a addition_kinds=()
@@ -114,6 +117,10 @@ while (($# > 0)); do
       ;;
     --dry-run)
       dry_run=1
+      shift
+      ;;
+    --check-mergeability)
+      check_mergeability=1
       shift
       ;;
     --help | -h)
@@ -257,6 +264,7 @@ parse_review_metadata() {
 [[ -f "$manifest_path" ]] || fail "missing manifest: $manifest_path"
 git show-ref --verify --quiet "refs/heads/$base_branch" || fail "missing local branch: $base_branch"
 base_head=$(git rev-parse "$base_branch")
+persistent_base_head=$(git rev-parse --verify "refs/heads/$persistent_base_branch" 2>/dev/null || true)
 
 if [[ -n "$accept_review_request" ]]; then
   [[ -z "$accept_main_review" && ${#expected_branch_heads[@]} -eq 0 ]] ||
@@ -437,6 +445,7 @@ declare -A branch_pr_titles=()
 declare -A branch_pr_urls=()
 declare -A branch_reviewed_mains=()
 declare -A branch_reviewed_heads=()
+declare -a ordered_branches=()
 declare -A newly_added_branches=()
 declare -A manifest_pr_branches=()
 declare -A seen_manifest_prs=()
@@ -481,6 +490,7 @@ while IFS= read -r line || [[ -n "$line" ]]; do
   fi
 
   branch_indexes[$entry]=${#output_lines[@]}
+  ordered_branches+=("$entry")
   branch_prs[$entry]=$entry_pr
   if [[ -n "$entry_pr" ]]; then
     manifest_pr_branches[$entry_pr]=$entry
@@ -538,6 +548,7 @@ for index in "${!addition_kinds[@]}"; do
     fi
 
     branch_indexes[$pr_head_branch]=${#output_lines[@]}
+    ordered_branches+=("$pr_head_branch")
     branch_prs[$pr_head_branch]=$value
     branch_pr_states[$pr_head_branch]=$pr_state
     branch_pr_titles[$pr_head_branch]=$pr_title
@@ -559,6 +570,7 @@ for index in "${!addition_kinds[@]}"; do
     continue
   fi
   branch_indexes[$value]=${#output_lines[@]}
+  ordered_branches+=("$value")
   branch_prs[$value]=
   branch_reviewed_mains[$value]=$(git merge-base "$base_branch" "$value")
   branch_reviewed_heads[$value]=$(git rev-parse "$value")
@@ -624,6 +636,79 @@ if [[ -n "$accept_main_review" ]]; then
   fi
 fi
 
+check_candidate_mergeability() (
+  local candidate_parent candidate_root branch_name line_index merge_label
+  local conflict_paths started_at overlay_count
+
+  started_at=$(date +%s)
+  overlay_count=0
+  candidate_parent=$(mktemp -d "${TMPDIR:-/tmp}/paseo-rw-main-mergeability.XXXXXX")
+  candidate_root="$candidate_parent/worktree"
+  cleanup_mergeability() {
+    git worktree remove --force "$candidate_root" >/dev/null 2>&1 || true
+    rmdir -- "$candidate_parent" 2>/dev/null || true
+  }
+  trap cleanup_mergeability EXIT
+
+  merge_candidate() {
+    GIT_AUTHOR_NAME=build-paseo-mergeability \
+      GIT_AUTHOR_EMAIL=build-paseo-mergeability@localhost \
+      GIT_COMMITTER_NAME=build-paseo-mergeability \
+      GIT_COMMITTER_EMAIL=build-paseo-mergeability@localhost \
+      GIT_MERGE_AUTOEDIT=no git -c core.hooksPath=/dev/null -C "$candidate_root" merge --no-verify "$@"
+  }
+
+  git show-ref --verify --quiet "refs/heads/$persistent_base_branch" || {
+    printf 'rw-main mergeability preflight cannot run: missing local %s.\n' "$persistent_base_branch" >&2
+    exit 1
+  }
+  git worktree add --detach "$candidate_root" "$persistent_base_branch" >/dev/null
+
+  # Mirror rebuild-rw-main.sh: first bring rw-base up to the current main,
+  # then replay the proposed overlay order. This worktree is detached and is
+  # removed on every exit, so no product ref or source worktree is changed.
+  if ! git -C "$candidate_root" merge-base --is-ancestor "$base_head" HEAD; then
+    if git -C "$candidate_root" merge-base --is-ancestor HEAD "$base_head"; then
+      merge_label="$persistent_base_branch -> $base_branch"
+      if ! merge_candidate --ff-only "$base_branch"; then
+        printf 'rw-main mergeability preflight failed while merging %s.\n' "$merge_label" >&2
+        exit 1
+      fi
+    else
+      merge_label="$persistent_base_branch + $base_branch"
+      if ! merge_candidate --no-ff --no-edit "$base_branch"; then
+        conflict_paths=$(git -C "$candidate_root" diff --name-only --diff-filter=U || true)
+        printf 'rw-main mergeability preflight failed while merging %s.\n' "$merge_label" >&2
+        if [[ -n "$conflict_paths" ]]; then
+          printf '  Conflicting files:\n%s\n' "$conflict_paths" >&2
+        fi
+        exit 1
+      fi
+    fi
+  fi
+
+  for branch_name in "${ordered_branches[@]}"; do
+    line_index=${branch_indexes[$branch_name]}
+    [[ -z "${dropped_line_indexes[$line_index]+present}" ]] || continue
+    ((overlay_count += 1))
+    merge_label="$branch_name"
+    printf 'Mergeability preflight: checking overlay %s...\n' "$branch_name"
+    if ! merge_candidate --no-ff --no-edit "$branch_name"; then
+      conflict_paths=$(git -C "$candidate_root" diff --name-only --diff-filter=U || true)
+      printf 'rw-main mergeability preflight failed while merging overlay %s.\n' "$merge_label" >&2
+      if [[ -n "$conflict_paths" ]]; then
+        printf '  Conflicting files:\n%s\n' "$conflict_paths" >&2
+      fi
+      printf 'Rebase or otherwise repair %s before semantic review continues.\n' "$branch_name" >&2
+      exit 1
+    fi
+  done
+
+  printf 'Mergeability preflight: PASS (%d overlays, %ss).\n' \
+    "$overlay_count" \
+    "$(( $(date +%s) - started_at ))"
+)
+
 write_review_request() {
   local request_dir request_temp request_token request_path branch_name
   request_dir=$(git rev-parse --git-path paseo-review-requests)
@@ -660,9 +745,16 @@ write_review_request() {
   )
 }
 
+if ((check_mergeability)) &&
+  { [[ "$persistent_base_head" != "$base_head" ]] || ((${#review_branches[@]} > 0)) ||
+    [[ -n "$accept_main_review" ]] || ((${#removal_branches[@]} > 0)) ||
+    ((${#automatically_removed_branches[@]} > 0)); }; then
+  check_candidate_mergeability
+fi
+
 print_review_report() {
   local branch_name branch_base cherry_output current_head equivalent_count
-  local feature_path reviewed_head reviewed_main unique_count upstream_start
+  local feature_path range_diff reviewed_head reviewed_main unique_count upstream_start
   local -a feature_paths overlap_paths
 
   printf '\nSemantic review required before rebuilding rw-main.\n'
@@ -696,6 +788,21 @@ print_review_report() {
         git diff --stat "$reviewed_head..$current_head" | sed 's/^/    /'
       else
         printf '    Previous head is unavailable locally; inspect the full feature diff below.\n'
+      fi
+
+      if git cat-file -e "$reviewed_main^{commit}" 2>/dev/null &&
+        git merge-base --is-ancestor "$base_head" "$current_head"; then
+        printf '  Range-diff against the previously reviewed feature:\n'
+        if ! range_diff=$(git range-diff --no-dual-color \
+          "$reviewed_main..$reviewed_head" "$base_head..$current_head" 2>&1); then
+          printf '    unavailable: %s\n' "$range_diff"
+        elif [[ -n "$range_diff" ]]; then
+          sed 's/^/    /' <<<"$range_diff"
+        else
+          printf '    (no feature patch changes detected)\n'
+        fi
+      else
+        printf '  Range-diff: unavailable until %s is an ancestor of the branch head.\n' "$base_head"
       fi
     fi
 

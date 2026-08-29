@@ -55,9 +55,24 @@ function formatSecondManifestEntry({
   return `feature/two # ${branchKind} # reviewed-main:${reviewedMainCoordinate} # reviewed-head:${secondFeatureHead}\n`;
 }
 
+function fixtureChange({ patchEquivalent, conflictingOverlay, upstream }) {
+  if (patchEquivalent) return { content: "same\n", path: "shared.txt" };
+  if (conflictingOverlay) {
+    return {
+      content: upstream ? "upstream implementation\n" : "feature implementation\n",
+      path: "shared.txt",
+    };
+  }
+  return {
+    content: upstream ? "upstream\n" : "feature\n",
+    path: upstream ? "upstream.txt" : "feature.txt",
+  };
+}
+
 function createFixture({
   advanceFeature = false,
   advanceMain = true,
+  conflictingOverlay = false,
   patchEquivalent = false,
   prState,
   secondBranch = false,
@@ -75,9 +90,9 @@ function createFixture({
   const reviewedMain = git(root, "rev-parse", "main");
 
   git(root, "switch", "-c", "feature/one");
-  const featurePath = patchEquivalent ? "shared.txt" : "feature.txt";
-  writeFileSync(path.join(root, featurePath), patchEquivalent ? "same\n" : "feature\n");
-  git(root, "add", featurePath);
+  const featureChange = fixtureChange({ patchEquivalent, conflictingOverlay, upstream: false });
+  writeFileSync(path.join(root, featureChange.path), featureChange.content);
+  git(root, "add", featureChange.path);
   git(root, "commit", "-m", "feat: feature one");
   const reviewedFeatureHead = git(root, "rev-parse", "HEAD");
   if (advanceFeature) {
@@ -89,9 +104,9 @@ function createFixture({
 
   git(root, "switch", "main");
   if (advanceMain) {
-    const upstreamPath = patchEquivalent ? "shared.txt" : "upstream.txt";
-    writeFileSync(path.join(root, upstreamPath), patchEquivalent ? "same\n" : "upstream\n");
-    git(root, "add", upstreamPath);
+    const upstreamChange = fixtureChange({ patchEquivalent, conflictingOverlay, upstream: true });
+    writeFileSync(path.join(root, upstreamChange.path), upstreamChange.content);
+    git(root, "add", upstreamChange.path);
     git(root, "commit", "-m", "feat: upstream implementation (#99)");
   }
   const currentMain = git(root, "rev-parse", "main");
@@ -262,6 +277,20 @@ test("blocks on every new upstream commit even without overlapping paths", () =>
   });
 });
 
+test("checks overlay mergeability before reporting semantic review", () => {
+  withFixture({ conflictingOverlay: true }, (fixture) => {
+    const result = runSync(fixture, "--check-mergeability");
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /mergeability preflight failed while merging overlay feature\/one/);
+    assert.match(result.stderr, /shared\.txt/);
+    assert.doesNotMatch(result.stdout, /Semantic review required/);
+    assert.doesNotMatch(result.stdout, /PASEO_REVIEW_REQUEST_FILE=/);
+    assert.equal(git(fixture.root, "rev-parse", "rw-base"), fixture.currentMain);
+    assert.doesNotMatch(git(fixture.root, "worktree", "list", "--porcelain"), /mergeability/);
+  });
+});
+
 test("reviews each branch from its own recorded main baseline", () => {
   withFixture({ secondBranch: true }, (fixture) => {
     const result = runSync(fixture);
@@ -304,6 +333,7 @@ test("blocks when a branch head changes even if main does not", () => {
       result.stdout,
       new RegExp(`Branch review: ${fixture.reviewedFeatureHead}..${fixture.featureHead}`),
     );
+    assert.match(result.stdout, /Range-diff against the previously reviewed feature/);
     assert.match(result.stdout, /feature-update\.txt/);
   });
 });

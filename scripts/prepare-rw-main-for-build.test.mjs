@@ -239,6 +239,7 @@ test("propagates semantic-review status before rebuilding rw-main", () => {
 
     assert.equal(result.status, 3, result.stderr);
     assert.match(result.stdout, /Semantic review required before rebuilding rw-main/);
+    assert.match(result.stdout, /Mergeability preflight: PASS/);
     assert.match(result.stdout, new RegExp(fixture.upstreamMain));
     assert.match(result.stdout, /upstream\.txt/);
     assert.match(result.stdout, /PASEO_PREFLIGHT_STATUS=review-required/);

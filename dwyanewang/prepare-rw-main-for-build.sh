@@ -228,7 +228,7 @@ printf 'PASEO_MAIN_BEFORE=%s\nPASEO_MAIN_AFTER=%s\nPASEO_MAIN_SYNC_SECONDS=%s\n'
 
 manifest_sync_started=$(date +%s)
 sync_status=0
-(cd "$control_root" && bash dwyanewang/sync-rw-main-branches.sh "${sync_args[@]}") ||
+(cd "$control_root" && bash dwyanewang/sync-rw-main-branches.sh --check-mergeability "${sync_args[@]}") ||
   sync_status=$?
 printf 'PASEO_MANIFEST_SYNC_SECONDS=%s\n' "$(( $(date +%s) - manifest_sync_started ))"
 if ((sync_status == 3)); then
