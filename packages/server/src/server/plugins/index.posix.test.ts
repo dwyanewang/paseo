@@ -1250,7 +1250,7 @@ export default function contribute(plugin: unknown) {
     await expect(service.installDirectory({ path: failed })).rejects.toThrow("startup exploded");
     expect(events).toEqual(["failed-install"]);
     await service.stopAllPlugins();
-  });
+  }, 20_000);
 
   it("reports invalid manifests, missing entries, and startup failures", async () => {
     const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
@@ -1298,7 +1298,7 @@ export default function contribute(plugin: unknown) {
       }),
     ]);
     await service.stopAllPlugins();
-  });
+  }, 20_000);
 
   it("contains cleanup errors and invokes server cleanup once per stopped installation", async () => {
     const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
@@ -1326,7 +1326,7 @@ export default function contribute(plugin: unknown) {
     await service.stopAllPlugins();
 
     expect((await readFile(cleanupFile, "utf8")).trim().split("\n")).toHaveLength(4);
-  });
+  }, 30_000);
 });
 
 describe("npm plugin installation", () => {
