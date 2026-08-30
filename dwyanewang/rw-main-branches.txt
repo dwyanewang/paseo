@@ -5,5 +5,5 @@
 fix/project-skill-cache-invalidation # PR #2585 # reviewed-main:86ef4680031d104958aa9c852c24e06a7f98ff32 # reviewed-head:6ac93fed49fe351afbfae297e8f32f58f3b9fdeb
 fix/android-keyboard-covers-input # PR #2467 # reviewed-main:86ef4680031d104958aa9c852c24e06a7f98ff32 # reviewed-head:8541863f8a5736e767cdb0b96c1b311df0548eeb
 refactor/provider-history-read # PR #2388 # reviewed-main:86ef4680031d104958aa9c852c24e06a7f98ff32 # reviewed-head:b019e90596ee28921ca44a38b9442be20aad5188
-feat/file-image-preview # PR #2822 # reviewed-main:86ef4680031d104958aa9c852c24e06a7f98ff32 # reviewed-head:c773c130e85cd1cedf5bd549f5b86f9b4be31fc7
-feat/forge-plugin-infrastructure # Temporary personal overlay # reviewed-main:86ef4680031d104958aa9c852c24e06a7f98ff32 # reviewed-head:36072c763f46b6cfb2c0c867b45c7c2515279f42
+feat/file-image-actions # PR #4063 # reviewed-main:86ef4680031d104958aa9c852c24e06a7f98ff32 # reviewed-head:956b2e3c1c6d3f9f9875f74fe3b7142d5f869508
+feat/forge-plugin-infrastructure # PR #3894 # reviewed-main:86ef4680031d104958aa9c852c24e06a7f98ff32 # reviewed-head:36072c763f46b6cfb2c0c867b45c7c2515279f42
