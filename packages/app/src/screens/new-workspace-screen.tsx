@@ -133,7 +133,7 @@ import {
   createWorkspaceAgentInBackground,
 } from "./new-workspace/background-handoff";
 import { useNewWorkspaceScreenPresence } from "./new-workspace/screen-presence";
-import { type ClientForgeHostSnapshot, useClientForgeHost } from "@/git/client-forge-registry";
+import { useClientForgeHost } from "@/git/client-forge-registry";
 
 const ThemedFolderPlus = withUnistyles(FolderPlus);
 const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
@@ -528,7 +528,6 @@ function NewWorkspacePickerOption({
   onPress,
   itemById,
   isPending,
-  clientForgeHost,
 }: {
   option: ComboboxOptionType;
   selected: boolean;
@@ -536,7 +535,6 @@ function NewWorkspacePickerOption({
   onPress: () => void;
   itemById: Map<string, PickerItem>;
   isPending: boolean;
-  clientForgeHost: ClientForgeHostSnapshot;
 }) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
@@ -555,7 +553,7 @@ function NewWorkspacePickerOption({
   return (
     <PickerOptionItem
       testID={testID}
-      label={pickerItemLabel(item, clientForgeHost)}
+      label={option.label}
       description={description}
       selected={selected}
       active={active}
@@ -2258,15 +2256,8 @@ export function NewWorkspaceScreen({
       selected: boolean;
       active: boolean;
       onPress: () => void;
-    }) => (
-      <NewWorkspacePickerOption
-        {...props}
-        itemById={itemById}
-        isPending={isPending}
-        clientForgeHost={clientForgeHost}
-      />
-    ),
-    [clientForgeHost, isPending, itemById],
+    }) => <NewWorkspacePickerOption {...props} itemById={itemById} isPending={isPending} />,
+    [isPending, itemById],
   );
 
   const renderProjectOption = useCallback(
