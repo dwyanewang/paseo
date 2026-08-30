@@ -2018,11 +2018,49 @@ export class AgentManager {
   }
 
   async clearAgentAttention(agentId: string): Promise<void> {
-    const agent = this.requireAgent(agentId);
-    if (agent.attention.requiresAttention) {
-      agent.attention = { requiresAttention: false };
-      await this.persistSnapshot(agent);
-      this.emitState(agent, { persist: false });
+    const normalizedAgentId = validateAgentId(agentId, "clearAgentAttention");
+    const liveAgent = this.agents.get(normalizedAgentId);
+    if (liveAgent) {
+      if (liveAgent.attention.requiresAttention) {
+        liveAgent.attention = { requiresAttention: false };
+        await this.persistSnapshot(liveAgent);
+        this.emitState(liveAgent, { persist: false });
+      }
+      return;
+    }
+
+    const registry = this.requireRegistry();
+    const record = await registry.get(normalizedAgentId);
+    if (!record) {
+      throw new Error(`Unknown agent '${normalizedAgentId}'`);
+    }
+
+    const shouldPersist =
+      record.requiresAttention === true ||
+      record.attentionReason != null ||
+      record.attentionTimestamp != null;
+    const nextRecord = shouldPersist
+      ? {
+          ...record,
+          updatedAt: this.nextStoredUpdatedAt(record),
+          requiresAttention: false,
+          attentionReason: null,
+          attentionTimestamp: null,
+        }
+      : record;
+    if (shouldPersist) {
+      await registry.upsert(nextRecord);
+    }
+
+    const historySnapshot = this.historySnapshots.get(normalizedAgentId);
+    if (historySnapshot) {
+      historySnapshot.attention = { requiresAttention: false };
+      historySnapshot.updatedAt = new Date(nextRecord.updatedAt);
+      if (!historySnapshot.internal) {
+        this.emitState(historySnapshot, { persist: false });
+      }
+    } else if (shouldPersist && !nextRecord.internal) {
+      this.dispatchArchivedStoredAgent(nextRecord);
     }
   }
 

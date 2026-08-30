@@ -1376,6 +1376,79 @@ function createStoredAgentRecord(
   };
 }
 
+test("clear_agent_attention returns the updated archived history snapshot", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const before = createStoredAgentRecord({
+    id: "archived-attention-agent",
+    cwd: "/tmp/archived-attention-agent",
+    updatedAt: "2026-08-30T00:00:01.000Z",
+    lastStatus: "closed",
+    persistence: {
+      provider: "codex",
+      sessionId: "archived-attention-session",
+    },
+    requiresAttention: true,
+    attentionReason: "error",
+    attentionTimestamp: "2026-08-30T00:00:01.000Z",
+    archivedAt: "2026-08-30T00:00:02.000Z",
+  });
+  const after = createStoredAgentRecord({
+    ...before,
+    updatedAt: "2026-08-30T00:00:03.000Z",
+    requiresAttention: false,
+    attentionReason: null,
+    attentionTimestamp: null,
+  });
+  let storedRecord = before;
+  const getAgent = vi.fn(() => null);
+  const getHistorySnapshot = vi.fn(() => ({
+    id: storedRecord.id,
+    lifecycle: "closed" as const,
+  }));
+  const clearAgentAttention = vi.fn(async () => {
+    storedRecord = after;
+  });
+  const session = createSessionForTest({
+    messages,
+    agentManager: {
+      getAgent,
+      getHistorySnapshot,
+      waitForAgentClose: vi.fn(async () => {}),
+      clearAgentAttention,
+    },
+    agentStorage: {
+      get: vi.fn(async () => storedRecord),
+    },
+  });
+
+  await session.handleMessage({
+    type: "clear_agent_attention",
+    agentId: before.id,
+    requestId: "clear-archived-attention",
+  });
+
+  expect(clearAgentAttention).toHaveBeenCalledWith(before.id);
+  expect(getAgent).toHaveBeenCalledTimes(2);
+  expect(getHistorySnapshot).toHaveBeenCalledTimes(2);
+  expect(findByType(messages, "clear_agent_attention_response")).toMatchObject({
+    payload: {
+      requestId: "clear-archived-attention",
+      agentId: before.id,
+      agents: [
+        {
+          id: before.id,
+          status: "closed",
+          archivedAt: "2026-08-30T00:00:02.000Z",
+          updatedAt: "2026-08-30T00:00:03.000Z",
+          requiresAttention: false,
+          attentionReason: null,
+          attentionTimestamp: null,
+        },
+      ],
+    },
+  });
+});
+
 describe("agent detach RPC", () => {
   test("detaches a stored subagent and emits the updated standalone agent", async () => {
     const messages: unknown[] = [];

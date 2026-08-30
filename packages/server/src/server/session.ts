@@ -4139,7 +4139,8 @@ export class Session {
         const agents = (
           await Promise.all(
             agentIds.map(async (id) => {
-              const agent = this.agentManager.getAgent(id);
+              const agent =
+                this.agentManager.getAgent(id) ?? this.agentManager.getHistorySnapshot(id);
               return agent ? this.buildAgentPayload(agent) : null;
             }),
           )
