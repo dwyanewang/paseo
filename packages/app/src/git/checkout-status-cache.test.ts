@@ -42,6 +42,7 @@ function checkoutStatus(overrides: Partial<CheckoutStatusPayload> = {}): Checkou
     repoRoot: cwd,
     currentBranch: "main",
     headOid: "head-1",
+    worktreeRevision: 1,
     isDirty: false,
     baseRef: "origin/main",
     aheadBehind: { ahead: 0, behind: 0 },
@@ -303,7 +304,9 @@ describe("applyCheckoutStatusUpdateFromEvent", () => {
     applyCheckoutStatusUpdateFromEvent({
       queryClient,
       serverId,
-      message: checkoutStatusUpdate(checkoutStatus({ isDirty: true, requestId: "push-2" })),
+      message: checkoutStatusUpdate(
+        checkoutStatus({ isDirty: true, requestId: "push-2", worktreeRevision: 2 }),
+      ),
     });
     await vi.waitFor(() =>
       expect(queryClient.getQueryState(menu.queryKey)?.isInvalidated).toBe(true),
@@ -325,7 +328,9 @@ describe("applyCheckoutStatusUpdateFromEvent", () => {
     applyCheckoutStatusUpdateFromEvent({
       queryClient,
       serverId,
-      message: checkoutStatusUpdate(checkoutStatus({ isDirty: true, requestId: "push-2" })),
+      message: checkoutStatusUpdate(
+        checkoutStatus({ isDirty: true, requestId: "push-2", worktreeRevision: 2 }),
+      ),
     });
     menu.open();
 
@@ -347,7 +352,9 @@ describe("applyCheckoutStatusUpdateFromEvent", () => {
     applyCheckoutStatusUpdateFromEvent({
       queryClient,
       serverId,
-      message: checkoutStatusUpdate(checkoutStatus({ isDirty: true, requestId: "push-2" })),
+      message: checkoutStatusUpdate(
+        checkoutStatus({ isDirty: true, requestId: "push-2", worktreeRevision: 2 }),
+      ),
     });
     resolveDiscovery([]);
 

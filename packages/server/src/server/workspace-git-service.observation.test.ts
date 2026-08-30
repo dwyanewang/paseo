@@ -400,6 +400,7 @@ describe("WorkspaceGitService checkout observation", () => {
     await vi.waitFor(() => {
       expect(summaryListener).toHaveBeenLastCalledWith(
         expect.objectContaining({
+          worktreeRevision: 1,
           git: expect.objectContaining({
             isDirty: true,
             diffStat: { additions: 4, deletions: 2 },
@@ -416,6 +417,19 @@ describe("WorkspaceGitService checkout observation", () => {
 
     expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(1);
     expect(getPullRequestStatus).not.toHaveBeenCalled();
+
+    summaryListener.mockClear();
+    watcher.records[0]?.callback(null, [
+      { path: path.join(REPO_CWD, "tracked.txt"), type: "update" },
+    ]);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.waitFor(() => {
+      expect(summaryListener).toHaveBeenCalledWith(
+        expect.objectContaining({ worktreeRevision: 2 }),
+      );
+      expect(service.getMetrics().workspaceRefreshInFlightCount).toBe(0);
+    });
+    await flushPromises();
 
     diffSubscription.unsubscribe();
     summarySubscription.unsubscribe();
