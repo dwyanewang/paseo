@@ -118,7 +118,7 @@ import {
 } from "./workspace/terminals/state";
 import { captureWorkspaceDraftCleanup } from "./new-workspace/background-handoff";
 import { useNewWorkspaceScreenPresence } from "./new-workspace/screen-presence";
-import { type ClientForgeHostSnapshot, useClientForgeHost } from "@/git/client-forge-registry";
+import { useClientForgeHost } from "@/git/client-forge-registry";
 
 function useIsNewWorkspaceDraftHandoffActive(input: {
   draftId: string | undefined;
@@ -182,6 +182,7 @@ function noopClearDraft() {}
 
 // Stable reference so the keyboard-action handler doesn't re-register each render.
 const PROJECT_PICK_ACTIONS: readonly KeyboardActionId[] = ["workspace.project.pick"];
+
 
 
 interface WorkspaceIsolationState {
@@ -1444,6 +1445,7 @@ export function NewWorkspaceScreen({
     updateFormPreferences,
     withConnectedClient,
   ]);
+
 
 
   const agentControlsWithDisabled = useMemo(
