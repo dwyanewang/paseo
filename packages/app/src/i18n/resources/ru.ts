@@ -1788,6 +1788,8 @@ export const ru: TranslationResources = {
       tooLargeToDisplay: "Этот файл слишком велик для отображения",
       failedToLoad: "Не удалось загрузить файл",
       failedToLoadPreview: "Не удалось загрузить предварительный просмотр файла.",
+      closePreview: "Закрыть просмотр файла",
+      closePreviewHint: "Закрывает этот файл и возвращает на родительскую вкладку",
       image: {
         accessibilityLabel: "Просмотр изображения: {{fileName}}",
         accessibilityHint:

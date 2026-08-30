@@ -1808,6 +1808,8 @@ export const fr: TranslationResources = {
       tooLargeToDisplay: "Ce fichier est trop volumineux pour être affiché",
       failedToLoad: "Échec du chargement du fichier",
       failedToLoadPreview: "Échec du chargement de l'aperçu du fichier",
+      closePreview: "Fermer l'aperçu du fichier",
+      closePreviewHint: "Ferme ce fichier et revient à son onglet parent",
       image: {
         accessibilityLabel: "Aperçu de l'image : {{fileName}}",
         accessibilityHint: "Pincez pour zoomer. Appuyez longuement pour les actions d'image.",

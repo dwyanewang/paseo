@@ -1768,6 +1768,8 @@ export const en = {
       tooLargeToDisplay: "This file is too large to display",
       failedToLoad: "Failed to load file",
       failedToLoadPreview: "Failed to load file preview",
+      closePreview: "Close file preview",
+      closePreviewHint: "Closes this file and returns to its parent tab",
       image: {
         accessibilityLabel: "Image preview: {{fileName}}",
         accessibilityHint: "Pinch to zoom. Long press for image actions.",

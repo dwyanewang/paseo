@@ -1758,6 +1758,8 @@ export const ar: TranslationResources = {
       tooLargeToDisplay: "هذا الملف كبير جدًا بحيث لا يمكن عرضه",
       failedToLoad: "فشل تحميل الملف",
       failedToLoadPreview: "فشل تحميل معاينة الملف",
+      closePreview: "إغلاق معاينة الملف",
+      closePreviewHint: "يغلق هذا الملف ويعود إلى علامة التبويب الأصلية",
       image: {
         accessibilityLabel: "معاينة الصورة: {{fileName}}",
         accessibilityHint: "قرّب أو باعد بإصبعين للتكبير. اضغط مطولًا لإجراءات الصورة.",

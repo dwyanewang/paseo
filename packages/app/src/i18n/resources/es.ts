@@ -1804,6 +1804,8 @@ export const es: TranslationResources = {
       tooLargeToDisplay: "Este archivo es demasiado grande para mostrarlo",
       failedToLoad: "No se pudo cargar el archivo",
       failedToLoadPreview: "No se pudo cargar la vista previa del archivo",
+      closePreview: "Cerrar vista previa del archivo",
+      closePreviewHint: "Cierra este archivo y vuelve a su pestaña principal",
       image: {
         accessibilityLabel: "Vista previa de imagen: {{fileName}}",
         accessibilityHint: "Pellizca para ampliar. Mantén pulsado para ver las acciones de imagen.",
