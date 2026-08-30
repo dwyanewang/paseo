@@ -1516,6 +1516,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
           if (!workspaceTarget) {
             return;
           }
+          workspaceTarget.worktreeRevision += 1;
           await this.refreshWorkspaceTarget(workspaceTarget, {
             force: false,
             refreshStructure: target.repoRoot === null,
@@ -2270,6 +2271,9 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         }
         if (refreshWorktree) {
           workspaceTarget.worktreeRevision += 1;
+          if (workspaceTarget.latestGit) {
+            workspaceTarget.latestSnapshot = this.combineSnapshot(workspaceTarget);
+          }
           const workingTreeTarget = this.getWorkingTreeWatchTargetForWorkspace(workspaceTarget);
           if (workingTreeTarget) {
             workingTreeTargets.add(workingTreeTarget);
@@ -2277,7 +2281,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         }
         this.scheduleWorkspaceRefresh(workspaceTarget, {
           scope,
-          emitUnchanged: refresh.refreshBase && !refreshWorktree,
+          emitUnchanged: refresh.refreshBase,
           reason,
           queueIfBusy: refresh.queueIfBusy,
           movedRemoteRefs: refresh.movedRemoteRefs,
@@ -2315,12 +2319,15 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
             workingTreeTargets.add(workingTreeTarget);
           }
           workspaceTarget.worktreeRevision += 1;
+          if (workspaceTarget.latestGit) {
+            workspaceTarget.latestSnapshot = this.combineSnapshot(workspaceTarget);
+          }
           await this.refreshWorkspaceTarget(workspaceTarget, {
             force: false,
             refreshStructure: true,
             refreshWorktree: true,
             includeForge: false,
-            emitUnchanged: false,
+            emitUnchanged: true,
             reason: "git-metadata-watch-fallback",
             notify: true,
             queueIfBusy: true,
