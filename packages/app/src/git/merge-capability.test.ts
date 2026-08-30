@@ -45,18 +45,6 @@ type GiteaMergeFactsFixture = ForgeSpecificStatusFacts & {
   ciStatus: string | null;
 };
 
-type CodeupMergeFactsFixture = ForgeSpecificStatusFacts & {
-  forge: "codeup";
-  status: string;
-  allRequirementsPass: boolean;
-  requirementChecks: {
-    mergeConflict: boolean | null;
-    comments: boolean | null;
-    ci: boolean | null;
-    reviewerApproved: boolean | null;
-  };
-};
-
 function facts(overrides: Partial<GithubMergeFactsFixture> = {}): GithubMergeFactsFixture {
   return {
     forge: "github",
@@ -101,21 +89,6 @@ function giteaFacts(overrides: Partial<GiteaMergeFactsFixture> = {}): GiteaMerge
     mergeable: true,
     hasMerged: false,
     ciStatus: "success",
-    ...overrides,
-  };
-}
-
-function codeupFacts(overrides: Partial<CodeupMergeFactsFixture> = {}): CodeupMergeFactsFixture {
-  return {
-    forge: "codeup",
-    status: "TO_BE_MERGED",
-    allRequirementsPass: true,
-    requirementChecks: {
-      mergeConflict: true,
-      comments: true,
-      ci: true,
-      reviewerApproved: true,
-    },
     ...overrides,
   };
 }
@@ -323,34 +296,5 @@ describe("deriveMergeCapability (gitea)", () => {
     expect(capability?.canEnableAutoMerge).toBe(false);
     expect(capability?.autoMergeEnabled).toBe(false);
     expect(capability?.canDisableAutoMerge).toBe(false);
-  });
-});
-
-describe("deriveMergeCapability (codeup)", () => {
-  it("allows direct merge only after Codeup reports every requirement passed", () => {
-    expect(deriveMergeCapability(codeupFacts())?.directMergeReady).toBe(true);
-    expect(
-      deriveMergeCapability(codeupFacts({ allRequirementsPass: false }))?.directMergeReady,
-    ).toBe(false);
-    expect(
-      deriveMergeCapability(
-        codeupFacts({ requirementChecks: { ...codeupFacts().requirementChecks, ci: false } }),
-      )?.directMergeReady,
-    ).toBe(false);
-    expect(deriveMergeCapability(codeupFacts({ status: "UNDER_REVIEW" }))?.directMergeReady).toBe(
-      false,
-    );
-  });
-
-  it("offers all direct merge methods and never exposes auto-merge", () => {
-    expect(deriveMergeCapability(codeupFacts())).toEqual({
-      directMergeReady: true,
-      canEnableAutoMerge: false,
-      autoMergeEnabled: false,
-      canDisableAutoMerge: false,
-      mergeBlockedByQueue: false,
-      allowedMethods: ["merge", "squash", "rebase"],
-      preferredMethod: null,
-    });
   });
 });

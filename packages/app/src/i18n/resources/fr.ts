@@ -1006,7 +1006,6 @@ export const fr: TranslationResources = {
         },
       },
       forgeSetup: {
-        updateHost: "Mettez à jour cet hôte pour utiliser les fonctionnalités {{brand}}.",
         installCli: "Installez la CLI {{cli}} pour utiliser les fonctionnalités {{brand}}.",
         signIn: "Exécutez {{command}} pour utiliser les fonctionnalités {{brand}}.",
         generic: "Configurez {{brand}} sur cet hôte pour utiliser ses fonctionnalités.",

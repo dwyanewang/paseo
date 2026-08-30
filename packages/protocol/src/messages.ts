@@ -3449,8 +3449,6 @@ export const ServerInfoStatusPayloadSchema = z
         // Daemon advertises pluggable non-GitHub forge support (the forge registry);
         // the client gates non-GitHub setup UI on it.
         forgeProviders: z.boolean().optional(),
-        /** Daemon has the Codeup Forge adapter, not only generic Forge routing. */
-        codeupForge: z.boolean().optional(),
         // COMPAT(selectiveAgentTimeline): added in v0.1.106, remove after 2027-01-12.
         selectiveAgentTimeline: z.boolean().optional(),
         // COMPAT(canonicalSubmittedPrompts): added in v0.2.6, remove gate after 2027-01-30.

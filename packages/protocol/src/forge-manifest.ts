@@ -79,17 +79,6 @@ export const FORGE_DEFINITIONS: ForgeDefinition[] = [
     cloudHosts: ["gitlab.com"],
   },
   {
-    id: "codeup",
-    displayName: "Codeup",
-    changeRequestAbbrev: "MR",
-    changeRequestNoun: "merge request",
-    changeRequestNumberPrefix: "!",
-    issueNumberPrefix: "#",
-    iconKind: "codeup",
-    signIn: { cli: "aliyun", command: "aliyun configure" },
-    cloudHosts: ["codeup.aliyun.com"],
-  },
-  {
     id: "gitea",
     displayName: "Gitea",
     changeRequestAbbrev: "PR",

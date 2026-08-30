@@ -155,49 +155,6 @@ Facts modules use one source of truth: a Zod schema. Helpers like
 derive guards from `schema.safeParse` and re-parse before invoking typed
 derivers/renderers. That keeps typed derivers away from the open wire envelope.
 
-## Codeup
-
-Codeup uses the official Alibaba Cloud CLI and its DevOps OpenAPI rather than a
-Codeup PAT. Install `aliyun`, then configure an AK or STS-backed profile with:
-
-```bash
-aliyun configure
-```
-
-Paseo neither stores nor sends the AK/SK itself. The daemon invokes the CLI on
-the host, probes credentials with `aliyun sts GetCallerIdentity`, and sends
-Codeup requests through the CLI's built-in DevOps `2021-06-25` metadata at the
-fixed `devops.cn-hangzhou.aliyuncs.com` endpoint in `cn-hangzhou`. Do not pass
-`--version`: CLI v3.4.8 rejects an explicit version as unchecked. The configured
-identity needs repository/MR read access and, for create or merge operations,
-the corresponding write access.
-
-Only `codeup.aliyun.com` remotes are recognized. Their first path segment is the
-Codeup `organizationId`; the complete path, including that segment, is the
-repository identity passed to `GetRepository`:
-
-```text
-git@codeup.aliyun.com:<organizationId>/<group...>/<repository>.git
-https://codeup.aliyun.com/<organizationId>/<group...>/<repository>.git
-```
-
-The organization must use Codeup's new merge requests. Paseo deliberately adds
-`filter=new` to MR queries because the old MR model does not expose the facts
-needed by the shared Forge contract.
-
-The Codeup adapter covers MR search/status, review and comment activity,
-check-runs and commit statuses, check details, create, merge, and same- or
-cross-repository checkout. It does not expose repository Issues, auto-merge,
-Projex work items, pipeline management, or comment/review writes. Codeup source
-tree/blob links are also omitted until their routes, branch encoding, and line
-anchors are verified against a live account; emitting no link is safer than a
-plausible but invalid URL.
-
-The real adapter test requires the host's default `aliyun configure` profile
-plus `CODEUP_E2E_REPOSITORY_URL` and `CODEUP_E2E_BASE_BRANCH`. The repository
-must be dedicated to integration testing and allow the test identity to push a
-temporary branch, create a new MR, squash-merge it, and delete the branch.
-
 ## Checklist
 
 To add `acme`:
