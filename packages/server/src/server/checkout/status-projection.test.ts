@@ -12,6 +12,7 @@ describe("checkout status projection", () => {
   test("projects the checked-out commit identity onto the wire payload", () => {
     const snapshot = {
       cwd: "/repo",
+      worktreeRevision: 7,
       git: {
         isGit: true,
         repoRoot: "/repo",
@@ -48,6 +49,7 @@ describe("checkout status projection", () => {
     });
 
     expect(parsed.payload.headOid).toBe("0123456789abcdef");
+    expect(parsed.payload.worktreeRevision).toBe(7);
   });
 
   test("includes repository identity fields on the PR status wire payload", () => {

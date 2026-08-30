@@ -165,6 +165,7 @@ interface SnapshotOverrides {
 function createBaseSnapshot(cwd: string): WorkspaceGitRuntimeSnapshot {
   return {
     cwd,
+    worktreeRevision: 0,
     git: {
       isGit: true,
       repoRoot: cwd,
@@ -252,6 +253,7 @@ function createSnapshot(cwd: string, overrides?: SnapshotOverrides): WorkspaceGi
   const forge = resolveSnapshotForge(base, overrides);
   return {
     cwd,
+    worktreeRevision: base.worktreeRevision,
     git: {
       ...base.git,
       ...overrides?.git,
