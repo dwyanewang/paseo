@@ -281,22 +281,17 @@ test.describe("CodeMirror workspace file editing", () => {
       await page.locator(`a[href="./${target}"]`).click();
 
       const viewer = page.getByTestId("workspace-file-image");
-      const zoomLevel = page.getByTestId("workspace-file-image-zoom-level");
-      const imageFrame = page.getByTestId("workspace-file-image-frame");
+      const canvas = page.getByTestId("workspace-file-image-canvas");
+      const imageFrame = canvas.locator(":scope > div");
       await expect(viewer).toBeVisible({ timeout: 30_000 });
-      await expect(zoomLevel).toHaveText("100%");
+      await expect(canvas).toBeVisible();
+      const initialTransform = await imageFrame.evaluate(computedTransform);
 
-      await viewer.hover();
+      await canvas.hover();
       await page.mouse.wheel(0, -300);
-      await expect
-        .poll(async () => Number.parseInt((await zoomLevel.textContent()) ?? "0", 10))
-        .toBeGreaterThan(100);
-
-      await viewer.dblclick();
-      await expect(zoomLevel).toHaveText("100%");
-      await page.getByTestId("workspace-file-image-zoom-in").click();
-      await page.getByTestId("workspace-file-image-zoom-in").click();
-      await expect(zoomLevel).toHaveText("200%");
+      await page.mouse.wheel(0, -300);
+      await page.mouse.wheel(0, -300);
+      await expect.poll(() => imageFrame.evaluate(computedTransform)).not.toBe(initialTransform);
 
       const beforeDrag = await imageFrame.evaluate(computedTransform);
       const viewerBox = await viewer.boundingBox();
@@ -311,8 +306,8 @@ test.describe("CodeMirror workspace file editing", () => {
       await page.mouse.up();
       await expect.poll(() => imageFrame.evaluate(computedTransform)).not.toBe(beforeDrag);
 
-      await zoomLevel.click();
-      await expect(zoomLevel).toHaveText("100%");
+      await canvas.dblclick();
+      await expect.poll(() => imageFrame.evaluate(computedTransform)).toBe(initialTransform);
     } finally {
       await session.cleanup();
     }
