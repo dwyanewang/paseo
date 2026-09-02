@@ -74,11 +74,11 @@ bash "$paseo_chore_root/dwyanewang/build-paseo-artifacts.sh" \
   --target windows
 ```
 
-脚本统一负责整轮独占锁、mise、临时分支清理、所选旧产物标记、terminal-webview 清理、依赖构建、Android/Windows 画像、三端同时选择时的 Android bundle gate 与 16 GiB 并发判定、产物校验和按目标下载服务；不要让多个 subagent 各自启动平台构建，也不要在代理侧重复这些实现细节。
+脚本统一负责整轮独占锁、mise、临时分支清理、所选旧产物标记、terminal-webview 清理、依赖构建、Android/Windows 画像、三端同时选择时的 Android bundle gate 与 16 GiB 并发判定、产物校验、Windows 历史 zip 轮转和按目标下载服务。Windows 成功构建后只保留当前包与最近两个历史 `Paseo-Setup-*-x64.zip`；不要让多个 subagent 各自启动平台构建，也不要在代理侧重复这些实现细节。
 
 ## 失败与交付
 
 - 修改任意 `dwyanewang/*.sh` 或对应测试后，提交前运行 `bash "$paseo_chore_root/dwyanewang/check-build-paseo.sh"`；它只做 Shell 语法和定向构建控制测试，不代替真实产物打包。
 - 任一步非零即停止，保留真实退出码。失败时按日志症状查询 `踩坑记录.md`；临时叠加修复回源分支，长期功能修复经 `maintain`，不能直接修改候选、`rw-base` 或 `rw-main`。
-- 证据优先读取 `.dev/build-paseo-runs/<轮次>/result.env`、`stages.log`、已选择端的分支日志、`build.log` 和资源 summary。核对 `paseo_artifact_targets`、`paseo_artifact_preflight_mode` 与临时分支 SHA。
-- 只汇报所选端的产物路径/体积/mtime和资源数据；同时选择 Android 与 Windows 时再汇报并发/回退模式。还要汇报临时分支及冻结 SHA、下载地址，以及从用户消息到下载服务就绪的真实总墙钟；脚本自己的产物链计时只作分段数据。
+- 证据优先读取 `.dev/build-paseo-runs/<轮次>/result.env`、`stages.log`、已选择端的分支日志、`build.log` 和资源 summary。核对 `paseo_artifact_targets`、`paseo_artifact_preflight_mode` 与临时分支 SHA；Windows 目标还要核对 retention limit、保留数和清理数。
+- 只汇报所选端的产物路径/体积/mtime和资源数据；Windows 目标同时汇报历史 zip 保留/清理数量，同时选择 Android 与 Windows 时再汇报并发/回退模式。还要汇报临时分支及冻结 SHA、下载地址，以及从用户消息到下载服务就绪的真实总墙钟；脚本自己的产物链计时只作分段数据。

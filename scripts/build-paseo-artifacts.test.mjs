@@ -9,6 +9,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -541,6 +542,86 @@ test("builds only the Windows artifact while retaining its server prerequisites"
     assert.match(resultState, /paseo_artifact_targets=windows/);
     assert.match(resultState, /paseo_artifact_parallel_mode=windows-only/);
     assert.match(resultState, /paseo_artifact_android_native_bundle_gate=not-selected/);
+  });
+});
+
+test("keeps only the current and two most recently built Windows zip versions", () => {
+  withFixture({}, (fixture) => {
+    const releaseDir = path.join(fixture.buildRoot, "packages/desktop/release");
+    mkdirSync(path.join(releaseDir, "win-unpacked"), { recursive: true });
+    writeFileSync(path.join(releaseDir, "builder-debug.yml"), "debug\n");
+    writeFileSync(path.join(releaseDir, "Paseo-Setup-0.7.2-x64.exe"), "installer\n");
+
+    const historicalVersions = ["0.5.0-beta.3", "0.5.0-beta.5", "0.5.1", "0.7.0", "0.7.2"];
+    historicalVersions.forEach((version, index) => {
+      const archive = path.join(releaseDir, `Paseo-Setup-${version}-x64.zip`);
+      const builtAt = new Date(Date.UTC(2026, 0, index + 1));
+      writeFileSync(archive, `${version}\n`);
+      utimesSync(archive, builtAt, builtAt);
+    });
+
+    const result = runBuild(
+      fixture,
+      "windows-retention",
+      ["--target", "windows", "--no-serve-dist"],
+      { ANDROID_HOME: "" },
+    );
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.match(
+      result.stdout,
+      /windows: retained 3 newest x64 zip archive\(s\), pruned 3 older archive\(s\)/,
+    );
+
+    const archives = readdirSync(releaseDir)
+      .filter((entry) => /^Paseo-Setup-.*-x64\.zip$/.test(entry))
+      .sort();
+    assert.deepEqual(archives, [
+      "Paseo-Setup-0.7.0-x64.zip",
+      "Paseo-Setup-0.7.2-x64.zip",
+      "Paseo-Setup-1.2.3-beta.4-x64.zip",
+    ]);
+    assert.equal(existsSync(path.join(releaseDir, "builder-debug.yml")), true);
+    assert.equal(existsSync(path.join(releaseDir, "Paseo-Setup-0.7.2-x64.exe")), true);
+    assert.equal(existsSync(path.join(releaseDir, "win-unpacked")), true);
+
+    const resultState = readFileSync(
+      path.join(fixture.buildRoot, ".dev/windows-retention/result.env"),
+      "utf8",
+    );
+    assert.match(resultState, /paseo_artifact_windows_retention_limit=3/);
+    assert.match(resultState, /paseo_artifact_windows_archive_count=3/);
+    assert.match(resultState, /paseo_artifact_windows_pruned_count=3/);
+  });
+});
+
+test("does not prune Windows zip history before resource validation succeeds", () => {
+  withFixture({}, (fixture) => {
+    const releaseDir = path.join(fixture.buildRoot, "packages/desktop/release");
+    mkdirSync(releaseDir, { recursive: true });
+    const historicalArchives = ["0.5.0", "0.6.0", "0.7.0", "0.8.0"].map((version) => {
+      const archive = path.join(releaseDir, `Paseo-Setup-${version}-x64.zip`);
+      writeFileSync(archive, `${version}\n`);
+      return archive;
+    });
+
+    const result = runBuild(
+      fixture,
+      "windows-retention-validation-failure",
+      ["--target", "windows", "--no-serve-dist"],
+      {
+        ANDROID_HOME: "",
+        PASEO_TEST_BAD_SUMMARY_LABEL: "windows-artifacts",
+        PASEO_TEST_BAD_SUMMARY_MODE: "missing-key",
+      },
+    );
+    assert.equal(result.status, 1, `${result.stdout}\n${result.stderr}`);
+    for (const archive of historicalArchives) {
+      assert.equal(
+        existsSync(archive),
+        true,
+        `history was pruned after a failed build: ${archive}`,
+      );
+    }
   });
 });
 

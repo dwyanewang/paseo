@@ -48,6 +48,9 @@ download_port=8800
 download_ttl=10800
 serve_dist=1
 parallel_min_available_bytes=${PASEO_BUILD_PARALLEL_MIN_AVAILABLE_BYTES:-17179869184}
+windows_archive_retention_limit=3
+windows_archive_count=0
+windows_pruned_count=0
 
 while (($# > 0)); do
   case "$1" in
@@ -205,6 +208,35 @@ dependency_inputs_changed() {
   ! git -C "$build_root" diff --quiet "$old_ref..$new_ref" -- \
     package.json package-lock.json ':(glob)**/package.json' \
     ':(glob)patches/**' scripts/postinstall-patches.mjs
+}
+
+prune_windows_archives() {
+  local current_archive=$1 release_dir inventory entry archive archive_name
+  local retained_count=1
+
+  release_dir=$(dirname -- "$current_archive")
+  inventory=$(
+    find "$release_dir" -maxdepth 1 -type f -name 'Paseo-Setup-*-x64.zip' \
+      -printf '%T@ %p\n' | sort -k1,1nr -k2,2r
+  ) || fail "could not enumerate Windows zip archives in $release_dir"
+
+  windows_pruned_count=0
+  if [[ -n "$inventory" ]]; then
+    while IFS= read -r entry; do
+      archive=${entry#* }
+      [[ "$archive" == "$current_archive" ]] && continue
+      archive_name=${archive##*/}
+      [[ "$archive_name" =~ ^Paseo-Setup-[0-9A-Za-z][0-9A-Za-z.+-]*-x64\.zip$ ]] || continue
+      if ((retained_count < windows_archive_retention_limit)); then
+        ((retained_count += 1))
+        continue
+      fi
+      rm -f -- "$archive"
+      ((windows_pruned_count += 1))
+      printf 'PASEO_ARTIFACT_WINDOWS_PRUNED=%s\n' "$archive"
+    done <<<"$inventory"
+  fi
+  windows_archive_count=$retained_count
 }
 
 [[ "$(canonical_common_dir "$control_root")" == "$(canonical_common_dir "$build_root")" ]] ||
@@ -1008,6 +1040,11 @@ for summary in "${resource_summaries[@]}"; do
   printf 'PASEO_%s_SUMMARY_END=%s\n' "$summary_platform" "$summary"
 done
 
+if ((build_windows_target)); then
+  prune_windows_archives "$zip_artifact"
+  stage "windows: retained $windows_archive_count newest x64 zip archive(s), pruned $windows_pruned_count older archive(s)"
+fi
+
 if ((serve_dist)); then
   stage "serve-dist: start download service"
   # The long-lived download server must not inherit the artifact-build lock.
@@ -1039,6 +1076,9 @@ result_temp=$(mktemp "${result_file}.tmp.XXXXXX")
   printf 'paseo_artifact_server=%q\n' "$server_artifact"
   printf 'paseo_artifact_apk=%q\n' "$apk_artifact"
   printf 'paseo_artifact_windows_zip=%q\n' "$zip_artifact"
+  printf 'paseo_artifact_windows_retention_limit=%q\n' "$windows_archive_retention_limit"
+  printf 'paseo_artifact_windows_archive_count=%q\n' "$windows_archive_count"
+  printf 'paseo_artifact_windows_pruned_count=%q\n' "$windows_pruned_count"
   printf 'paseo_artifact_android_profile_dir=%q\n' "$android_profile_dir"
   printf 'paseo_artifact_android_metro_summary=%q\n' "$metro_summary"
   printf 'paseo_artifact_android_native_summary=%q\n' "$native_summary"
@@ -1073,6 +1113,10 @@ printf 'PASEO_ARTIFACT_TARGETS=%s\n' "$selected_targets_csv"
 [[ -z "$server_artifact" ]] || printf 'PASEO_ARTIFACT_SERVER=%s\n' "$server_artifact"
 [[ -z "$apk_artifact" ]] || printf 'PASEO_ARTIFACT_APK=%s\n' "$apk_artifact"
 [[ -z "$zip_artifact" ]] || printf 'PASEO_ARTIFACT_WINDOWS_ZIP=%s\n' "$zip_artifact"
+if ((build_windows_target)); then
+  printf 'PASEO_ARTIFACT_WINDOWS_ARCHIVE_COUNT=%s\n' "$windows_archive_count"
+  printf 'PASEO_ARTIFACT_WINDOWS_PRUNED_COUNT=%s\n' "$windows_pruned_count"
+fi
 ((build_android_target == 0)) || printf 'PASEO_ANDROID_PROFILE_DIR=%s\n' "$resource_profile_dir"
 ((build_windows_target == 0)) || printf 'PASEO_WINDOWS_PROFILE_DIR=%s\n' "$resource_profile_dir"
 printf 'PASEO_ARTIFACT_RESULT_FILE=%s\n' "$result_file"
