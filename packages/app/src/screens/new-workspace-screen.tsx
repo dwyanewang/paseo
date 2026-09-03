@@ -131,6 +131,7 @@ import {
 } from "./new-workspace-initial-context";
 import { buildNewWorkspaceProjectIconTargets } from "./new-workspace/project-icon-targets";
 import { useNewWorkspaceProjectPicker } from "./new-workspace/project-picker";
+import { useClientForgeHost } from "@/git/client-forge-registry";
 
 const ThemedFolderPlus = withUnistyles(FolderPlus);
 const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
@@ -554,7 +555,7 @@ function NewWorkspacePickerOption({
   return (
     <PickerOptionItem
       testID={testID}
-      label={pickerItemLabel(item)}
+      label={option.label}
       description={description}
       selected={selected}
       active={active}
@@ -1633,6 +1634,7 @@ export function NewWorkspaceScreen({
     projectId,
     displayName: displayNameProp,
   });
+  const clientForgeHost = useClientForgeHost(selectedServerId);
   // COMPAT(workspaceMultiplicity): added in v0.1.97, drop the gate when floor >= v0.1.97
   const supportsWorkspaceMultiplicity = useHostFeature(selectedServerId, "workspaceMultiplicity");
   const supportsForgeSearch = useHostFeature(selectedServerId, "forgeSearch");
@@ -1858,13 +1860,14 @@ export function NewWorkspaceScreen({
         branchDetails,
         prItems,
         baseItem,
+        clientForgeHost,
       }),
-    [baseItem, branchDetails, prItems],
+    [baseItem, branchDetails, clientForgeHost, prItems],
   );
   const triggerLabel = useMemo(() => {
     const displayItem = itemById.get(selectedOptionId);
-    return displayItem ? pickerItemLabel(displayItem) : "main";
-  }, [itemById, selectedOptionId]);
+    return displayItem ? pickerItemLabel(displayItem, clientForgeHost) : "main";
+  }, [clientForgeHost, itemById, selectedOptionId]);
   const selectPickerItem = useCallback(
     (item: PickerItem) => {
       const action =
