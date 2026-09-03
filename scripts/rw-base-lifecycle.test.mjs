@@ -475,6 +475,68 @@ test("reports direct rw-base commits and blocks lifecycle inference", () => {
   });
 }, 15_000);
 
+test("adopts a reviewed direct rw-base commit during feature maintenance", () => {
+  withFixture({}, (fixture) => {
+    promoteBoth(fixture);
+    const directRoot = path.join(fixture.fixtureRoot, "direct-rw-base-adoption");
+    git(fixture.controlRoot, "worktree", "add", directRoot, "rw-base");
+    writeFileSync(path.join(directRoot, "direct.txt"), "historical implementation\n");
+    git(directRoot, "add", "direct.txt");
+    git(directRoot, "commit", "-m", "fix(android): direct historical implementation");
+    const directCommit = git(directRoot, "rev-parse", "HEAD");
+    git(fixture.controlRoot, "worktree", "remove", directRoot);
+
+    const maintenanceRoot = path.join(fixture.fixtureRoot, "maintenance-adoption");
+    git(fixture.controlRoot, "branch", "maintenance/adoption", "rw-base");
+    git(fixture.controlRoot, "worktree", "add", maintenanceRoot, "maintenance/adoption");
+    writeFileSync(path.join(maintenanceRoot, "feature-one-fix.txt"), "reconciled\n");
+    git(maintenanceRoot, "add", "feature-one-fix.txt");
+    git(maintenanceRoot, "commit", "-m", "fix: reconcile feature one history");
+    git(maintenanceRoot, "push", "-u", "origin", "maintenance/adoption");
+
+    const maintained = runManage(fixture, "maintain", [
+      "--feature",
+      "feature-one",
+      "--branch",
+      "maintenance/adoption",
+      "--adopt-commit",
+      directCommit,
+    ]);
+    assert.equal(maintained.status, 0, `${maintained.stdout}\n${maintained.stderr}`);
+
+    const status = runManage(fixture, "status");
+    assert.equal(status.status, 0, status.stderr);
+    assert.doesNotMatch(status.stdout, /UNMANAGED/);
+    assert.match(status.stdout, /feature-one\tactive[^\n]*integrations=2[^\n]*adoptions=1/);
+    assert.equal(
+      git(
+        fixture.controlRoot,
+        "log",
+        "-1",
+        "--format=%(trailers:key=Paseo-Base-Adopted-Commit,valueonly)",
+        "rw-base",
+      ),
+      directCommit,
+    );
+  });
+}, 20_000);
+
+test("rejects adoption refs that are not currently unmanaged on rw-base", () => {
+  withFixture({}, (fixture) => {
+    promoteBoth(fixture);
+    const maintained = runManage(fixture, "maintain", [
+      "--feature",
+      "feature-one",
+      "--branch",
+      "feature/one",
+      "--adopt-commit",
+      fixture.initialMain,
+    ]);
+    assert.equal(maintained.status, 1);
+    assert.match(maintained.stderr, /not currently UNMANAGED on rw-base/);
+  });
+});
+
 test("maintains an active feature and rejects duplicate promotion", () => {
   withFixture({}, (fixture) => {
     promoteBoth(fixture);

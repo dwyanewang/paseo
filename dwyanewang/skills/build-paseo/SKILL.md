@@ -50,7 +50,7 @@ bash "$paseo_chore_root/dwyanewang/prepare-rw-main-for-build.sh" \
 
 ## 长期功能
 
-- 用户明确要求把功能固化到基线时，完整读取 `打包流程.md` 第 1.3 节并使用 `manage-rw-base.sh promote|maintain|retire|status`；不要把它重新加入临时叠加清单。先检查 `status` 的 `UNMANAGED` 行；存在时 lifecycle 会拒绝自动推断，不能再次 promote。新 lifecycle 会在冻结 request 前自行刷新 upstream/origin、快进并同步 `main`；构建请求把本轮 `paseo_preflight_state` 传给 `--state-file`，验证和发布成功后它会直接生成 ready state，随后进入产物脚本，不再额外调用一次 prepare。冲突 `continue` 会刷新 tracking refs 后按原冻结坐标拒绝任何漂移。
+- 用户明确要求把功能固化到基线时，完整读取 `打包流程.md` 第 1.3 节并使用 `manage-rw-base.sh promote|maintain|retire|status`；不要把它重新加入临时叠加清单。先检查 `status` 的 `UNMANAGED` 行；存在时 lifecycle 会拒绝自动推断，不能再次 promote。若已证明某个历史直提提交被当前受管功能完整接管，则在修复该功能的同一次 `maintain` 中显式传 `--adopt-commit <SHA>`；它会写入追加式 trailer 并让后续 status 不再报该项。禁止为清掉 `UNMANAGED` 而重写或删除已推送的 `rw-base` 历史。新 lifecycle 会在冻结 request 前自行刷新 upstream/origin、快进并同步 `main`；构建请求把本轮 `paseo_preflight_state` 传给 `--state-file`，验证和发布成功后它会直接生成 ready state，随后进入产物脚本，不再额外调用一次 prepare。冲突 `continue` 会刷新 tracking refs 后按原冻结坐标拒绝任何漂移。
 - 退出码 `5` 表示生命周期操作保留了冲突 worktree。保存输出的 `PASEO_RW_BASE_OPERATION`；解决并 `git add` 后用 `continue --operation`，或用 `abort --operation` 放弃。不得手工移动 `rw-base`/`rw-main`。
 
 ## 正式产物链与端选择

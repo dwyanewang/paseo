@@ -15,8 +15,9 @@ Commands:
   promote --feature ID --branch BRANCH [--feature ID --branch BRANCH ...]
       Merge one or more synchronized source branches into rw-base as new features.
 
-  maintain --feature ID --branch BRANCH
-      Merge a synchronized maintenance branch for one active feature.
+  maintain --feature ID --branch BRANCH [--adopt-commit COMMIT ...]
+      Merge a synchronized maintenance branch for one active feature. Explicitly
+      adopt reviewed historical direct rw-base commits without rewriting history.
 
   retire --feature ID --replacement REF
       Rebuild the desired base tree from current main and every other active
@@ -32,6 +33,8 @@ Global options:
   --build-root PATH  Dedicated rw-main product worktree (required).
   --push             Atomically push rw-base and rw-main after validation.
   --state-file PATH  Atomically write a prepare-compatible ready state on success.
+  --adopt-commit REF Mark a currently UNMANAGED first-parent commit as explicitly
+                     reconciled by this maintenance integration. Repeatable.
   --help             Show this help.
 EOF
 }
@@ -44,6 +47,8 @@ operation_arg=
 replacement=
 declare -a requested_features=()
 declare -a requested_branches=()
+declare -a requested_adoption_refs=()
+declare -a requested_adopted_commits=()
 
 while (($# > 0)); do
   case "$1" in
@@ -101,6 +106,14 @@ while (($# > 0)); do
         exit 2
       }
       replacement=$2
+      shift 2
+      ;;
+    --adopt-commit)
+      (($# >= 2)) || {
+        printf '%s\n' 'Missing value for --adopt-commit.' >&2
+        exit 2
+      }
+      requested_adoption_refs+=("$2")
       shift 2
       ;;
     --operation)
@@ -251,13 +264,16 @@ declare -a feature_order=()
 declare -a event_commits=()
 declare -A event_features=()
 declare -A event_actions=()
+declare -A adopted_commits=()
+declare -A adopted_by_events=()
+declare -A feature_adopted_commits=()
 declare -a unmanaged_commits=()
 declare -a unmanaged_subjects=()
 
 load_unmanaged_commits() {
-  local commit subject parents record_terminator main_parent
+  local commit subject parents record_terminator main_parent adopted_commit
   local -a commit_parents
-  local -A main_first_parent_commits=()
+  local -A main_first_parent_commits=() adoption_candidates=()
   unmanaged_commits=()
   unmanaged_subjects=()
   git -C "$control_root" show-ref --verify --quiet "refs/heads/$base_branch" || return 0
@@ -277,16 +293,26 @@ load_unmanaged_commits() {
       [[ -n "${main_first_parent_commits[$main_parent]+present}" ]]; then
       continue
     fi
+    adoption_candidates["$commit"]=1
+    [[ -z "${adopted_commits[$commit]+present}" ]] || continue
     unmanaged_commits+=("$commit")
     unmanaged_subjects+=("$subject")
   done < <(
     git -C "$control_root" log -z --first-parent \
       --format='%H%x00%s%x00%P%x00' "$upstream_branch..$base_branch"
   )
+  for adopted_commit in "${!adopted_commits[@]}"; do
+    [[ -n "${adoption_candidates[$adopted_commit]+present}" ]] ||
+      fail "Paseo-Base-Adopted-Commit does not name an unmanaged first-parent commit: $adopted_commit"
+    git -C "$control_root" merge-base --is-ancestor \
+      "$adopted_commit" "${adopted_by_events[$adopted_commit]}^1" ||
+      fail "Paseo-Base-Adopted-Commit is not older than its lifecycle integration: $adopted_commit"
+  done
 }
 
 load_feature_state() {
-  local commit feature action source_branch source_head replacement_value record_terminator
+  local commit feature action source_branch source_head replacement_value adopted_values
+  local adopted_commit record_terminator
   feature_status=()
   feature_source_branch=()
   feature_source_head=()
@@ -296,6 +322,9 @@ load_feature_state() {
   event_commits=()
   event_features=()
   event_actions=()
+  adopted_commits=()
+  adopted_by_events=()
+  feature_adopted_commits=()
   git -C "$control_root" show-ref --verify --quiet "refs/heads/$base_branch" || return 0
 
   while IFS= read -r -d '' commit &&
@@ -304,6 +333,7 @@ load_feature_state() {
     IFS= read -r -d '' source_branch &&
     IFS= read -r -d '' source_head &&
     IFS= read -r -d '' replacement_value &&
+    IFS= read -r -d '' adopted_values &&
     IFS= read -r -d '' record_terminator; do
     [[ -z "$record_terminator" ]] || fail "malformed rw-base history record for $commit"
     [[ -n "$feature" || -n "$action" ]] || continue
@@ -317,6 +347,16 @@ load_feature_state() {
     event_commits+=("$commit")
     event_features[$commit]=$feature
     event_actions[$commit]=$action
+    while IFS= read -r adopted_commit; do
+      [[ -n "$adopted_commit" ]] || continue
+      [[ "$adopted_commit" =~ ^[0-9a-f]{40}$ ]] ||
+        fail "invalid Paseo-Base-Adopted-Commit trailer on $commit: $adopted_commit"
+      [[ -z "${adopted_commits[$adopted_commit]+present}" ]] ||
+        fail "rw-base commit $adopted_commit was adopted more than once"
+      adopted_commits[$adopted_commit]=$feature
+      adopted_by_events[$adopted_commit]=$commit
+      feature_adopted_commits[$feature]+=" $adopted_commit"
+    done <<<"$adopted_values"
     case "$action" in
       promote)
         [[ "${feature_status[$feature]:-retired}" != active ]] ||
@@ -351,7 +391,7 @@ load_feature_state() {
   done < <(
     git -C "$control_root" log -z --first-parent --reverse --extended-regexp \
       --grep='^Paseo-Base-(Feature|Action):' \
-      --format='%H%x00%(trailers:key=Paseo-Base-Feature,valueonly,separator=%x0A)%x00%(trailers:key=Paseo-Base-Action,valueonly,separator=%x0A)%x00%(trailers:key=Paseo-Source-Branch,valueonly,separator=%x0A)%x00%(trailers:key=Paseo-Source-Head,valueonly,separator=%x0A)%x00%(trailers:key=Paseo-Upstream-Replacement,valueonly,separator=%x0A)%x00' \
+      --format='%H%x00%(trailers:key=Paseo-Base-Feature,valueonly,separator=%x0A)%x00%(trailers:key=Paseo-Base-Action,valueonly,separator=%x0A)%x00%(trailers:key=Paseo-Source-Branch,valueonly,separator=%x0A)%x00%(trailers:key=Paseo-Source-Head,valueonly,separator=%x0A)%x00%(trailers:key=Paseo-Upstream-Replacement,valueonly,separator=%x0A)%x00%(trailers:key=Paseo-Base-Adopted-Commit,valueonly,separator=%x0A)%x00' \
       "$base_branch"
   )
   load_unmanaged_commits
@@ -362,7 +402,7 @@ print_status() {
   if ((${#feature_order[@]} == 0)); then
     printf '%s\n' 'No tracked rw-base features.'
   else
-    local feature integrations integration_count
+    local feature integrations integration_count adoptions adoption_count
     for feature in "${feature_order[@]}"; do
       integrations=${feature_integrations[$feature]:-}
       if [[ -n "$integrations" ]]; then
@@ -375,6 +415,12 @@ print_status() {
         "$feature" "${feature_status[$feature]}" \
         "${feature_source_branch[$feature]:--}" "${feature_source_head[$feature]:--}" \
         "$integration_count"
+      adoptions=${feature_adopted_commits[$feature]:-}
+      if [[ -n "$adoptions" ]]; then
+        read -r -a adoption_array <<<"$adoptions"
+        adoption_count=${#adoption_array[@]}
+        printf '\tadoptions=%s' "$adoption_count"
+      fi
       if [[ "${feature_status[$feature]}" == retired ]]; then
         printf '\treplacement=%s' "${feature_replacement[$feature]}"
       fi
@@ -399,12 +445,40 @@ require_no_unmanaged_commits() {
   for index in "${!unmanaged_commits[@]}"; do
     printf '  %s %s\n' "${unmanaged_commits[$index]}" "${unmanaged_subjects[$index]}" >&2
   done
-  fail 'inspect and explicitly reconcile these commits before promote/maintain/retire'
+  fail 'inspect and explicitly reconcile these commits before promote/maintain/retire; reviewed historical commits may be passed to maintain with --adopt-commit'
+}
+
+resolve_requested_adoptions() {
+  local ref commit index
+  local -A unmanaged_set=() requested_set=()
+  requested_adopted_commits=()
+  for commit in "${unmanaged_commits[@]}"; do unmanaged_set["$commit"]=1; done
+  for ref in "${requested_adoption_refs[@]}"; do
+    commit=$(git -C "$control_root" rev-parse --verify "$ref^{commit}" 2>/dev/null) ||
+      fail "cannot resolve --adopt-commit: $ref"
+    [[ -n "${unmanaged_set[$commit]+present}" ]] ||
+      fail "--adopt-commit is not currently UNMANAGED on rw-base: $commit"
+    [[ -z "${requested_set[$commit]+present}" ]] ||
+      fail "duplicate --adopt-commit: $commit"
+    requested_set[$commit]=1
+    requested_adopted_commits+=("$commit")
+  done
+  if ((${#requested_adopted_commits[@]} > 0)); then
+    local -a remaining_commits=() remaining_subjects=()
+    for index in "${!unmanaged_commits[@]}"; do
+      commit=${unmanaged_commits[$index]}
+      [[ -n "${requested_set[$commit]+present}" ]] && continue
+      remaining_commits+=("$commit")
+      remaining_subjects+=("${unmanaged_subjects[$index]}")
+    done
+    unmanaged_commits=("${remaining_commits[@]}")
+    unmanaged_subjects=("${remaining_subjects[@]}")
+  fi
 }
 
 if [[ "$command_name" == status ]]; then
-  ((${#requested_features[@]} == 0 && ${#requested_branches[@]} == 0)) ||
-    fail "status does not accept feature or branch options"
+  ((${#requested_features[@]} == 0 && ${#requested_branches[@]} == 0 && ${#requested_adoption_refs[@]} == 0)) ||
+    fail "status does not accept feature, branch, or adoption options"
   [[ -z "$state_file" ]] || fail "status does not accept --state-file"
   print_status
   exit 0
@@ -456,10 +530,14 @@ load_request() {
   unset operation_replacement operation_branch_name operation_worktree
   unset operation_feature_count operation_replay_count
   unset operation_features operation_branches operation_heads operation_replay_commits
+  unset operation_adopted_commits
   # shellcheck disable=SC1090
   source "$request_path"
   [[ "${operation_version:-}" == 1 ]] || fail "unsupported operation request version"
   operation_state_file=${operation_state_file:-}
+  if ! declare -p operation_adopted_commits >/dev/null 2>&1; then
+    operation_adopted_commits=()
+  fi
   operation_request=$request_path
 }
 
@@ -533,6 +611,10 @@ create_request() {
     for index in "${!source_heads[@]}"; do printf ' %q' "${source_heads[$index]}"; done
     printf ' )\noperation_replay_commits=('
     for index in "${!replay_commits[@]}"; do printf ' %q' "${replay_commits[$index]}"; done
+    printf ' )\noperation_adopted_commits=('
+    for index in "${!requested_adopted_commits[@]}"; do
+      printf ' %q' "${requested_adopted_commits[$index]}"
+    done
     printf ' )\n'
   } >"$temp"
   token=$(git -C "$control_root" hash-object -- "$temp")
@@ -837,6 +919,7 @@ validate_conflict_resolution() {
 
 if [[ "$command_name" == abort ]]; then
   [[ -z "$state_file" ]] || fail "abort does not accept --state-file"
+  ((${#requested_adoption_refs[@]} == 0)) || fail "abort does not accept --adopt-commit"
   [[ -n "$operation_arg" ]] || fail "abort requires --operation REQUEST"
   cleanup_operation "$operation_arg"
   printf '%s\n' 'Aborted rw-base operation.'
@@ -857,6 +940,12 @@ operation_message() {
   printf 'Paseo-Source-Branch: %s\n' "$branch"
   printf 'Paseo-Source-Head: %s\n' "$source_head"
   printf 'Paseo-Main-Head: %s\n' "$operation_main"
+  if [[ "$action" == maintain ]]; then
+    local adopted_commit
+    for adopted_commit in "${operation_adopted_commits[@]}"; do
+      printf 'Paseo-Base-Adopted-Commit: %s\n' "$adopted_commit"
+    done
+  fi
 }
 
 finish_retirement_candidate() {
@@ -979,6 +1068,7 @@ finalize_operation() {
 }
 
 if [[ "$command_name" == continue ]]; then
+  ((${#requested_adoption_refs[@]} == 0)) || fail "continue does not accept --adopt-commit"
   [[ -n "$operation_arg" ]] || fail "continue requires --operation REQUEST"
   requested_state_file=$state_file
   load_request_with_meta "$operation_arg"
@@ -1044,6 +1134,10 @@ done
 base_before=$(git -C "$control_root" rev-parse --verify "$base_branch" 2>/dev/null || true)
 control_head=$(git -C "$control_root" rev-parse HEAD)
 load_feature_state
+if ((${#requested_adoption_refs[@]} > 0)) && [[ "$command_name" != maintain ]]; then
+  fail "--adopt-commit is only accepted by maintain"
+fi
+resolve_requested_adoptions
 require_no_unmanaged_commits
 
 declare -a source_heads=()
@@ -1103,6 +1197,7 @@ case "$command_name" in
     merge_requested_features 0
     ;;
   retire)
+    ((${#requested_adopted_commits[@]} == 0)) || fail "retire does not accept --adopt-commit"
     ((${#requested_features[@]} == 1 && ${#requested_branches[@]} == 0)) ||
       fail "retire requires exactly one --feature and no --branch"
     [[ -n "$replacement" ]] || fail "retire requires --replacement"
