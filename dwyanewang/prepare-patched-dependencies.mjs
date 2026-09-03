@@ -420,17 +420,17 @@ function prepare(root, oldRef, newRef, stateFile) {
   const changedNewRegistrations = newRegistrations.filter((registration) =>
     changedKeys.has(registrationKey(registration)),
   );
-  const newRegistrationKeys = new Set(newRegistrations.map(registrationKey));
+  const newPackagePaths = new Set(
+    newRegistrations.map((registration) => registration.nodeModulesPath),
+  );
   const changed = changedPatchFiles(root, oldCommit, newCommit);
-  const removals = new Set();
-  const requiredPackages = new Set();
+  const removals = new Set(newPackagePaths);
+  const requiredPackages = new Set(newPackagePaths);
 
   for (const registration of changedOldRegistrations) {
-    removals.add(registration.nodeModulesPath);
-  }
-  for (const registration of changedNewRegistrations) {
-    removals.add(registration.nodeModulesPath);
-    requiredPackages.add(registration.nodeModulesPath);
+    if (!newPackagePaths.has(registration.nodeModulesPath)) {
+      removals.add(registration.nodeModulesPath);
+    }
   }
 
   for (const changedPath of changed) {
@@ -455,9 +455,8 @@ function prepare(root, oldRef, newRef, stateFile) {
         throw new Error(`cannot map ${changedPath} uniquely for cwd ${registration.cwd}`);
       }
       scheduled.add(scheduleKey);
-      removals.add(registration.nodeModulesPath);
-      if (newRegistrationKeys.has(registrationKey(registration))) {
-        requiredPackages.add(registration.nodeModulesPath);
+      if (!newPackagePaths.has(registration.nodeModulesPath)) {
+        removals.add(registration.nodeModulesPath);
       }
     }
   }
@@ -511,18 +510,32 @@ function verify(root, stateFile) {
     }
     const patchPath = path.join(root, "patches", assignment.patchFile);
     const cwd = path.join(root, assignment.cwd);
-    const result = spawnSync("git", ["apply", "--reverse", "--check", patchPath], {
+    const gitResult = spawnSync("git", ["apply", "--reverse", "--check", patchPath], {
       cwd,
       encoding: "utf8",
     });
-    if (result.error) {
-      throw new Error(`failed to run git apply verifier: ${result.error.message}`);
-    }
-    if (result.status !== 0) {
-      const detail = `${result.stdout}\n${result.stderr}`.trim();
-      throw new Error(
-        `patches/${assignment.patchFile} is not applied to the installed dependency tree${detail ? `: ${detail}` : ""}`,
+    if (gitResult.status !== 0) {
+      const patchResult = spawnSync(
+        "patch",
+        ["--dry-run", "--reverse", "--batch", "-p1", "--input", patchPath],
+        { cwd, encoding: "utf8" },
       );
+      const patchOutput = `${patchResult.stdout ?? ""}\n${patchResult.stderr ?? ""}`;
+      const patchRejectedReverse =
+        /unreversed patch detected|ignoring -r|skipping patch|hunk .* failed|can't find file to patch|malformed patch/i.test(
+          patchOutput,
+        );
+      if (patchResult.status !== 0 || patchRejectedReverse) {
+        const gitDetail = gitResult.error
+          ? `could not run git apply: ${gitResult.error.message}`
+          : `${gitResult.stdout}\n${gitResult.stderr}`.trim() || `exit ${gitResult.status}`;
+        const patchDetail = patchResult.error
+          ? `could not run patch: ${patchResult.error.message}`
+          : `${patchResult.stdout}\n${patchResult.stderr}`.trim() || `exit ${patchResult.status}`;
+        throw new Error(
+          `patches/${assignment.patchFile} is not applied to the installed dependency tree; git apply reverse-check failed: ${gitDetail}; patch reverse dry-run failed: ${patchDetail}`,
+        );
+      }
     }
     verified += 1;
   }

@@ -42,13 +42,32 @@ function createFixture(registrations) {
   return root;
 }
 
-function fixturePatch(before = "old", after = "new") {
-  return `diff --git a/node_modules/example/value.txt b/node_modules/example/value.txt
---- a/node_modules/example/value.txt
-+++ b/node_modules/example/value.txt
+function fixturePackagePatch(packageName, before = "old", after = "new") {
+  return `diff --git a/node_modules/${packageName}/value.txt b/node_modules/${packageName}/value.txt
+--- a/node_modules/${packageName}/value.txt
++++ b/node_modules/${packageName}/value.txt
 @@ -1 +1 @@
 -${before}
 +${after}
+`;
+}
+
+function fixturePatch(before = "old", after = "new") {
+  return fixturePackagePatch("example", before, after);
+}
+
+function zeroContextPatch() {
+  return `diff --git a/node_modules/example/value.txt b/node_modules/example/value.txt
+--- a/node_modules/example/value.txt
++++ b/node_modules/example/value.txt
+@@ -1,2 +1,2 @@
+-old1
+-old2
++new1
++new2
+@@ -4 +4 @@
+-old4
++new4
 `;
 }
 
@@ -73,6 +92,23 @@ try {
     result.stderr,
     /would apply patches\/example\+1\.0\.0\.patch more than once from cwd/,
   );
+
+  const zeroContext = createFixture(`[
+    { nodeModulesPath: "node_modules/example", patchPrefix: "example+" },
+  ]`);
+  writeFileSync(path.join(zeroContext, "patches", "example+1.0.0.patch"), zeroContextPatch());
+  mkdirSync(path.join(zeroContext, "node_modules", "example"), { recursive: true });
+  writeFileSync(
+    path.join(zeroContext, "node_modules", "example", "value.txt"),
+    "new1\nnew2\nmiddle\nnew4\n",
+  );
+  result = run(zeroContext, "verify", "--root", zeroContext);
+  assert.equal(result.status, 0, result.stderr);
+  rmSync(path.join(zeroContext, "node_modules", "example", "value.txt"));
+  result = run(zeroContext, "verify", "--root", zeroContext);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /git apply reverse-check failed:/);
+  assert.match(result.stderr, /patch reverse dry-run failed:/);
 
   const repairedDuplicate = createFixture(`[
     { nodeModulesPath: "node_modules/example", patchPrefix: "example+" },
@@ -171,6 +207,100 @@ try {
   result = run(refresh, "verify", "--root", refresh, "--state-file", stateFile);
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /is not applied to the installed dependency tree/);
+
+  const replayAllRegisteredPatches = createFixture(`[
+    { nodeModulesPath: "node_modules/example", patchPrefix: "example+" },
+    { nodeModulesPath: "node_modules/stable", patchPrefix: "stable+" },
+  ]`);
+  git(replayAllRegisteredPatches, "init", "-b", "main");
+  git(replayAllRegisteredPatches, "config", "user.name", "Test User");
+  git(replayAllRegisteredPatches, "config", "user.email", "test@example.com");
+  writeFileSync(
+    path.join(replayAllRegisteredPatches, "patches", "example+1.0.0.patch"),
+    fixturePatch("old", "first"),
+  );
+  writeFileSync(
+    path.join(replayAllRegisteredPatches, "patches", "stable+1.0.0.patch"),
+    fixturePackagePatch("stable"),
+  );
+  git(replayAllRegisteredPatches, "add", ".");
+  git(replayAllRegisteredPatches, "commit", "-m", "add two patched dependencies");
+  const replayAllRegisteredOldRef = git(replayAllRegisteredPatches, "rev-parse", "HEAD");
+  writeFileSync(
+    path.join(replayAllRegisteredPatches, "patches", "example+1.0.0.patch"),
+    fixturePatch(),
+  );
+  git(replayAllRegisteredPatches, "add", "patches/example+1.0.0.patch");
+  git(replayAllRegisteredPatches, "commit", "-m", "update only the example patch");
+  for (const packageName of ["example", "stable", "unrelated"]) {
+    mkdirSync(path.join(replayAllRegisteredPatches, "node_modules", packageName), {
+      recursive: true,
+    });
+  }
+  writeFileSync(
+    path.join(replayAllRegisteredPatches, "node_modules", "example", "value.txt"),
+    "first\n",
+  );
+  writeFileSync(
+    path.join(replayAllRegisteredPatches, "node_modules", "stable", "value.txt"),
+    "new\n",
+  );
+  writeFileSync(
+    path.join(replayAllRegisteredPatches, "node_modules", "unrelated", "keep.txt"),
+    "keep\n",
+  );
+  const replayAllRegisteredState = path.join(replayAllRegisteredPatches, "state.json");
+  result = run(
+    replayAllRegisteredPatches,
+    "prepare",
+    "--root",
+    replayAllRegisteredPatches,
+    "--old-ref",
+    replayAllRegisteredOldRef,
+    "--new-ref",
+    "HEAD",
+    "--state-file",
+    replayAllRegisteredState,
+  );
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(existsSync(path.join(replayAllRegisteredPatches, "node_modules", "example")), false);
+  assert.equal(existsSync(path.join(replayAllRegisteredPatches, "node_modules", "stable")), false);
+  assert.equal(
+    readFileSync(
+      path.join(replayAllRegisteredPatches, "node_modules", "unrelated", "keep.txt"),
+      "utf8",
+    ),
+    "keep\n",
+  );
+  const replayAllRegisteredResult = JSON.parse(readFileSync(replayAllRegisteredState, "utf8"));
+  assert.deepEqual(replayAllRegisteredResult.changedPatchFiles, ["patches/example+1.0.0.patch"]);
+  assert.deepEqual(replayAllRegisteredResult.refreshedPackagePaths, [
+    "node_modules/example",
+    "node_modules/stable",
+  ]);
+  assert.deepEqual(replayAllRegisteredResult.requiredPackagePaths, [
+    "node_modules/example",
+    "node_modules/stable",
+  ]);
+  for (const packageName of ["example", "stable"]) {
+    mkdirSync(path.join(replayAllRegisteredPatches, "node_modules", packageName), {
+      recursive: true,
+    });
+    writeFileSync(
+      path.join(replayAllRegisteredPatches, "node_modules", packageName, "value.txt"),
+      "old\n",
+    );
+    git(replayAllRegisteredPatches, "apply", `patches/${packageName}+1.0.0.patch`);
+  }
+  result = run(
+    replayAllRegisteredPatches,
+    "verify",
+    "--root",
+    replayAllRegisteredPatches,
+    "--state-file",
+    replayAllRegisteredState,
+  );
+  assert.equal(result.status, 0, result.stderr);
 
   const registryMove = createFixture(`[
     { nodeModulesPath: "node_modules/example", patchPrefix: "example+" },
@@ -432,7 +562,7 @@ try {
   result = run(refresh, "check-install-log", "--log", failedLog);
   assert.equal(result.status, 0, result.stderr);
 
-  console.log("prepare-patched-dependencies: 14 checks passed");
+  console.log("prepare-patched-dependencies: 16 checks passed");
 } finally {
   for (const fixture of fixtures) {
     rmSync(fixture, { recursive: true, force: true });
