@@ -15,10 +15,18 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { test } from "vitest";
+import { test, vi } from "vitest";
+
+vi.setConfig({ testTimeout: 15_000 });
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const sourceScript = path.join(repoRoot, "dwyanewang", "build-paseo-artifacts.sh");
+const sourceStateHelper = path.join(repoRoot, "dwyanewang", "build-paseo-state.sh");
+const sourcePatchedDependenciesHelper = path.join(
+  repoRoot,
+  "dwyanewang",
+  "prepare-patched-dependencies.mjs",
+);
 
 function run(cwd, command, args, env = {}) {
   return spawnSync(command, args, {
@@ -84,7 +92,11 @@ function assertBuildLockAvailable(fixture) {
   assert.equal(result.status, 0, `build lock remained held: ${result.stderr}`);
 }
 
-function createFixture({ dependenciesReinstalled = 0, rwMainRebuilt = 0 } = {}) {
+function createFixture({
+  dependenciesReinstalled = 0,
+  patchedDependency = false,
+  rwMainRebuilt = 0,
+} = {}) {
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), "paseo-build-artifacts-"));
   const controlRoot = path.join(fixtureRoot, "control");
   const buildRoot = path.join(fixtureRoot, "build");
@@ -104,6 +116,7 @@ function createFixture({ dependenciesReinstalled = 0, rwMainRebuilt = 0 } = {}) 
     path.join(controlRoot, ".gitignore"),
     [
       ".dev/",
+      "node_modules/",
       "packages/**/dist/",
       "packages/app/android/",
       "packages/desktop/release/",
@@ -111,7 +124,37 @@ function createFixture({ dependenciesReinstalled = 0, rwMainRebuilt = 0 } = {}) 
       "",
     ].join("\n"),
   );
+  writeFileSync(path.join(controlRoot, ".tool-versions"), "nodejs 22.20.0\n");
+  writeFileSync(path.join(controlRoot, ".mise.toml"), '[tools]\nnodejs = "22.20.0"\n');
   writeFileSync(path.join(controlRoot, "package.json"), '{"version":"1.2.3-beta.4"}\n');
+  writeFileSync(path.join(controlRoot, "package-lock.json"), '{"lockfileVersion":3}\n');
+  mkdirSync(path.join(controlRoot, "scripts"));
+  writeFileSync(
+    path.join(controlRoot, "scripts/postinstall-patches.mjs"),
+    patchedDependency
+      ? 'const patchedPackages = [{ cwd: ".", nodeModulesPath: "node_modules/example", patchPrefix: "example+" }];\n'
+      : "const patchedPackages = [];\n",
+  );
+  if (patchedDependency) {
+    mkdirSync(path.join(controlRoot, "patches"));
+    writeFileSync(
+      path.join(controlRoot, "patches/example+1.0.0.patch"),
+      [
+        "diff --git a/node_modules/example/value.txt b/node_modules/example/value.txt",
+        "--- a/node_modules/example/value.txt",
+        "+++ b/node_modules/example/value.txt",
+        "@@ -1 +1 @@",
+        "-old",
+        "+new",
+        "",
+      ].join("\n"),
+    );
+  }
+  for (const workspace of ["highlight", "relay", "protocol", "client", "server", "cli"]) {
+    const workspaceRoot = path.join(controlRoot, "packages", workspace);
+    mkdirSync(workspaceRoot, { recursive: true });
+    writeFileSync(path.join(workspaceRoot, "package.json"), `{"name":"${workspace}"}\n`);
+  }
   const terminalRelative = "packages/app/src/terminal/webview/terminal-emulator-webview-html.ts";
   const terminalControl = path.join(controlRoot, terminalRelative);
   mkdirSync(path.dirname(terminalControl), { recursive: true });
@@ -119,24 +162,26 @@ function createFixture({ dependenciesReinstalled = 0, rwMainRebuilt = 0 } = {}) 
   const desktopPackage = path.join(controlRoot, "packages/desktop/package.json");
   mkdirSync(path.dirname(desktopPackage), { recursive: true });
   writeFileSync(desktopPackage, '{"name":"desktop-fixture"}\n');
-  git(
-    controlRoot,
-    "add",
-    ".gitignore",
-    "package.json",
-    terminalRelative,
-    "packages/desktop/package.json",
-  );
+  git(controlRoot, "add", ".");
   git(controlRoot, "commit", "-m", "test: add product fixture");
   git(controlRoot, "branch", "rw-base", "main");
   git(controlRoot, "branch", "rw-main", "rw-base");
   git(controlRoot, "worktree", "add", buildRoot, "rw-main");
+  if (patchedDependency) {
+    mkdirSync(path.join(buildRoot, "node_modules", "example"), { recursive: true });
+    writeFileSync(path.join(buildRoot, "node_modules/example/value.txt"), "new\n");
+  }
   git(controlRoot, "switch", "-c", "chore/build-paseo");
 
   const controlsRoot = path.join(controlRoot, "dwyanewang");
   mkdirSync(controlsRoot);
   copyFileSync(sourceScript, path.join(controlsRoot, "build-paseo-artifacts.sh"));
   chmodSync(path.join(controlsRoot, "build-paseo-artifacts.sh"), 0o755);
+  copyFileSync(sourceStateHelper, path.join(controlsRoot, "build-paseo-state.sh"));
+  copyFileSync(
+    sourcePatchedDependenciesHelper,
+    path.join(controlsRoot, "prepare-patched-dependencies.mjs"),
+  );
 
   writeExecutable(
     path.join(controlsRoot, "serve-dist.sh"),
@@ -317,15 +362,33 @@ exec /usr/bin/chmod "$@"
     `#!/usr/bin/env bash
 set -euo pipefail
 printf 'npm|%s\\n' "$*" >>"$PASEO_TEST_COMMAND_LOG"
+if [[ "$*" == --version ]]; then
+  printf '%s\\n' '10.9.0'
+  exit 0
+fi
 root=$PASEO_TEST_BUILD_ROOT
 case "$*" in
+  install)
+    if [[ -f "$root/patches/example+1.0.0.patch" ]]; then
+      [[ ! -e "$root/node_modules/example" ]] || {
+        printf '%s\\n' 'npm fixture found a stale patched package before install' >&2
+        exit 23
+      }
+      mkdir -p "$root/node_modules/example"
+      printf '%s\\n' old >"$root/node_modules/example/value.txt"
+      (cd "$root" && git apply patches/example+1.0.0.patch)
+    fi
+    ;;
   *build:terminal-webview*)
     printf '%s\\n' "export const html = 'generated';" >"$root/${terminalRelative}"
     ;;
   *build:server*)
-    mkdir -p "$root/packages/server/dist/server/server" "$root/packages/cli/dist" "$root/packages/protocol/dist"
+    for workspace in highlight relay protocol client server cli; do
+      mkdir -p "$root/packages/$workspace/dist"
+      printf '%s\\n' "$workspace" >"$root/packages/$workspace/dist/index.js"
+    done
+    mkdir -p "$root/packages/server/dist/server/server"
     printf '%s\\n' server >"$root/packages/server/dist/server/server/exports.js"
-    printf '%s\\n' cli >"$root/packages/cli/dist/index.js"
     printf '%s\\n' protocol >"$root/packages/protocol/dist/messages.js"
     ;;
   *--workspace=@getpaseo/server*)
@@ -388,11 +451,14 @@ fi
       PASEO_TEST_COMMAND_LOG: commandLog,
       PATH: `${binRoot}:${process.env.PATH}`,
     },
+    featureRoot,
     fixtureRoot,
     localBranch: "feature/local",
     localBranchHead,
+    npmPath: path.join(binRoot, "npm"),
     preflightState,
     script: path.join(controlsRoot, "build-paseo-artifacts.sh"),
+    stampFile: path.join(buildRoot, ".dev", "build-paseo-server-build.env"),
     terminalRelative,
   };
 }
@@ -443,6 +509,24 @@ function assertBetween(log, fragment, beforeFragment, afterFragment) {
     index < log.indexOf(afterFragment),
     `${fragment} did not precede ${afterFragment}\n${log}`,
   );
+}
+
+function updatePreflightBuildHead(fixture) {
+  const buildHead = git(fixture.buildRoot, "rev-parse", "HEAD");
+  const state = readFileSync(fixture.preflightState, "utf8").replace(
+    /^rw_main_after=.*$/m,
+    `rw_main_after=${buildHead}`,
+  );
+  writeFileSync(fixture.preflightState, state, { mode: 0o600 });
+  return buildHead;
+}
+
+function replaceStampField(fixture, field, value) {
+  const stamp = readFileSync(fixture.stampFile, "utf8").replace(
+    new RegExp(`^${field}=.*$`, "m"),
+    `${field}=${value}`,
+  );
+  writeFileSync(fixture.stampFile, stamp, { mode: 0o600 });
 }
 
 test("rejects the main daemon port before starting a build", () => {
@@ -666,6 +750,147 @@ test("builds only the server and skips app preparation and distribution", () => 
   });
 });
 
+test("reuses server artifacts only when the trusted stamp still matches", () => {
+  withFixture({}, (fixture) => {
+    const first = runBuild(fixture, "server-stamp-prime", ["--target", "server"]);
+    assert.equal(first.status, 0, `${first.stdout}\n${first.stderr}`);
+    assert.equal(existsSync(fixture.stampFile), true);
+
+    writeFileSync(fixture.commandLog, "");
+    const reused = runBuild(fixture, "server-stamp-reuse", ["--target", "server"]);
+    assert.equal(reused.status, 0, `${reused.stdout}\n${reused.stderr}`);
+    assert.match(reused.stdout, /trusted build stamp matched/);
+    assert.doesNotMatch(readFileSync(fixture.commandLog, "utf8"), /npm\|run build:server/);
+    assert.match(
+      readFileSync(path.join(fixture.buildRoot, ".dev/server-stamp-reuse/result.env"), "utf8"),
+      /paseo_artifact_server_build_mode=trusted-stamp-reuse/,
+    );
+  });
+});
+
+test("rejects ignored patched-dependency drift before reusing a trusted stamp", () => {
+  withFixture({ patchedDependency: true }, (fixture) => {
+    const first = runBuild(fixture, "server-patch-prime", ["--target", "server"]);
+    assert.equal(first.status, 0, `${first.stdout}\n${first.stderr}`);
+    assert.equal(existsSync(fixture.stampFile), true);
+
+    rmSync(path.join(fixture.buildRoot, "node_modules", "example"), {
+      force: true,
+      recursive: true,
+    });
+    writeFileSync(fixture.commandLog, "");
+    const drifted = runBuild(fixture, "server-patch-drift", ["--target", "server"]);
+
+    assert.equal(drifted.status, 1, `${drifted.stdout}\n${drifted.stderr}`);
+    const buildLog = readFileSync(
+      path.join(fixture.buildRoot, ".dev", "server-patch-drift", "build.log"),
+      "utf8",
+    );
+    assert.match(buildLog, /installed package .* is missing: node_modules\/example/);
+    assert.doesNotMatch(drifted.stdout, /trusted build stamp matched/);
+    assert.doesNotMatch(readFileSync(fixture.commandLog, "utf8"), /serve\|prepare-build/);
+  });
+});
+
+test("rebuilds when the trusted stamp belongs to a different HEAD", () => {
+  withFixture({}, (fixture) => {
+    const first = runBuild(fixture, "server-stamp-old-head", ["--target", "server"]);
+    assert.equal(first.status, 0, `${first.stdout}\n${first.stderr}`);
+
+    writeFileSync(path.join(fixture.buildRoot, "source-change.txt"), "changed\n");
+    git(fixture.buildRoot, "add", "source-change.txt");
+    git(fixture.buildRoot, "commit", "-m", "test: change source identity");
+    updatePreflightBuildHead(fixture);
+    writeFileSync(fixture.commandLog, "");
+
+    const rebuilt = runBuild(fixture, "server-stamp-new-head", ["--target", "server"]);
+    assert.equal(rebuilt.status, 0, `${rebuilt.stdout}\n${rebuilt.stderr}`);
+    assert.match(readFileSync(fixture.commandLog, "utf8"), /npm\|run build:server/);
+    assert.match(
+      readFileSync(path.join(fixture.buildRoot, ".dev/server-stamp-new-head/result.env"), "utf8"),
+      /paseo_artifact_server_build_mode=full/,
+    );
+  });
+});
+
+test("rebuilds when pinned toolchain or dependency inputs differ from the stamp", () => {
+  for (const [label, relativePath, contents] of [
+    ["toolchain", ".tool-versions", "nodejs 22.21.0\n"],
+    ["dependencies", "package-lock.json", '{"lockfileVersion":3,"changed":true}\n'],
+  ]) {
+    withFixture({}, (fixture) => {
+      const first = runBuild(fixture, `server-stamp-${label}-prime`, ["--target", "server"]);
+      assert.equal(first.status, 0, `${first.stdout}\n${first.stderr}`);
+
+      writeFileSync(path.join(fixture.buildRoot, relativePath), contents);
+      git(fixture.buildRoot, "add", relativePath);
+      git(fixture.buildRoot, "commit", "-m", `test: change ${label} input`);
+      const buildHead = updatePreflightBuildHead(fixture);
+      const buildTree = git(fixture.buildRoot, "rev-parse", "HEAD^{tree}");
+      replaceStampField(fixture, "paseo_build_stamp_head", buildHead);
+      replaceStampField(fixture, "paseo_build_stamp_tree", buildTree);
+      writeFileSync(fixture.commandLog, "");
+
+      const rebuilt = runBuild(fixture, `server-stamp-${label}-changed`, ["--target", "server"]);
+      assert.equal(rebuilt.status, 0, `${rebuilt.stdout}\n${rebuilt.stderr}`);
+      assert.match(readFileSync(fixture.commandLog, "utf8"), /npm\|run build:server/);
+    });
+  }
+}, 20_000);
+
+test("rebuilds when the active npm executable version differs from the stamp", () => {
+  withFixture({}, (fixture) => {
+    const first = runBuild(fixture, "server-stamp-runtime-prime", ["--target", "server"]);
+    assert.equal(first.status, 0, `${first.stdout}\n${first.stderr}`);
+
+    const changedNpm = readFileSync(fixture.npmPath, "utf8").replace("10.9.0", "10.9.1");
+    writeFileSync(fixture.npmPath, changedNpm, { mode: 0o755 });
+    writeFileSync(fixture.commandLog, "");
+
+    const rebuilt = runBuild(fixture, "server-stamp-runtime-changed", ["--target", "server"]);
+    assert.equal(rebuilt.status, 0, `${rebuilt.stdout}\n${rebuilt.stderr}`);
+    assert.match(rebuilt.stdout, /trusted build stamp missed \(toolchain-runtime\)/);
+    assert.match(readFileSync(fixture.commandLog, "utf8"), /npm\|run build:server/);
+  });
+}, 15_000);
+
+test("rebuilds when stamped dist output is missing or damaged", () => {
+  for (const damage of ["missing", "changed"]) {
+    withFixture({}, (fixture) => {
+      const first = runBuild(fixture, `server-stamp-${damage}-prime`, ["--target", "server"]);
+      assert.equal(first.status, 0, `${first.stdout}\n${first.stderr}`);
+
+      const protocolOutput = path.join(fixture.buildRoot, "packages/protocol/dist/messages.js");
+      if (damage === "missing") {
+        rmSync(protocolOutput);
+      } else {
+        writeFileSync(protocolOutput, "damaged\n");
+      }
+      writeFileSync(fixture.commandLog, "");
+
+      const rebuilt = runBuild(fixture, `server-stamp-${damage}-rebuilt`, ["--target", "server"]);
+      assert.equal(rebuilt.status, 0, `${rebuilt.stdout}\n${rebuilt.stderr}`);
+      assert.match(readFileSync(fixture.commandLog, "utf8"), /npm\|run build:server/);
+      assert.equal(readFileSync(protocolOutput, "utf8"), "protocol\n");
+    });
+  }
+}, 20_000);
+
+test("treats a malformed build stamp as a safe cache miss", () => {
+  withFixture({}, (fixture) => {
+    const first = runBuild(fixture, "server-stamp-malformed-prime", ["--target", "server"]);
+    assert.equal(first.status, 0, `${first.stdout}\n${first.stderr}`);
+    writeFileSync(fixture.stampFile, "paseo_build_stamp_version=$(false)\n", {
+      mode: 0o600,
+    });
+    writeFileSync(fixture.commandLog, "");
+
+    const rebuilt = runBuild(fixture, "server-stamp-malformed-rebuilt", ["--target", "server"]);
+    assert.equal(rebuilt.status, 0, `${rebuilt.stdout}\n${rebuilt.stderr}`);
+    assert.match(readFileSync(fixture.commandLog, "utf8"), /npm\|run build:server/);
+  });
+}, 15_000);
+
 test("temporarily merges a local branch without synchronization and restores rw-main", () => {
   withFixture({}, (fixture) => {
     const runDir = path.join(fixture.buildRoot, ".dev", "local-overlay-windows");
@@ -721,6 +946,52 @@ test("temporarily merges a local branch without synchronization and restores rw-
   });
 });
 
+test("refreshes a changed local-overlay patch before the single dependency install", () => {
+  withFixture({ patchedDependency: true }, (fixture) => {
+    const patchPath = path.join(fixture.featureRoot, "patches", "example+1.0.0.patch");
+    writeFileSync(patchPath, readFileSync(patchPath, "utf8").replace("+new\n", "+local\n"));
+    git(fixture.featureRoot, "add", "patches/example+1.0.0.patch");
+    git(fixture.featureRoot, "commit", "-m", "test: change local overlay patch");
+
+    const runDir = path.join(fixture.buildRoot, ".dev", "local-overlay-patch-refresh");
+    const result = run(
+      fixture.controlRoot,
+      "bash",
+      [
+        fixture.script,
+        "--build-root",
+        fixture.buildRoot,
+        "--skip-preflight",
+        "--local-branch",
+        fixture.localBranch,
+        "--target",
+        "server",
+        "--run-dir",
+        runDir,
+      ],
+      fixture.env,
+    );
+
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.match(result.stdout, /Patch refresh: removed node_modules\/example/);
+    assert.match(
+      result.stdout,
+      /patch registry and installed applications verified during local-overlay install/,
+    );
+    const installs = readFileSync(fixture.commandLog, "utf8")
+      .split("\n")
+      .filter((line) => line === "npm|install");
+    assert.equal(installs.length, 1);
+    assert.equal(
+      readFileSync(path.join(runDir, "local-overlay-patch-refresh.json"), "utf8").includes(
+        '"node_modules/example"',
+      ),
+      true,
+    );
+    assert.equal(existsSync(path.join(runDir, "local-overlay-npm-install.log")), true);
+  });
+});
+
 test("restores rw-main when a local-overlay artifact branch fails", () => {
   withFixture({}, (fixture) => {
     const runDir = path.join(fixture.buildRoot, ".dev", "failed-local-overlay");
@@ -750,18 +1021,16 @@ test("restores rw-main when a local-overlay artifact branch fails", () => {
   });
 });
 
-test("uses the reduced server path only after a rebuild without npm install", () => {
+test("uses a full server rebuild when a rebuilt rw-main has no trusted stamp", () => {
   withFixture({ rwMainRebuilt: 1 }, (fixture) => {
     const result = runBuild(fixture, "incremental");
     assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
     const commandLog = readFileSync(fixture.commandLog, "utf8");
-    assert.match(commandLog, /npm\|run build:highlight/);
-    assert.match(commandLog, /npm\|run build --workspace=@getpaseo\/server/);
-    assert.match(commandLog, /npm\|run build --workspace=@getpaseo\/cli/);
-    assert.doesNotMatch(commandLog, /npm\|run build:server/);
+    assert.match(commandLog, /npm\|run build:server/);
+    assert.doesNotMatch(commandLog, /npm\|run build:highlight/);
     assert.match(
       readFileSync(path.join(fixture.buildRoot, ".dev/incremental/result.env"), "utf8"),
-      /server_build_mode=incremental-after-rw-main-rebuild/,
+      /server_build_mode=full/,
     );
   });
 });

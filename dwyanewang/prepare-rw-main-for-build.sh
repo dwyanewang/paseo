@@ -122,6 +122,10 @@ fail() {
   exit 1
 }
 
+state_helper="$control_root/dwyanewang/build-paseo-state.sh"
+[[ -f "$state_helper" ]] || fail "missing build state helper: $state_helper"
+source "$state_helper"
+
 canonical_common_dir() {
   local root=$1
   local common_dir
@@ -304,24 +308,20 @@ printf 'PASEO_REBUILD_SECONDS=%s\n' "$rebuild_seconds"
 printf 'PASEO_PREFLIGHT_TOTAL_SECONDS=%s\n' "$total_seconds"
 
 if [[ -n "$state_file" ]]; then
-  state_file_temp=$(mktemp "${state_file}.tmp.XXXXXX")
-  {
-    printf 'build_starting_branch=%q\n' "$build_starting_branch"
-    printf 'rw_base_before=%q\n' "$rw_base_before"
-    printf 'rw_base_after=%q\n' "$rw_base_after"
-    printf 'rw_base_rebuilt=%q\n' "$rw_base_rebuilt"
-    printf 'rw_main_before=%q\n' "$rw_main_before"
-    printf 'rw_main_after=%q\n' "$rw_main_after"
-    printf 'rw_main_rebuilt=%q\n' "$rw_main_rebuilt"
-    printf 'dependencies_reinstalled=%q\n' "$dependencies_reinstalled"
-    printf 'control_head=%q\n' "$control_head"
-    printf 'main_before=%q\n' "$main_before"
-    printf 'main_after=%q\n' "$main_after"
-    printf 'paseo_preflight_total_seconds=%q\n' "$total_seconds"
-    printf 'paseo_preflight_status=%q\n' ready
-  } >"$state_file_temp"
-  chmod 600 "$state_file_temp"
-  mv -- "$state_file_temp" "$state_file"
+  paseo_atomic_write_state_file "$state_file" \
+    build_starting_branch "$build_starting_branch" \
+    rw_base_before "$rw_base_before" \
+    rw_base_after "$rw_base_after" \
+    rw_base_rebuilt "$rw_base_rebuilt" \
+    rw_main_before "$rw_main_before" \
+    rw_main_after "$rw_main_after" \
+    rw_main_rebuilt "$rw_main_rebuilt" \
+    dependencies_reinstalled "$dependencies_reinstalled" \
+    control_head "$control_head" \
+    main_before "$main_before" \
+    main_after "$main_after" \
+    paseo_preflight_total_seconds "$total_seconds" \
+    paseo_preflight_status ready
   printf 'PASEO_PREFLIGHT_STATE_FILE=%s\n' "$state_file"
 fi
 printf '%s\n' 'PASEO_PREFLIGHT_STATUS=ready'

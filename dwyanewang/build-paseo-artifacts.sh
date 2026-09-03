@@ -173,6 +173,12 @@ script_dir=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 control_root=$(git -C "$script_dir/.." rev-parse --show-toplevel 2>/dev/null) ||
   fail "control script is not inside a Git worktree"
 control_root=$(realpath -e -- "$control_root")
+state_helper="$control_root/dwyanewang/build-paseo-state.sh"
+[[ -f "$state_helper" ]] || fail "missing build state helper: $state_helper"
+source "$state_helper"
+patched_dependencies_helper=${PASEO_PATCHED_DEPENDENCIES_HELPER:-"$control_root/dwyanewang/prepare-patched-dependencies.mjs"}
+[[ -f "$patched_dependencies_helper" ]] ||
+  fail "missing patched dependencies helper: $patched_dependencies_helper"
 [[ -d "$build_root_arg" ]] || fail "build root is not a directory: $build_root_arg"
 build_root=$(realpath -e -- "$build_root_arg")
 build_repo_root=$(git -C "$build_root" rev-parse --show-toplevel 2>/dev/null) ||
@@ -316,6 +322,7 @@ distribution_cleanup_needed=0
 result_temp=
 local_overlay_branch=
 local_overlay_cleanup_needed=0
+patched_dependencies_verified=0
 android_native_pid=
 windows_pid=
 android_native_log="$run_dir/android-native-assemble.branch.log"
@@ -449,6 +456,42 @@ stage() {
   printf '%s\n' "$line" >>"$stage_log"
 }
 
+install_local_overlay_dependencies() {
+  local old_ref=$1 new_ref=$2
+  local install_log="$run_dir/local-overlay-npm-install.log"
+  local refresh_state="$run_dir/local-overlay-patch-refresh.json"
+  local npm_status tee_status
+  local -a pipeline_status
+
+  node "$patched_dependencies_helper" prepare \
+    --root "$build_root" \
+    --old-ref "$old_ref" \
+    --new-ref "$new_ref" \
+    --state-file "$refresh_state"
+  if (cd "$build_root" && npm install) 2>&1 | tee "$install_log"; then
+    pipeline_status=("${PIPESTATUS[@]}")
+  else
+    pipeline_status=("${PIPESTATUS[@]}")
+  fi
+  npm_status=${pipeline_status[0]:-1}
+  tee_status=${pipeline_status[1]:-1}
+  if ((tee_status != 0)); then
+    printf 'build-paseo-artifacts: failed to capture local-overlay npm install output (exit %s)\n' \
+      "$tee_status" >&2
+    return "$tee_status"
+  fi
+  if ((npm_status != 0)); then
+    printf 'build-paseo-artifacts: local-overlay npm install failed (exit %s)\n' \
+      "$npm_status" >&2
+    return "$npm_status"
+  fi
+  node "$patched_dependencies_helper" check-install-log --log "$install_log"
+  node "$patched_dependencies_helper" verify \
+    --root "$build_root" \
+    --state-file "$refresh_state"
+  patched_dependencies_verified=1
+}
+
 prepare_local_overlay() {
   local branch_index branch_name branch_head candidate_suffix
 
@@ -472,7 +515,7 @@ prepare_local_overlay() {
 
   if dependency_inputs_changed "$build_base_head" HEAD; then
     stage "local-overlay: install dependencies changed by the temporary candidate"
-    (cd "$build_root" && npm install)
+    install_local_overlay_dependencies "$build_base_head" HEAD
     dependencies_reinstalled=1
   else
     dependencies_reinstalled=0
@@ -819,6 +862,14 @@ export PASEO_BUILD_ROOT="$build_root"
 
 prepare_local_overlay
 
+if ((patched_dependencies_verified)); then
+  stage "dependencies: patch registry and installed applications verified during local-overlay install"
+else
+  stage "dependencies: validate patch registry and installed applications"
+  node "$patched_dependencies_helper" validate --root "$build_root"
+  node "$patched_dependencies_helper" verify --root "$build_root"
+fi
+
 version=$(node -e '
   const pkg = require(process.argv[1]);
   if (typeof pkg.version !== "string" || !/^[0-9A-Za-z][0-9A-Za-z.+-]*$/.test(pkg.version)) process.exit(1);
@@ -846,20 +897,28 @@ fi
 
 server_artifact_path="$build_root/packages/server/dist/server/server/exports.js"
 cli_artifact_path="$build_root/packages/cli/dist/index.js"
+server_build_stamp="$build_root/.dev/build-paseo-server-build.env"
 server_artifact=
 apk_artifact=
 zip_artifact=
 server_build_mode=not-selected
 if ((build_server_target || build_windows_target)); then
   stage "server: build workspace artifacts required by selected targets"
-  if ((rw_main_rebuilt && !dependencies_reinstalled)); then
-    npm run build:highlight
-    npm run build --workspace=@getpaseo/server
-    npm run build --workspace=@getpaseo/cli
-    server_build_mode=incremental-after-rw-main-rebuild
+  if paseo_verify_build_stamp "$build_root" "$server_build_stamp" exact-head server-build HEAD; then
+    stage "server: trusted build stamp matched; reuse workspace artifacts"
+    server_build_mode=trusted-stamp-reuse
   else
+    stamp_miss_reason=${PASEO_BUILD_STAMP_MISS_REASON:-unknown}
+    stage "server: trusted build stamp missed ($stamp_miss_reason); rebuild workspace artifacts"
+    rm -f -- "$server_build_stamp"
     npm run build:server
     server_build_mode=full
+    if ! paseo_write_build_stamp "$build_root" "$server_build_stamp" server-build HEAD; then
+      rm -f -- "$server_build_stamp"
+      printf '%s\n' \
+        'build-paseo-artifacts: could not record the optional server build stamp; future builds will rebuild.' \
+        >&2
+    fi
   fi
   [[ -s "$server_artifact_path" ]] ||
     fail "server entry artifact is missing or empty: $server_artifact_path"

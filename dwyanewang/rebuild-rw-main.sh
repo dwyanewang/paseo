@@ -82,6 +82,8 @@ fi
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 control_root=$(git -C "$script_dir/.." rev-parse --show-toplevel)
+patched_dependencies_helper=${PASEO_PATCHED_DEPENDENCIES_HELPER:-"$control_root/dwyanewang/prepare-patched-dependencies.mjs"}
+build_state_helper=${PASEO_BUILD_STATE_HELPER:-"$control_root/dwyanewang/build-paseo-state.sh"}
 
 upstream_branch=main
 base_branch=rw-base
@@ -98,6 +100,12 @@ fail() {
   printf 'rebuild-rw-main: %s\n' "$1" >&2
   exit 1
 }
+
+[[ -f "$build_state_helper" ]] || fail "missing build state helper: $build_state_helper"
+[[ -f "$patched_dependencies_helper" ]] ||
+  fail "missing patched dependencies helper: $patched_dependencies_helper"
+# shellcheck disable=SC1090
+source "$build_state_helper"
 
 canonical_common_dir() {
   local root=$1
@@ -149,7 +157,13 @@ control_branch=$(git -C "$control_root" symbolic-ref --quiet --short HEAD) ||
 cd "$build_root"
 [[ -f "$manifest_path" ]] || fail "missing manifest: $manifest_path"
 [[ -z "$(git status --porcelain)" ]] || fail "build worktree is not clean: $build_root"
+printf '%s\n' 'Activating repository-pinned mise toolchain for readiness validation...'
+command -v mise >/dev/null || fail "mise is required"
+mise install
+eval "$(mise activate bash)"
 starting_branch=$(git symbolic-ref --quiet --short HEAD) || fail "detached HEAD is not supported"
+starting_head=$(git rev-parse HEAD)
+server_build_stamp="$build_root/.dev/build-paseo-server-build.env"
 
 git show-ref --verify --quiet "refs/heads/$upstream_branch" ||
   fail "missing local branch: $upstream_branch"
@@ -217,6 +231,7 @@ done
 created_base_candidate=0
 created_target_candidate=0
 completed=0
+declare -a temporary_files=()
 cleanup() {
   local exit_code=$?
   trap - EXIT
@@ -235,6 +250,9 @@ cleanup() {
   if ((created_base_candidate)) && git show-ref --verify --quiet "refs/heads/$base_candidate_branch"; then
     git branch -D "$base_candidate_branch" >/dev/null || true
   fi
+  for temporary_file in "${temporary_files[@]}"; do
+    rm -f -- "$temporary_file"
+  done
   exit "$exit_code"
 }
 trap cleanup EXIT
@@ -300,10 +318,51 @@ dependency_inputs_changed() {
 }
 
 install_dependencies() {
+  local old_ref=$1
+  local new_ref=$2
+  local install_log refresh_state npm_status tee_status
+  local -a pipeline_status
+
+  refresh_state=$(mktemp "${TMPDIR:-/tmp}/paseo-patch-refresh.XXXXXX")
+  temporary_files+=("$refresh_state")
+  install_log=$(mktemp "${TMPDIR:-/tmp}/paseo-npm-install.XXXXXX")
+  temporary_files+=("$install_log")
+
+  node "$patched_dependencies_helper" prepare \
+    --root "$build_root" \
+    --old-ref "$old_ref" \
+    --new-ref "$new_ref" \
+    --state-file "$refresh_state"
   printf '%s\n' 'Installing dependencies for the selected product tree...'
-  npm install
+  if npm install 2>&1 | tee "$install_log"; then
+    pipeline_status=("${PIPESTATUS[@]}")
+  else
+    pipeline_status=("${PIPESTATUS[@]}")
+  fi
+  npm_status=${pipeline_status[0]:-1}
+  tee_status=${pipeline_status[1]:-1}
+  if ((tee_status != 0)); then
+    printf 'rebuild-rw-main: failed to capture npm install output (exit %s)\n' "$tee_status" >&2
+    return "$tee_status"
+  fi
+  if ((npm_status != 0)); then
+    printf 'rebuild-rw-main: npm install failed (exit %s)\n' "$npm_status" >&2
+    return "$npm_status"
+  fi
+  node "$patched_dependencies_helper" check-install-log --log "$install_log"
+  node "$patched_dependencies_helper" verify \
+    --root "$build_root" \
+    --state-file "$refresh_state"
   [[ -z "$(git status --porcelain)" ]] ||
     fail "npm install left tracked or untracked changes in the build worktree"
+}
+
+validate_patch_registry() {
+  node "$patched_dependencies_helper" validate --root "$build_root"
+}
+
+verify_installed_patches() {
+  node "$patched_dependencies_helper" verify --root "$build_root"
 }
 
 printf 'Upstream: %s (%s)\n' "$upstream_branch" "$(git rev-parse --short "$main_head")"
@@ -320,8 +379,11 @@ if ((!dry_run)) && ((base_rebuilt == 0)) && target_matches_inputs; then
   if [[ "$(git symbolic-ref --quiet --short HEAD || true)" != "$target_branch" ]]; then
     git switch --quiet "$target_branch"
   fi
+  validate_patch_registry
   if [[ "$starting_branch" != "$target_branch" ]]; then
-    install_dependencies
+    install_dependencies "$starting_head" "$target_before"
+  else
+    verify_installed_patches
   fi
   if ((push_target)); then
     push_candidates "$base_candidate_head" "$target_before"
@@ -348,19 +410,39 @@ for branch_name in "${integration_branches[@]}"; do
   GIT_MERGE_AUTOEDIT=no git merge --no-ff --no-edit "$branch_name"
 done
 
+validate_patch_registry
 if [[ "$starting_branch" != "$target_branch" ]] ||
   [[ -z "$target_before" ]] || dependency_inputs_changed "$target_before" HEAD; then
-  install_dependencies
+  install_dependencies "$starting_head" HEAD
+else
+  verify_installed_patches
 fi
 
-printf '%s\n' 'Refreshing generated workspace declarations...'
-npm run build:server
+validation_mode=full
+if paseo_verify_build_stamp "$build_root" "$server_build_stamp" tree readiness HEAD; then
+  validation_mode=trusted-tree-reuse
+  printf 'Reusing trusted readiness validation for candidate tree %s.\n' \
+    "$(git rev-parse --short HEAD^{tree})"
+else
+  printf 'Readiness stamp miss (%s); refreshing generated workspace declarations...\n' \
+    "${PASEO_BUILD_STAMP_MISS_REASON:-unknown}"
+  npm run build:server
 
-printf '%s\n' 'Running repository checks...'
-npm run format:check
-npm run typecheck
-npm run lint
+  printf '%s\n' 'Running repository checks...'
+  npm run format:check
+  npm run typecheck
+  npm run lint
+fi
 [[ -z "$(git status --porcelain)" ]] || fail "repository checks left tracked or untracked changes"
+if paseo_write_build_stamp "$build_root" "$server_build_stamp" readiness HEAD; then
+  printf 'PASEO_SERVER_BUILD_STAMP_FILE=%s\n' "$server_build_stamp"
+else
+  rm -f -- "$server_build_stamp"
+  printf '%s\n' \
+    'rebuild-rw-main: could not record the optional readiness stamp; future candidates will run full validation.' \
+    >&2
+fi
+printf 'PASEO_RW_MAIN_VALIDATION_MODE=%s\n' "$validation_mode"
 
 target_candidate_head=$(git rev-parse HEAD)
 printf 'Final candidate: %s\n' "$target_candidate_head"

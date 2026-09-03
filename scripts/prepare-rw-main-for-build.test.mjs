@@ -7,7 +7,9 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -70,7 +72,7 @@ function assertBuildLockAvailable(fixture) {
   assert.equal(result.status, 0, `build lock remained held: ${result.stderr}`);
 }
 
-function createFixture({ advanceUpstream = false } = {}) {
+function createFixture({ advanceUpstream = false, rebuildRwMain = false } = {}) {
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), "paseo-prepare-rw-main-"));
   const controlRoot = path.join(fixtureRoot, "control");
   const buildRoot = path.join(fixtureRoot, "build");
@@ -85,9 +87,23 @@ function createFixture({ advanceUpstream = false } = {}) {
   git(controlRoot, "init", "-b", "main");
   git(controlRoot, "config", "user.name", "Test User");
   git(controlRoot, "config", "user.email", "test@example.com");
-  writeFileSync(path.join(controlRoot, ".gitignore"), ".dev/\n");
+  writeFileSync(path.join(controlRoot, ".gitignore"), ".dev/\npackages/**/dist/\n");
+  writeFileSync(path.join(controlRoot, ".tool-versions"), "nodejs 22.20.0\n");
+  writeFileSync(path.join(controlRoot, ".mise.toml"), '[tools]\nnodejs = "22.20.0"\n');
+  writeFileSync(path.join(controlRoot, "package.json"), '{"version":"1.2.3"}\n');
+  writeFileSync(path.join(controlRoot, "package-lock.json"), '{"lockfileVersion":3}\n');
+  mkdirSync(path.join(controlRoot, "scripts"));
+  writeFileSync(
+    path.join(controlRoot, "scripts/postinstall-patches.mjs"),
+    "const patchedPackages = [];\n",
+  );
+  for (const workspace of ["highlight", "relay", "protocol", "client", "server", "cli"]) {
+    const workspaceRoot = path.join(controlRoot, "packages", workspace);
+    mkdirSync(workspaceRoot, { recursive: true });
+    writeFileSync(path.join(workspaceRoot, "package.json"), `{"name":"${workspace}"}\n`);
+  }
   writeFileSync(path.join(controlRoot, "seed.txt"), "seed\n");
-  git(controlRoot, "add", ".gitignore", "seed.txt");
+  git(controlRoot, "add", ".");
   git(controlRoot, "commit", "-m", "seed");
   const reviewedMain = git(controlRoot, "rev-parse", "main");
 
@@ -107,6 +123,13 @@ function createFixture({ advanceUpstream = false } = {}) {
   git(controlRoot, "remote", "add", "origin", originRoot);
   git(controlRoot, "branch", "rw-base", "main");
   git(controlRoot, "branch", "rw-main", "rw-base");
+  if (rebuildRwMain) {
+    writeFileSync(path.join(controlRoot, "main-change.txt"), "main change\n");
+    git(controlRoot, "add", "main-change.txt");
+    git(controlRoot, "commit", "-m", "feat: advance main before rebuilding rw-main");
+    git(controlRoot, "push", "upstream", "main:main");
+    git(controlRoot, "push", "origin", "main:main");
+  }
   git(controlRoot, "push", "origin", "rw-base:rw-base", "rw-main:rw-main");
   git(controlRoot, "worktree", "add", buildRoot, "rw-main");
   if (advanceUpstream) {
@@ -118,6 +141,8 @@ function createFixture({ advanceUpstream = false } = {}) {
   mkdirSync(controlsRoot);
   for (const scriptName of [
     "prepare-rw-main-for-build.sh",
+    "build-paseo-state.sh",
+    "prepare-patched-dependencies.mjs",
     "rebuild-rw-main.sh",
     "sync-rw-main-branches.sh",
   ]) {
@@ -137,6 +162,46 @@ function createFixture({ advanceUpstream = false } = {}) {
   writeFileSync(ghPath, "#!/usr/bin/env bash\nexit 0\n");
   chmodSync(ghPath, 0o755);
 
+  const miseCallLog = path.join(fixtureRoot, "mise-calls.log");
+  const misePath = path.join(binRoot, "mise");
+  writeFileSync(
+    misePath,
+    `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >>"$PASEO_TEST_MISE_CALL_LOG"
+case "\${1:-}" in
+  install) printf '%s\\n' 'mise tools ready' ;;
+  activate) : ;;
+  *) exit 2 ;;
+esac
+`,
+  );
+  chmodSync(misePath, 0o755);
+
+  const commandLog = path.join(fixtureRoot, "commands.log");
+  const npmPath = path.join(binRoot, "npm");
+  writeFileSync(
+    npmPath,
+    `#!/usr/bin/env bash
+set -euo pipefail
+printf 'npm|%s\\n' "$*" >>"$PASEO_TEST_COMMAND_LOG"
+if [[ "$*" == --version ]]; then
+  printf '%s\\n' '10.9.0'
+  exit 0
+fi
+if [[ "$*" == *build:server* ]]; then
+  root=$PASEO_TEST_BUILD_ROOT
+  for workspace in highlight relay protocol client server cli; do
+    mkdir -p "$root/packages/$workspace/dist"
+    printf '%s\\n' "$workspace" >"$root/packages/$workspace/dist/index.js"
+  done
+  mkdir -p "$root/packages/server/dist/server/server"
+  printf '%s\\n' server >"$root/packages/server/dist/server/server/exports.js"
+fi
+`,
+  );
+  chmodSync(npmPath, 0o755);
+
   let upstreamMain = reviewedMain;
   if (advanceUpstream) {
     const updaterRoot = path.join(fixtureRoot, "upstream-updater");
@@ -152,10 +217,18 @@ function createFixture({ advanceUpstream = false } = {}) {
 
   return {
     buildRoot,
+    commandLog,
     controlRoot,
-    env: { PATH: `${binRoot}:${process.env.PATH}` },
+    env: {
+      PASEO_TEST_BUILD_ROOT: buildRoot,
+      PASEO_TEST_COMMAND_LOG: commandLog,
+      PASEO_TEST_MISE_CALL_LOG: miseCallLog,
+      PATH: `${binRoot}:${process.env.PATH}`,
+    },
     fixtureRoot,
+    miseCallLog,
     reviewedMain,
+    stampFile: path.join(buildRoot, ".dev", "build-paseo-server-build.env"),
     stateFile,
     upstreamMain,
   };
@@ -211,10 +284,73 @@ test("runs the unchanged source preflight and rw-main no-op as one command", () 
       state,
       new RegExp(`control_head=${git(fixture.controlRoot, "rev-parse", "HEAD")}`),
     );
+    assert.equal(statSync(fixture.stateFile).mode & 0o777, 0o600);
+    assert.deepEqual(
+      readdirSync(fixture.fixtureRoot).filter((entry) => entry.startsWith("preflight.env.tmp.")),
+      [],
+    );
     assert.equal(git(fixture.buildRoot, "branch", "--show-current"), "rw-main");
+    assert.deepEqual(readFileSync(fixture.miseCallLog, "utf8").trim().split("\n"), [
+      "install",
+      "activate bash",
+    ]);
     assertBuildLockAvailable(fixture);
   });
 });
+
+test("records a readiness build stamp after rebuilding rw-main", () => {
+  withFixture({ rebuildRwMain: true }, (fixture) => {
+    const result = runPreflight(fixture);
+
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.match(readFileSync(fixture.commandLog, "utf8"), /npm\|run build:server/);
+    assert.match(result.stdout, /PASEO_SERVER_BUILD_STAMP_FILE=/);
+    const stamp = readFileSync(fixture.stampFile, "utf8");
+    assert.match(stamp, /paseo_build_stamp_version=1/);
+    assert.match(stamp, /paseo_build_stamp_validation_level=readiness/);
+    assert.match(
+      stamp,
+      new RegExp(`paseo_build_stamp_head=${git(fixture.buildRoot, "rev-parse", "HEAD")}`),
+    );
+    assert.match(stamp, /paseo_build_stamp_tree=[0-9a-f]{40}/);
+    assert.match(stamp, /paseo_build_stamp_node_version=v?[0-9][0-9A-Za-z.+_-]*/);
+    assert.match(stamp, /paseo_build_stamp_npm_version=10\.9\.0/);
+    assert.match(stamp, /paseo_build_stamp_toolchain_sha256=[0-9a-f]{64}/);
+    assert.match(stamp, /paseo_build_stamp_dependencies_sha256=[0-9a-f]{64}/);
+    assert.match(stamp, /paseo_build_stamp_outputs_sha256=[0-9a-f]{64}/);
+    assert.equal(statSync(fixture.stampFile).mode & 0o777, 0o600);
+
+    git(fixture.buildRoot, "commit", "--allow-empty", "-m", "test: recreate the same tree");
+    const treeMatch = run(
+      fixture.controlRoot,
+      "bash",
+      [
+        "-c",
+        'source "$1"; paseo_verify_build_stamp "$2" "$3" tree readiness HEAD',
+        "verify-stamp",
+        path.join(fixture.controlRoot, "dwyanewang/build-paseo-state.sh"),
+        fixture.buildRoot,
+        fixture.stampFile,
+      ],
+      fixture.env,
+    );
+    assert.equal(treeMatch.status, 0, treeMatch.stderr);
+    const headMismatch = run(
+      fixture.controlRoot,
+      "bash",
+      [
+        "-c",
+        'source "$1"; paseo_verify_build_stamp "$2" "$3" exact-head readiness HEAD',
+        "verify-stamp",
+        path.join(fixture.controlRoot, "dwyanewang/build-paseo-state.sh"),
+        fixture.buildRoot,
+        fixture.stampFile,
+      ],
+      fixture.env,
+    );
+    assert.equal(headMismatch.status, 1);
+  });
+}, 15_000);
 
 test("refuses preflight while the shared build lock is held and preserves the old state", () => {
   withFixture({}, (fixture) => {
@@ -255,4 +391,4 @@ test("propagates semantic-review status before rebuilding rw-main", () => {
     assert.doesNotMatch(accepted.stdout, /PASEO_REBUILD_SECONDS=/);
     assert.equal(existsSync(fixture.stateFile), false);
   });
-});
+}, 15_000);

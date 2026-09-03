@@ -41,6 +41,7 @@ vitest_files=(
 )
 node_test_files=(
   scripts/configure-android-build.test.mjs
+  scripts/prepare-patched-dependencies.test.mjs
   scripts/profile-build-resources.test.mjs
   scripts/serve-dist.test.mjs
 )

@@ -84,8 +84,23 @@ function createFixture({
   git(root, "config", "user.name", "Test User");
   git(root, "config", "user.email", "test@example.com");
 
+  writeFileSync(path.join(root, ".gitignore"), ".dev/\npackages/**/dist/\n");
+  writeFileSync(path.join(root, ".tool-versions"), "nodejs 22.20.0\n");
+  writeFileSync(path.join(root, ".mise.toml"), '[tools]\nnodejs = "22.20.0"\n');
+  writeFileSync(path.join(root, "package.json"), '{"version":"1.2.3"}\n');
+  writeFileSync(path.join(root, "package-lock.json"), '{"lockfileVersion":3}\n');
+  mkdirSync(path.join(root, "scripts"));
+  writeFileSync(
+    path.join(root, "scripts", "postinstall-patches.mjs"),
+    "const patchedPackages = [];\n",
+  );
+  for (const workspace of ["highlight", "relay", "protocol", "client", "server", "cli"]) {
+    const workspaceRoot = path.join(root, "packages", workspace);
+    mkdirSync(workspaceRoot, { recursive: true });
+    writeFileSync(path.join(workspaceRoot, "package.json"), `{"name":"${workspace}"}\n`);
+  }
   writeFileSync(path.join(root, "seed.txt"), "seed\n");
-  git(root, "add", "seed.txt");
+  git(root, "add", ".");
   git(root, "commit", "-m", "seed");
   const reviewedMain = git(root, "rev-parse", "main");
 
@@ -126,6 +141,14 @@ function createFixture({
   copyFileSync(
     path.join(repoRoot, "dwyanewang", "rebuild-rw-main.sh"),
     path.join(controlDir, "rebuild-rw-main.sh"),
+  );
+  copyFileSync(
+    path.join(repoRoot, "dwyanewang", "build-paseo-state.sh"),
+    path.join(controlDir, "build-paseo-state.sh"),
+  );
+  copyFileSync(
+    path.join(repoRoot, "dwyanewang", "prepare-patched-dependencies.mjs"),
+    path.join(binDir, "prepare-patched-dependencies.mjs"),
   );
 
   const manifestEntry = prState ? "feature/one # PR #1" : "feature/one # Personal branch";
@@ -176,9 +199,41 @@ function createFixture({
     .join("\n");
   writeFileSync(ghPath, `#!/usr/bin/env bash\nprintf 'call\\n' >> "$GH_CALL_LOG"\n${ghOutput}\n`);
   chmodSync(ghPath, 0o755);
+  const misePath = path.join(binDir, "mise");
+  writeFileSync(
+    misePath,
+    `#!/usr/bin/env bash
+set -euo pipefail
+case "\${1:-}" in
+  install) : ;;
+  activate) : ;;
+  *) exit 2 ;;
+esac
+`,
+  );
+  chmodSync(misePath, 0o755);
   const npmPath = path.join(binDir, "npm");
   const npmCallLog = path.join(root, ".git", "npm-calls.log");
-  writeFileSync(npmPath, '#!/usr/bin/env bash\nprintf \'%s\\n\' "$*" >> "$NPM_CALL_LOG"\n');
+  writeFileSync(
+    npmPath,
+    `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "$NPM_CALL_LOG"
+if [[ "$*" == --version ]]; then
+  printf '%s\\n' '10.9.0'
+  exit 0
+fi
+if [[ "$*" == *build:server* ]]; then
+  root=$PASEO_TEST_BUILD_ROOT
+  for workspace in highlight relay protocol client server cli; do
+    mkdir -p "$root/packages/$workspace/dist"
+    printf '%s\\n' "$workspace" >"$root/packages/$workspace/dist/index.js"
+  done
+  mkdir -p "$root/packages/server/dist/server/server"
+  printf '%s\\n' server >"$root/packages/server/dist/server/server/exports.js"
+fi
+`,
+  );
   chmodSync(npmPath, 0o755);
   const diffPath = path.join(binDir, "diff");
   writeFileSync(
@@ -201,6 +256,8 @@ exec /usr/bin/diff "$@"
     env: {
       GH_CALL_LOG: ghCallLog,
       NPM_CALL_LOG: npmCallLog,
+      PASEO_TEST_BUILD_ROOT: root,
+      PASEO_PATCHED_DEPENDENCIES_HELPER: path.join(binDir, "prepare-patched-dependencies.mjs"),
       PATH: `${binDir}:${process.env.PATH}`,
     },
     featureHead,
@@ -460,7 +517,7 @@ test("rejects accepted requests when a recorded review-range start changes", () 
       );
     });
   }
-});
+}, 15_000);
 
 test("rejects an accepted request when the pending manifest set changes", () => {
   withFixture({ secondBranch: true, secondPending: true }, (fixture) => {
@@ -551,7 +608,7 @@ test("validates per-branch review metadata and accepted review SHAs", () => {
     assert.equal(result.status, 1);
     assert.match(result.stderr, /must equal current main/);
   });
-});
+}, 15_000);
 
 test("keeps patch equivalence as review evidence instead of auto-removing", () => {
   withFixture({ patchEquivalent: true, prState: "OPEN" }, (fixture) => {
@@ -620,6 +677,37 @@ test("rebuild refreshes workspace declarations before repository checks", () => 
       "run format:check",
       "run typecheck",
       "run lint",
+      "--version",
     ]);
   });
 });
+
+test("rebuild reuses readiness checks when a later candidate has the same tree", () => {
+  withFixture({ advanceMain: false }, (fixture) => {
+    const first = run(
+      fixture.root,
+      "bash",
+      ["dwyanewang/rebuild-rw-main.sh", "--build-root", fixture.root, "--dry-run"],
+      fixture.env,
+    );
+    assert.equal(first.status, 0, `${first.stdout}\n${first.stderr}`);
+    assert.match(first.stdout, /PASEO_RW_MAIN_VALIDATION_MODE=full/);
+
+    writeFileSync(fixture.npmCallLog, "");
+    const second = run(
+      fixture.root,
+      "bash",
+      ["dwyanewang/rebuild-rw-main.sh", "--build-root", fixture.root, "--dry-run"],
+      fixture.env,
+    );
+
+    assert.equal(second.status, 0, `${second.stdout}\n${second.stderr}`);
+    assert.match(second.stdout, /Reusing trusted readiness validation for candidate tree/);
+    assert.match(second.stdout, /PASEO_RW_MAIN_VALIDATION_MODE=trusted-tree-reuse/);
+    const secondCalls = readFileSync(fixture.npmCallLog, "utf8");
+    assert.doesNotMatch(secondCalls, /run build:server/);
+    assert.doesNotMatch(secondCalls, /run format:check/);
+    assert.doesNotMatch(secondCalls, /run typecheck/);
+    assert.doesNotMatch(secondCalls, /run lint/);
+  });
+}, 15_000);

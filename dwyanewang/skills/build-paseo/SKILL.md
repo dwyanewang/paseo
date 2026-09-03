@@ -42,6 +42,7 @@ bash "$paseo_chore_root/dwyanewang/prepare-rw-main-for-build.sh" \
 - rebase 后优先使用报告中的 `git range-diff`：若旧 feature commits 均能与新 commits 对应，且变化仅限冲突解决带来的必要调整，执行增量语义审查；否则执行完整区间审查。AI 必须继续查看冲突解决 diff、路径和验证结果，不能仅凭 patch 等价自动接受。
 - `partial` 则回源功能分支修整、定向验证并推送。`uncertain` 只作为 AI 内部中间态：继续扩大证据范围；仍无法证明上游完整吸收时默认 `keep`，不得自动 `remove`。只有全部为 `keep|remove` 时，传 `--accept-review-request "$paseo_review_request_file"` 和必要的 `--remove-branch` 重跑；不要退回 main-only 接受方式。
 - 完整同步的前置命令会在语义审查 request 输出前运行一次只读 mergeability 预检：在临时 detached worktree 中按真实顺序模拟 `rw-base + main + overlays` 的合并。冲突会立即报告具体 overlay 和文件并停止，先回源分支 rebase/修复；预检不移动 `rw-base`/`rw-main`、不改清单、不安装依赖，也不运行构建。
+- 正式 readiness 不是对 `rw-base` 和每条 overlay 分别校验。脚本先顺序合并全部层，只对完整 `rw-main` 候选执行一次 `build:server + format:check + typecheck + lint`。同一请求内若重试产生不同 commit 但完全相同的 Git tree，且固定工具链、实际 Node/npm、依赖输入和完整 dist 摘要仍匹配可信 readiness stamp，则复用该结果；任一项变化都完整重跑。
 - 退出码 `4`：清单已更新但尚未 ready。运行 `npm run format`，确认仅有预期清单改动，提交并推送 `chore/build-paseo`，再不带增删参数重跑。
 - 其他非零退出：停止并诊断。readiness gate 未成功，不得启动任一产物构建。
 
@@ -49,7 +50,7 @@ bash "$paseo_chore_root/dwyanewang/prepare-rw-main-for-build.sh" \
 
 ## 长期功能
 
-- 用户明确要求把功能固化到基线时，完整读取 `打包流程.md` 第 1.3 节并使用 `manage-rw-base.sh promote|maintain|retire|status`；不要把它重新加入临时叠加清单。
+- 用户明确要求把功能固化到基线时，完整读取 `打包流程.md` 第 1.3 节并使用 `manage-rw-base.sh promote|maintain|retire|status`；不要把它重新加入临时叠加清单。先检查 `status` 的 `UNMANAGED` 行；存在时 lifecycle 会拒绝自动推断，不能再次 promote。新 lifecycle 会在冻结 request 前自行刷新 upstream/origin、快进并同步 `main`；构建请求把本轮 `paseo_preflight_state` 传给 `--state-file`，验证和发布成功后它会直接生成 ready state，随后进入产物脚本，不再额外调用一次 prepare。冲突 `continue` 会刷新 tracking refs 后按原冻结坐标拒绝任何漂移。
 - 退出码 `5` 表示生命周期操作保留了冲突 worktree。保存输出的 `PASEO_RW_BASE_OPERATION`；解决并 `git add` 后用 `continue --operation`，或用 `abort --operation` 放弃。不得手工移动 `rw-base`/`rw-main`。
 
 ## 正式产物链与端选择
@@ -79,6 +80,7 @@ bash "$paseo_chore_root/dwyanewang/build-paseo-artifacts.sh" \
 ## 失败与交付
 
 - 修改任意 `dwyanewang/*.sh` 或对应测试后，提交前运行 `bash "$paseo_chore_root/dwyanewang/check-build-paseo.sh"`；它只做 Shell 语法和定向构建控制测试，不代替真实产物打包。
+- 上游 `lefthook.yml` 的 pre-commit typecheck 没有路径过滤，仓库规则也要求每次修改后 typecheck/lint。控制面即将提交时不要先手工跑一遍全仓 typecheck 再让 hook 重复执行：提交前做定向测试、`npm run format` 和一次 lint，由 pre-commit 承担该轮唯一一次全仓 typecheck；若不提交或 hook 未执行，再显式运行 typecheck。
 - 任一步非零即停止，保留真实退出码。失败时按日志症状查询 `踩坑记录.md`；临时叠加修复回源分支，长期功能修复经 `maintain`，不能直接修改候选、`rw-base` 或 `rw-main`。
 - 证据优先读取 `.dev/build-paseo-runs/<轮次>/result.env`、`stages.log`、已选择端的分支日志、`build.log` 和资源 summary。核对 `paseo_artifact_targets`、`paseo_artifact_preflight_mode` 与临时分支 SHA；Windows 目标还要核对 retention limit、保留数和清理数。
 - 只汇报所选端的产物路径/体积/mtime和资源数据；Windows 目标同时汇报历史 zip 保留/清理数量，同时选择 Android 与 Windows 时再汇报并发/回退模式。还要汇报临时分支及冻结 SHA、下载地址，以及从用户消息到下载服务就绪的真实总墙钟；脚本自己的产物链计时只作分段数据。
