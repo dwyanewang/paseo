@@ -4,6 +4,6 @@
 
 fix/project-skill-cache-invalidation # PR #2585 # reviewed-main:eb753813a198958dcf75a08d65b71b77c60ffdd7 # reviewed-head:fc9c66c28333eeb4e3f3ba0bb7ee92e585d35ada
 fix/android-keyboard-covers-input # PR #2467 # reviewed-main:eb753813a198958dcf75a08d65b71b77c60ffdd7 # reviewed-head:8541863f8a5736e767cdb0b96c1b311df0548eeb
-refactor/provider-history-read # PR #2388 # reviewed-main:eb753813a198958dcf75a08d65b71b77c60ffdd7 # reviewed-head:768e3cb6add5ad1cb85204262afc862c59471ce9
+refactor/provider-history-read # PR #2388 # reviewed-main:eb753813a198958dcf75a08d65b71b77c60ffdd7 # reviewed-head:b2700571fb6d4d2962da0202eae7e987978c273c
 feat/file-image-actions # PR #4063 # reviewed-main:eb753813a198958dcf75a08d65b71b77c60ffdd7 # reviewed-head:956b2e3c1c6d3f9f9875f74fe3b7142d5f869508
-feat/forge-plugin-infrastructure # PR #3894 # reviewed-main:eb753813a198958dcf75a08d65b71b77c60ffdd7 # reviewed-head:14f296f82a83df21f5bef941afb172daef7d7051
+feat/forge-plugin-infrastructure # PR #3894 # reviewed-main:eb753813a198958dcf75a08d65b71b77c60ffdd7 # reviewed-head:d9f3e4f35da4dd31a88b89a39e6e148ca887d6dd
