@@ -604,7 +604,7 @@ test("rebuild rejects a changed branch head before merging or running npm", () =
   });
 });
 
-test("rebuild refreshes plugin declarations before repository checks", () => {
+test("rebuild refreshes workspace declarations before repository checks", () => {
   withFixture({ advanceMain: false }, (fixture) => {
     const result = run(
       fixture.root,
@@ -616,9 +616,7 @@ test("rebuild refreshes plugin declarations before repository checks", () => {
     assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
     assert.deepEqual(readFileSync(fixture.npmCallLog, "utf8").trim().split("\n"), [
       "install",
-      "run build --workspace=@getpaseo/relay",
-      "run build:client",
-      "run build:plugin",
+      "run build:server",
       "run format:check",
       "run typecheck",
       "run lint",

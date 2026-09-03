@@ -354,9 +354,7 @@ if [[ "$starting_branch" != "$target_branch" ]] ||
 fi
 
 printf '%s\n' 'Refreshing generated workspace declarations...'
-npm run build --workspace=@getpaseo/relay
-npm run build:client
-npm run build:plugin
+npm run build:server
 
 printf '%s\n' 'Running repository checks...'
 npm run format:check
