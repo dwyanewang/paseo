@@ -21,7 +21,7 @@ async function createPlugin(id: string, source: string): Promise<string> {
   const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-service-"));
   roots.push(directory);
   await writeFile(path.join(directory, "paseo-plugin.json"), JSON.stringify({ id }));
-  await writeFile(path.join(directory, "index.tsx"), source);
+  await writeFile(path.join(directory, "index.server.ts"), source);
   return directory;
 }
 
@@ -503,7 +503,7 @@ describe("PluginService", () => {
       "choose another ID with --id",
     );
 
-    await writeFile(path.join(directory, "index.tsx"), "export default broken syntax !!!");
+    await writeFile(path.join(directory, "index.server.ts"), "export default broken syntax !!!");
     await expect(service.reloadPlugin("work-plugin")).rejects.toThrow();
     expect(service.catalog()).toEqual([]);
     expect(service.listPlugins()).toEqual([
@@ -511,7 +511,7 @@ describe("PluginService", () => {
     ]);
 
     await writeFile(
-      path.join(directory, "index.tsx"),
+      path.join(directory, "index.server.ts"),
       `export default function contribute(plugin: unknown) { void plugin; return () => undefined; }`,
     );
     await expect(service.reloadPlugin("work-plugin")).resolves.toMatchObject({ status: "running" });
@@ -530,7 +530,7 @@ describe("PluginService", () => {
       JSON.stringify({ id: "local-monorepo" }),
     );
     await writeFile(
-      path.join(pluginDirectory, "index.ts"),
+      path.join(pluginDirectory, "index.server.ts"),
       "export default function contribute(plugin: unknown) { void plugin; return () => undefined; }",
     );
     const service = createService(home);
@@ -555,7 +555,7 @@ describe("PluginService", () => {
       JSON.stringify({ id: "git-update" }),
     );
     await writeFile(
-      path.join(repository, "index.ts"),
+      path.join(repository, "index.server.ts"),
       "export default function contribute(plugin: unknown) { void plugin; return () => undefined; }",
     );
     await runGitCommand(["add", "-A"], { cwd: repository });
@@ -582,7 +582,7 @@ describe("PluginService", () => {
       }),
     );
     await writeFile(
-      path.join(repository, "index.ts"),
+      path.join(repository, "index.server.ts"),
       'export default function contribute(plugin: unknown) { void plugin; throw new Error("broken update"); }',
     );
     await runGitCommand(["add", "-A"], { cwd: repository });
@@ -626,7 +626,7 @@ describe("PluginService", () => {
         ],
       }),
     );
-    await writeFile(path.join(repository, "index.ts"), "export default () => () => {};\n");
+    await writeFile(path.join(repository, "index.server.ts"), "export default () => () => {};\n");
     await runGitCommand(["add", "-A"], { cwd: repository });
     await runGitCommand(["commit", "-m", "initial"], { cwd: repository });
 
@@ -701,7 +701,7 @@ describe("PluginService", () => {
       path.join(repository, "paseo-plugin.json"),
       JSON.stringify({ id: "failed-update" }),
     );
-    await writeFile(path.join(repository, "index.ts"), "export default () => () => {};\n");
+    await writeFile(path.join(repository, "index.server.ts"), "export default () => () => {};\n");
     await runGitCommand(["add", "-A"], { cwd: repository });
     await runGitCommand(["commit", "-m", "initial"], { cwd: repository });
 
@@ -747,7 +747,7 @@ describe("PluginService", () => {
     ]);
 
     await writeFile(
-      path.join(repository, "index.ts"),
+      path.join(repository, "index.server.ts"),
       "export default () => () => { new Date(); };\n",
     );
     await runGitCommand(["add", "-A"], { cwd: repository });
@@ -942,7 +942,7 @@ export default function contribute(plugin: unknown) {
     const invalid = await createPlugin("valid-before-corruption", "export default () => () => {};");
     await writeFile(path.join(invalid, "paseo-plugin.json"), JSON.stringify({}));
     const missingEntry = await createPlugin("missing-entry", "export default () => () => {};");
-    await rm(path.join(missingEntry, "index.tsx"));
+    await rm(path.join(missingEntry, "index.server.ts"));
     const startupFailure = await createPlugin(
       "startup-failure",
       `export default function contribute(plugin: unknown) { void plugin; throw new Error("startup exploded"); }`,
@@ -952,7 +952,7 @@ export default function contribute(plugin: unknown) {
 
     await expect(service.installDirectory({ path: invalid })).rejects.toThrow();
     await expect(service.installDirectory({ path: missingEntry })).rejects.toThrow(
-      "Plugin entry point is missing",
+      "Plugin entry points are missing",
     );
     await expect(service.installDirectory({ path: startupFailure })).rejects.toThrow(
       "startup exploded",
@@ -961,7 +961,7 @@ export default function contribute(plugin: unknown) {
       expect.objectContaining({
         id: "missing-entry",
         status: "failed",
-        error: expect.stringContaining("Plugin entry point is missing"),
+        error: expect.stringContaining("Plugin entry points are missing"),
       }),
       expect.objectContaining({
         id: "startup-failure",

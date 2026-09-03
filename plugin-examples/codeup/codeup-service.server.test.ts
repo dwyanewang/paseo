@@ -9,7 +9,7 @@ import {
   redactAliyunArgs,
   type CodeupCommandRunner,
   type CreateCodeupServiceOptions,
-} from "./codeup-service.server";
+} from "./server/codeup-service";
 
 type Responder = (action: string, args: string[]) => unknown;
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { codeupClientProvider } from "./codeup.client";
+import { codeupClientProvider } from "./client/codeup";
 
 describe("Codeup client forge contribution", () => {
   it("declares Codeup presentation and its Alibaba Cloud CLI setup", () => {

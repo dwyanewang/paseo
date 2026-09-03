@@ -1,6 +1,35 @@
-import { afterEach, describe, expect, it } from "vitest";
-import { pluginRegistry } from "./registry";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import { pluginRegistry as registry } from "./registry";
 import { clientForgeRegistry, getClientForgeDefinition } from "@/git/client-forge-registry";
+
+vi.mock("./navigation", () => ({
+  createPluginNavigation: () => ({}),
+}));
+vi.mock("./client-runtime", () => ({
+  createPluginClientRuntime: () => ({
+    paseo: {},
+    rpc: async () => undefined,
+    openSurface: () => undefined,
+    openPanel: () => undefined,
+    addComposerPill: () => () => undefined,
+  }),
+}));
+
+const daemonClient = {} as DaemonClient;
+const pluginRegistry = {
+  getSnapshot: registry.getSnapshot,
+  subscribe: registry.subscribe,
+  getEvaluationError: registry.getEvaluationError.bind(registry),
+  removeHost: registry.removeHost.bind(registry),
+  installCatalog(
+    serverId: string,
+    catalog: Parameters<typeof registry.installCatalog>[1],
+    options: { replacePluginId?: string } = {},
+  ) {
+    return registry.installCatalog(serverId, catalog, { ...options, client: daemonClient });
+  },
+};
 
 function bundle(marker: string): string {
   return `(function() {
@@ -49,13 +78,30 @@ function forgeBundle(displayName: string): string {
   } }; })`;
 }
 
+function installedPluginIds(): string[] {
+  return pluginRegistry.getSnapshot().map(({ id }) => id);
+}
+
 afterEach(() => {
   pluginRegistry.removeHost("host-a");
   pluginRegistry.removeHost("host-b");
   Reflect.deleteProperty(globalThis, "__pluginCleanups");
+  Reflect.deleteProperty(globalThis, "__registerForge");
 });
 
 describe("PluginRegistry", () => {
+  it("publishes synchronous setup once after storing the installation", () => {
+    const snapshots: string[][] = [];
+    const unsubscribe = pluginRegistry.subscribe(() => {
+      snapshots.push(installedPluginIds());
+    });
+
+    pluginRegistry.installCatalog("host-a", [{ id: "example", clientBundle: bundle("one") }]);
+    unsubscribe();
+
+    expect(snapshots).toEqual([["example"]]);
+  });
+
   it("reports timeline contribution changes", () => {
     const first = timelineBundle("one");
     expect(pluginRegistry.installCatalog("host-a", [{ id: "reports", clientBundle: first }])).toBe(
@@ -241,5 +287,37 @@ describe("PluginRegistry", () => {
       getClientForgeDefinition(clientForgeRegistry.getHostSnapshot("host-a"), "codeup"),
     ).toBeNull();
     expect(pluginRegistry.getEvaluationError("host-a", "codeup")).toContain("broken bundle");
+  });
+
+  it("updates the host Forge registry when a client registration is removed dynamically", () => {
+    const dynamic = `(function() { return { default: function(plugin) {
+      globalThis.__registerForge = function() {
+        return plugin.addForgeClientProvider({
+          definition: {
+            id: "codeup",
+            displayName: "Codeup",
+            changeRequestAbbrev: "MR",
+            changeRequestNoun: "merge request",
+            changeRequestNumberPrefix: "!",
+            issueNumberPrefix: "#",
+            signIn: null,
+          },
+        });
+      };
+      return function() {};
+    } }; })`;
+    pluginRegistry.installCatalog("host-a", [{ id: "codeup", clientBundle: dynamic }]);
+
+    const register = Reflect.get(globalThis, "__registerForge") as () => () => void;
+    const remove = register();
+    expect(
+      getClientForgeDefinition(clientForgeRegistry.getHostSnapshot("host-a"), "codeup")
+        ?.displayName,
+    ).toBe("Codeup");
+
+    remove();
+    expect(
+      getClientForgeDefinition(clientForgeRegistry.getHostSnapshot("host-a"), "codeup"),
+    ).toBeNull();
   });
 });

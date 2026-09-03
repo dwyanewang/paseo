@@ -7,7 +7,7 @@ import {
   execCommand,
   quoteWindowsArgument,
   shouldUseWindowsShell,
-} from "./process.server";
+} from "./server/process";
 
 describe("Codeup process execution", () => {
   const originalPlatform = process.platform;

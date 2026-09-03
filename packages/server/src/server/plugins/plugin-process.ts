@@ -1,6 +1,7 @@
 import type { PluginProcessMessage, PluginProcessRequest } from "./plugin-process-protocol.js";
 import { createRequire } from "node:module";
 import * as pluginServerRuntime from "@getpaseo/plugin/server";
+import { defineAttachmentSource, defineRpc, type PluginRpcContract } from "@getpaseo/plugin";
 import {
   PLUGIN_FORGE_SERVICE_METHODS,
   type PluginForgeSerializedError,
@@ -9,13 +10,17 @@ import {
   type PluginForgeServerService,
   type PluginForgeServiceMethod,
   type PluginHandlerContext,
-  type PluginRpcContract,
 } from "@getpaseo/plugin/server";
 import { createPaseoApi, type PaseoApi } from "@getpaseo/client";
 import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { createPluginDaemonTransportFactory } from "./daemon-transport.js";
 import { parsePluginForgeInput } from "./forge-validation.js";
-import { isPluginClientOnlySdkSpecifier, isPluginSdkSpecifier } from "./plugin-sdk-specifiers.js";
+import {
+  isPluginClientOnlySdkSpecifier,
+  isPluginSdkSpecifier,
+  isPluginServerTypesSdkSpecifier,
+} from "./plugin-sdk-specifiers.js";
+import { createPluginClientId } from "./plugin-session-identity.js";
 
 type RpcHandler = (input: unknown, context: PluginHandlerContext) => unknown | Promise<unknown>;
 
@@ -87,7 +92,9 @@ function validateForgeProviderId(providerId: string): string {
   return normalized;
 }
 
-function registerForgeProvider(contribution: PluginForgeServerProviderContribution): void {
+function registerForgeProvider(
+  contribution: PluginForgeServerProviderContribution,
+): () => Promise<void> {
   if (!contribution || typeof contribution !== "object") {
     throw new Error("Plugin forge provider contribution must be an object");
   }
@@ -105,6 +112,18 @@ function registerForgeProvider(contribution: PluginForgeServerProviderContributi
     ...contribution,
     definition: { ...contribution.definition, id: providerId },
   });
+  disposedForgeProviders.delete(providerId);
+  let active = true;
+  return async () => {
+    if (!active) return;
+    active = false;
+    const registered = forgeProviders.get(providerId);
+    if (!registered) return;
+    forgeProviders.delete(providerId);
+    if (disposedForgeProviders.has(providerId)) return;
+    disposedForgeProviders.add(providerId);
+    await registered.service.dispose?.();
+  };
 }
 
 function describeForgeProvider(
@@ -154,6 +173,8 @@ function serializeForgeError(error: unknown): PluginForgeSerializedError {
 }
 
 const pluginAuthorRuntime = {
+  defineAttachmentSource,
+  defineRpc,
   ...pluginServerRuntime,
   Icon() {
     throw new Error("Icon is available only in plugin client code");
@@ -164,6 +185,7 @@ function runtimeRequire(name: string): unknown {
   if (isPluginClientOnlySdkSpecifier(name)) {
     throw new Error(`${name} is available only in plugin client code`);
   }
+  if (isPluginServerTypesSdkSpecifier(name)) return pluginServerRuntime;
   if (isPluginSdkSpecifier(name)) return pluginAuthorRuntime;
   return nodeRequire(name);
 }
@@ -199,7 +221,7 @@ const transportFactory = createPluginDaemonTransportFactory({
 async function initialize(message: Extract<PluginProcessRequest, { type: "initialize" }>) {
   daemonClient = new DaemonClient({
     url: `ipc://plugin/${encodeURIComponent(message.pluginId)}`,
-    clientId: `plugin:${message.pluginId}`,
+    clientId: createPluginClientId(message.pluginId),
     clientType: "cli",
     appVersion: message.appVersion,
     reconnect: { enabled: false },

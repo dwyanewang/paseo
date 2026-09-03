@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
-import { createCodeupService, parseCodeupRemoteIdentity } from "./codeup-service.server";
+import { createCodeupService, parseCodeupRemoteIdentity } from "./server/codeup-service";
 
 const execFileAsync = promisify(execFile);
 

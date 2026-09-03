@@ -1,8 +1,8 @@
 import { useMemo, useSyncExternalStore } from "react";
 import { QueryClient } from "@tanstack/react-query";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import { startPluginClientSide } from "./composer-pills/lifecycle";
-import { evaluatePluginClientBundle } from "./evaluate";
+import { createPluginClientRuntime } from "./client-runtime";
+import { runPluginClientBundle } from "./evaluate";
 import type { InstalledPlugin } from "./types";
 import { clientForgeRegistry } from "@/git/client-forge-registry";
 
@@ -34,8 +34,8 @@ class PluginRegistry {
     catalog: CatalogPlugin[],
     options: {
       replacePluginId?: string;
-      client?: DaemonClient;
-    } = {},
+      client: DaemonClient;
+    },
   ): boolean {
     const previous = this.byHost.get(serverId) ?? [];
     const previousTimelineBundles = previous
@@ -60,6 +60,7 @@ class PluginRegistry {
     const installed = catalog.flatMap((entry) => {
       const key = `${serverId}/${entry.id}`;
       try {
+        if (!entry.clientBundle) return [];
         const existing = preserved.find(
           (plugin) => plugin.id === entry.id && plugin.clientBundle === entry.clientBundle,
         );
@@ -67,29 +68,33 @@ class PluginRegistry {
           this.evaluationErrors.delete(key);
           return [existing];
         }
-        const queryClient = new QueryClient();
-        const evaluated = evaluatePluginClientBundle(entry.id, entry.clientBundle);
         const installation: InstalledPlugin = {
-          ...evaluated,
+          id: entry.id,
           serverId,
           clientBundle: entry.clientBundle,
-          queryClient,
+          queryClient: new QueryClient(),
+          cleanup: () => undefined,
+          surfaces: [],
+          sidebarItems: [],
+          workspacePanels: [],
+          commandCenterItems: [],
+          clientSlashCommands: [],
+          attachmentSources: [],
+          themes: [],
+          timelineTransformers: [],
+          timelineRenderers: [],
+          forgeClientProviders: [],
         };
-        if (installation.clientSide) {
-          if (!options.client) throw new Error("Plugin client runtime is unavailable");
-          let clientCleanup;
-          try {
-            clientCleanup = startPluginClientSide(installation, options.client);
-          } catch (error) {
-            queryClient.clear();
-            void Promise.resolve(evaluated.cleanup()).catch(() => undefined);
-            throw error;
-          }
-          installation.cleanup = async () => {
-            await clientCleanup();
-            await evaluated.cleanup();
-          };
-        }
+        const evaluated = runPluginClientBundle(
+          entry.id,
+          entry.clientBundle,
+          createPluginClientRuntime(installation, options.client),
+          () => {
+            this.syncForgeHost(serverId, this.byHost.get(serverId) ?? []);
+            this.publish();
+          },
+        );
+        Object.assign(installation, evaluated);
         this.evaluationErrors.delete(key);
         return [installation];
       } catch (error) {
