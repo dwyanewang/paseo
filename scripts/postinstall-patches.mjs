@@ -23,10 +23,6 @@ const patchedPackages = [
     patchPrefix: "react-native-unistyles+",
   },
   {
-    nodeModulesPath: "node_modules/react-native-unistyles",
-    patchPrefix: "react-native-unistyles+",
-  },
-  {
     nodeModulesPath: "node_modules/react-native-draggable-flatlist",
     patchPrefix: "react-native-draggable-flatlist+",
   },
