@@ -4,6 +4,7 @@ import { lstat, mkdir, mkdtemp, rename, rm, stat } from "node:fs/promises";
 import { basename, resolve, sep } from "path";
 import { homedir } from "node:os";
 import { CLIENT_CAPS, type ClientCapability } from "@getpaseo/protocol/client-capabilities";
+import { formatPluginSourceReference } from "@getpaseo/protocol/plugin-source-reference";
 import {
   serializeAgentStreamEvent,
   type AgentSnapshotPayload,
@@ -72,6 +73,11 @@ import {
 } from "./lifecycle-reasons.js";
 import { DirectorySyncService } from "./directory-sync/index.js";
 import {
+  assertWorkspaceAutomationAllowedForWorkspace,
+  clearWorkspaceAutomationBlock,
+  formatWorkspaceAutomationBlockedMessage,
+} from "./workspace-automation-gate.js";
+import {
   WorkspaceLabelError,
   WorkspaceLabelStorageUncertainError,
   type WorkspaceLabelService,
@@ -106,6 +112,8 @@ import {
   appendTimelineItemIfAgentKnown,
   emitLiveTimelineItemIfAgentKnown,
 } from "./agent/timeline-append.js";
+import { assertPluginTimelineDataSize } from "./agent/agent-timeline-content.js";
+import { parsePluginClientId } from "./plugins/plugin-session-identity.js";
 import {
   projectTimelineRows,
   selectProjectedTimelinePage,
@@ -241,6 +249,7 @@ import {
   handlePaseoWorktreeArchiveRequest as handleWorktreeArchiveRequest,
   handlePaseoWorktreeListRequest as handleWorktreeListRequest,
   handleWorkspaceSetupStatusRequest as handleWorkspaceSetupStatusRequestMessage,
+  handleWorkspaceSetupRunRequest as handleWorkspaceSetupRunRequestMessage,
 } from "./worktree-session.js";
 import { archiveByScope, type ActiveWorkspaceRef } from "./workspace-archive-service.js";
 import { WorkspaceSetupRuntime } from "./workspace-setup-runtime.js";
@@ -479,7 +488,6 @@ export interface SessionOptions {
       source: string;
       id?: string;
       ref?: string;
-      pluginPath?: string;
     }): Promise<import("@getpaseo/protocol/messages").PluginListItem>;
     statusSources(
       pluginId?: string,
@@ -1051,6 +1059,8 @@ export class Session {
       logger: this.sessionLogger,
       emit: (message) => this.emit(message),
       spawnWorkspaceScript,
+      assertAutomationAllowed: (workspaceId) =>
+        assertWorkspaceAutomationAllowedForWorkspace(this.workspaceRegistry, workspaceId),
       globalServicePorts: loadPersistedConfig(this.paseoHome).worktrees?.servicePorts,
     });
     this.subscribeToOptionalManagers();
@@ -1911,6 +1921,33 @@ export class Session {
     this.authorization.replacePermissions(permissions);
   }
 
+  public getPermissions(): DaemonPermission[] {
+    return this.authorization.listPermissions();
+  }
+
+  public allowsInbound(message: SessionInboundMessage): boolean {
+    return this.authorization.allowsInbound(message);
+  }
+
+  public allowsPermission(permission: DaemonPermission): boolean {
+    return this.authorization.allowsPermission(permission);
+  }
+
+  public subscribesToAgent(agent: ManagedAgent): Promise<boolean> {
+    return this.agentUpdates.includesLiveAgent(agent);
+  }
+
+  public subscribesToTerminalDirectory(input: {
+    cwd: string;
+    workspaceId?: string;
+  }): Promise<boolean> {
+    return this.terminalController.hasDirectorySubscription(input);
+  }
+
+  public publish(message: SessionOutboundMessage): void {
+    this.emit(message);
+  }
+
   private async dispatchInboundMessage(msg: SessionInboundMessage, source?: object): Promise<void> {
     const promise =
       this.dispatchVoiceAndControlMessage(msg) ??
@@ -1921,9 +1958,7 @@ export class Session {
       this.dispatchAgentLifecycleMessage(msg) ??
       this.dispatchAgentConfigMessage(msg) ??
       this.dispatchCheckoutMessage(msg) ??
-      this.dispatchWorkspaceRecoveryMessage(msg) ??
-      this.dispatchWorkspaceLabelMessage(msg) ??
-      this.dispatchWorkspaceAndProjectMessage(msg) ??
+      this.dispatchWorkspaceLifecycleMessage(msg) ??
       this.dispatchWorkspaceFileMessage(msg, source) ??
       this.dispatchProviderMessage(msg) ??
       this.dispatchOrchestrationSkillsMessage(msg) ??
@@ -1933,6 +1968,15 @@ export class Session {
       this.dispatchScheduleMessage(msg) ??
       this.dispatchMiscMessage(msg);
     if (promise) await promise;
+  }
+
+  private dispatchWorkspaceLifecycleMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    return (
+      this.dispatchWorkspaceRecoveryMessage(msg) ??
+      this.dispatchWorkspaceLabelMessage(msg) ??
+      this.dispatchWorkspaceSetupMessage(msg) ??
+      this.dispatchWorkspaceAndProjectMessage(msg)
+    );
   }
 
   private dispatchOrchestrationSkillsMessage(
@@ -2082,10 +2126,10 @@ export class Session {
       if (!this.pluginRuntime) throw new Error("Plugin service is unavailable");
       return this.pluginRuntime
         .installSource({
-          source: msg.source,
+          // COMPAT(plugin-source-path): accepted for v0.7 clients; remove after 2027-09-01.
+          source: formatPluginSourceReference(msg.source, msg.pluginPath),
           ...(msg.id ? { id: msg.id } : {}),
           ...(msg.ref ? { ref: msg.ref } : {}),
-          ...(msg.pluginPath ? { pluginPath: msg.pluginPath } : {}),
         })
         .then((plugin) => {
           this.emit({
@@ -2225,6 +2269,8 @@ export class Session {
     switch (msg.type) {
       case "fetch_agent_timeline_request":
         return this.handleFetchAgentTimelineRequest(msg, source);
+      case "agent.timeline.append.request":
+        return this.handleAgentTimelineAppendRequest(msg);
       case "agent.timeline.list_prompts.request":
         return this.handleAgentTimelineListPromptsRequest(msg, source);
       case "agent.provider_subagents.list.request":
@@ -2341,6 +2387,7 @@ export class Session {
       case "hub.management.daemon.connect.request":
       case "hub.management.daemon.get_status.request":
       case "hub.management.daemon.disconnect.request":
+      case "hub.management.daemon.permissions.update.request":
         return this.daemonSession.handleHubRelationshipRequest(msg);
       case "diagnostics.request":
         return this.daemonSession.handleDiagnosticsRequest(msg);
@@ -2444,8 +2491,6 @@ export class Session {
         return this.handlePaseoWorktreeArchiveRequest(msg);
       case "create_paseo_worktree_request":
         return this.handleCreatePaseoWorktreeRequest(msg);
-      case "workspace_setup_status_request":
-        return this.handleWorkspaceSetupStatusRequest(msg);
       // COMPAT(desktopEditorBridge): added in v0.1.88, remove after 2026-12-03 once old clients no longer call daemon editor RPCs.
       case "list_available_editors_request":
         return this.handleLegacyListAvailableEditorsRequest(msg);
@@ -2476,6 +2521,16 @@ export class Session {
       default:
         return undefined;
     }
+  }
+
+  private dispatchWorkspaceSetupMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    if (msg.type === "workspace_setup_status_request") {
+      return this.handleWorkspaceSetupStatusRequest(msg);
+    }
+    if (msg.type === "workspace.setup.run.request") {
+      return this.handleWorkspaceSetupRunRequest(msg);
+    }
+    return undefined;
   }
 
   private dispatchWorkspaceLabelMessage(msg: SessionInboundMessage): Promise<void> | undefined {
@@ -2635,6 +2690,9 @@ export class Session {
   }
 
   public async handleBinaryFrame(binaryFrame: BinaryFrame): Promise<void> {
+    if (!this.authorization.allowsPermission("workspace.write")) {
+      return;
+    }
     if (binaryFrame.kind === "file_transfer") {
       await this.workspaceFilesSession.handleFileTransferFrame(binaryFrame.frame);
       return;
@@ -5525,6 +5583,7 @@ export class Session {
           ...(result.filteredAlreadyImportedCount > 0
             ? { filteredAlreadyImportedCount: result.filteredAlreadyImportedCount }
             : {}),
+          ...(result.providerErrors.length > 0 ? { providerErrors: result.providerErrors } : {}),
         },
       });
     } catch (error) {
@@ -5920,19 +5979,23 @@ export class Session {
       }
       await this.handleWorkspaceCreateWorktree(request);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to create workspace";
+      // Map domain errors to wire codes so the client can recognize recoverable
+      // failures — notably branch_already_checked_out when a checkout targets a
+      // branch that's live elsewhere. Mirrors the per-worktree RPC path
+      // (worktree-session.ts), which already surfaces errorCode.
+      const wireError = toWorktreeWireError(error);
       this.sessionLogger.error(
         { err: error, sourceKind: request.source.kind, requestId: request.requestId },
         "Failed to create workspace",
       );
-      const errorCode = error instanceof WorkspaceProvisioningError ? error.code : undefined;
+      const errorCode = error instanceof WorkspaceProvisioningError ? error.code : wireError.code;
       this.emit({
         type: "workspace.create.response",
         payload: {
           requestId: request.requestId,
           workspace: null,
           setupTerminalId: null,
-          error: message,
+          error: wireError.message,
           errorCode,
         },
       });
@@ -6056,7 +6119,15 @@ export class Session {
         requestId: request.requestId,
         workspace: descriptor,
         setupTerminalId: null,
+        ...(result.workspace.untrustedSource
+          ? {
+              setupSkippedReason: formatWorkspaceAutomationBlockedMessage(
+                result.workspace.untrustedSource,
+              ),
+            }
+          : {}),
         error: null,
+        ...(result.checkoutBranchCopy ? { checkoutBranchCopy: result.checkoutBranchCopy } : {}),
       },
     });
     await this.emitCreatedWorkspaceUpdate(
@@ -6581,6 +6652,8 @@ export class Session {
           }),
         startWorkspaceSetup: (workspaceId, operation) =>
           this.workspaceSetupRuntime.start(workspaceId, operation),
+        assertWorkspaceAutomationAllowed: (workspaceId) =>
+          assertWorkspaceAutomationAllowedForWorkspace(this.workspaceRegistry, workspaceId),
         emitWorkspaceUpdateForWorkspaceId: (workspaceId) =>
           this.emitWorkspaceUpdateForWorkspaceId(workspaceId),
         cacheWorkspaceSetupSnapshot: (workspaceId, snapshot) => {
@@ -6611,6 +6684,39 @@ export class Session {
       {
         emit: (message) => this.emit(message),
         workspaceSetupSnapshots: this.workspaceSetupSnapshots,
+        getWorkspace: (workspaceId) => this.workspaceRegistry.get(workspaceId),
+      },
+      request,
+    );
+  }
+
+  private async handleWorkspaceSetupRunRequest(
+    request: Extract<SessionInboundMessage, { type: "workspace.setup.run.request" }>,
+  ): Promise<void> {
+    return handleWorkspaceSetupRunRequestMessage(
+      {
+        getWorkspace: (workspaceId) => this.workspaceRegistry.get(workspaceId),
+        clearAutomationBlock: (workspaceId) =>
+          clearWorkspaceAutomationBlock(this.workspaceRegistry, workspaceId),
+        startWorkspaceSetup: (workspaceId, operation) =>
+          this.workspaceSetupRuntime.start(workspaceId, operation),
+        paseoHome: this.paseoHome,
+        worktreesRoot: this.worktreesRoot,
+        emitWorkspaceUpdateForWorkspaceId: (workspaceId) =>
+          this.emitWorkspaceUpdateForWorkspaceId(workspaceId),
+        cacheWorkspaceSetupSnapshot: (workspaceId, snapshot) =>
+          this.workspaceSetupSnapshots.set(workspaceId, snapshot),
+        emit: (message) => this.emit(message),
+        sessionLogger: this.sessionLogger,
+        terminalManager: this.terminalManager,
+        archiveWorkspaceRecord: (workspaceId) => this.archiveWorkspaceRecord(workspaceId),
+        serviceProxy: this.serviceProxy,
+        scriptRuntimeStore: this.scriptRuntimeStore,
+        getDaemonTcpPort: this.getDaemonTcpPort,
+        getDaemonTcpHost: this.getDaemonTcpHost,
+        serviceProxyPublicBaseUrl: this.serviceProxyPublicBaseUrl,
+        onScriptsChanged: (workspaceId, workspaceDirectory) =>
+          this.workspaceScripts.emitStatusUpdate(workspaceId, workspaceDirectory),
       },
       request,
     );
@@ -6642,6 +6748,8 @@ export class Session {
           markWorkspaceArchiving: (workspaceIds, archivingAt) =>
             this.markWorkspaceArchiving(workspaceIds, archivingAt),
           clearWorkspaceArchiving: (workspaceIds) => this.clearWorkspaceArchiving(workspaceIds),
+          assertWorkspaceAutomationAllowed: (workspaceId) =>
+            assertWorkspaceAutomationAllowedForWorkspace(this.workspaceRegistry, workspaceId),
           killTerminalsForWorkspace: (workspaceId) =>
             this.terminalController.killTerminalsForWorkspace(workspaceId),
           stopWorkspaceSetup: (workspaceId) => this.workspaceSetupRuntime.stop(workspaceId),
@@ -7064,6 +7172,22 @@ export class Session {
         source,
       );
     }
+  }
+
+  private async handleAgentTimelineAppendRequest(
+    msg: Extract<SessionInboundMessage, { type: "agent.timeline.append.request" }>,
+  ): Promise<void> {
+    const pluginId = parsePluginClientId(this.clientId);
+    if (!pluginId) throw new Error("Only plugin sessions can append plugin timeline items");
+    assertPluginTimelineDataSize(msg.item.data);
+    const { seq, epoch } = await this.agentManager.appendTimelineItem(msg.agentId, {
+      ...msg.item,
+      pluginId,
+    });
+    this.emit({
+      type: "agent.timeline.append.response",
+      payload: { requestId: msg.requestId, seq, epoch },
+    });
   }
 
   private async handleAgentTimelineListPromptsRequest(

@@ -127,6 +127,31 @@ describe("resolveWorktreeCreationIntent", () => {
     expect(deps.headRefLookups).toEqual([]);
   });
 
+  test("branches off an explicit change request head", async () => {
+    const deps = createResolverHarness();
+
+    await expect(
+      resolveWorktreeCreationIntent(
+        {
+          action: "branch-off",
+          checkoutSource: { kind: "change_request", forge: "github", number: 42 },
+          worktreeSlug: "follow-up",
+        },
+        repoRoot,
+        deps,
+      ),
+    ).resolves.toEqual({
+      kind: "branch-off-change-request",
+      forge: "github",
+      changeRequestNumber: 42,
+      headRef: "pr-42",
+      baseRefName: "main",
+      checkoutRefs: [{ remoteName: "origin", remoteRef: "refs/pull/42/head" }],
+      branchName: "follow-up",
+    });
+    expect(deps.headRefLookups).toEqual([]);
+  });
+
   test("checks out an explicit branch target", async () => {
     const deps = createResolverHarness();
 
@@ -154,6 +179,28 @@ describe("resolveWorktreeCreationIntent", () => {
       trackOriginHead: true,
     });
     expect(deps.headRefLookups).toEqual([]);
+  });
+
+  test("keeps legacy change request requests on checkout when action is omitted", async () => {
+    const deps = createResolverHarness();
+
+    await expect(
+      resolveWorktreeCreationIntent(
+        {
+          checkoutSource: { kind: "change_request", forge: "github", number: 42 },
+        },
+        repoRoot,
+        deps,
+      ),
+    ).resolves.toEqual({
+      kind: "checkout-change-request",
+      forge: "github",
+      changeRequestNumber: 42,
+      headRef: "pr-42",
+      baseRefName: "main",
+      checkoutRefs: [{ remoteName: "origin", remoteRef: "refs/pull/42/head" }],
+      trackOriginHead: true,
+    });
   });
 
   test("does not configure a synthetic push remote for same-repo PR targets", async () => {
@@ -204,6 +251,7 @@ describe("resolveWorktreeCreationIntent", () => {
       baseRefName: "main",
       checkoutRefs: [{ remoteName: "origin", remoteRef: "refs/pull/526/head" }],
       headRepositoryOwner: "therainisme",
+      headRepository: "therainisme/paseo",
       localBranchName: "therainisme/main",
       pushRemoteUrl: "git@github.com:therainisme/paseo.git",
     });
@@ -285,6 +333,7 @@ describe("resolveWorktreeCreationIntent", () => {
       forge: "gitlab",
       changeRequestNumber: 7,
       headRef: "feature/mr-source",
+      headRepository: "unknown repository",
       baseRefName: "main",
       checkoutRefs: [{ remoteName: "origin", remoteRef: "refs/merge-requests/7/head" }],
     });

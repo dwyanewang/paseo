@@ -1518,6 +1518,25 @@ export async function resolveRepositoryDefaultBranch(
     return "master";
   }
 
+  // No origin/HEAD and no conventionally-named default branch (e.g. repo defaults to
+  // "develop" or "trunk"). Fall back to whatever branch is currently checked out in
+  // repoRoot, since that's usually the user's working default.
+  try {
+    const { stdout: headRef } = await runGitCommand(
+      ["symbolic-ref", "--quiet", "--short", "HEAD"],
+      {
+        cwd: repoRoot,
+        envOverlay: READ_ONLY_GIT_ENV,
+      },
+    );
+    const currentBranch = headRef.trim();
+    if (currentBranch) {
+      return currentBranch;
+    }
+  } catch {
+    // ignore (e.g. detached HEAD)
+  }
+
   return null;
 }
 

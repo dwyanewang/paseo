@@ -67,11 +67,7 @@ export async function resolveWorktreeCreationIntent(
   deps: ResolveWorktreeCreationIntentDeps,
 ): Promise<WorktreeCreationIntent> {
   if (input.action === "branch-off") {
-    return {
-      kind: "branch-off",
-      baseBranch: input.refName?.trim() || (await resolveDefaultBranch(repoRoot, deps)),
-      branchName: input.branchName ?? input.worktreeSlug ?? "worktree",
-    };
+    return resolveBranchOffIntent(input, repoRoot, deps);
   }
 
   if (input.action === "checkout") {
@@ -86,12 +82,9 @@ export async function resolveWorktreeCreationIntent(
       });
     }
 
-    const branchName = input.refName?.trim();
-    if (branchName) {
-      return {
-        kind: "checkout-branch",
-        branchName,
-      };
+    const refName = input.refName?.trim();
+    if (refName) {
+      return resolveCheckoutBranchIntent(refName);
     }
 
     throw new MissingCheckoutTargetError();
@@ -123,11 +116,71 @@ export async function resolveWorktreeCreationIntent(
   };
 }
 
+function resolveCheckoutBranchIntent(refName: string): WorktreeCreationIntent {
+  const localPrefix = "refs/heads/";
+  if (refName.startsWith(localPrefix)) {
+    return {
+      kind: "checkout-branch",
+      branchName: refName.slice(localPrefix.length),
+      target: { kind: "local", refName },
+    };
+  }
+
+  const remotePrefix = "refs/remotes/";
+  if (refName.startsWith(remotePrefix)) {
+    const remoteAndHead = refName.slice(remotePrefix.length);
+    const separator = remoteAndHead.indexOf("/");
+    if (separator > 0 && separator < remoteAndHead.length - 1) {
+      const remoteName = remoteAndHead.slice(0, separator);
+      const headRef = remoteAndHead.slice(separator + 1);
+      return {
+        kind: "checkout-branch",
+        branchName: headRef,
+        target: { kind: "remote", refName, remoteName, headRef },
+      };
+    }
+  }
+
+  return { kind: "checkout-branch", branchName: refName };
+}
+
 interface PrCheckoutIntentParams {
   refName?: string;
   changeRequestNumber: number;
   repoRoot: string;
   deps: ResolveWorktreeCreationIntentDeps;
+}
+
+async function resolveBranchOffIntent(
+  input: ResolveWorktreeCreationIntentInput,
+  repoRoot: string,
+  deps: ResolveWorktreeCreationIntentDeps,
+): Promise<WorktreeCreationIntent> {
+  const changeRequest = resolveInputChangeRequest(input);
+  if (!changeRequest) {
+    return {
+      kind: "branch-off",
+      baseBranch: input.refName?.trim() || (await resolveDefaultBranch(repoRoot, deps)),
+      branchName: input.branchName ?? input.worktreeSlug ?? "worktree",
+    };
+  }
+
+  assertCheckoutSourceMatchesResolvedForge(changeRequest, deps);
+  const checkoutIntent = await resolvePrCheckoutIntent({
+    refName: input.refName,
+    changeRequestNumber: changeRequest.number,
+    repoRoot,
+    deps,
+  });
+  return {
+    kind: "branch-off-change-request",
+    forge: checkoutIntent.forge,
+    changeRequestNumber: checkoutIntent.changeRequestNumber,
+    headRef: checkoutIntent.headRef,
+    baseRefName: checkoutIntent.baseRefName,
+    checkoutRefs: checkoutIntent.checkoutRefs ?? [],
+    branchName: input.branchName ?? input.worktreeSlug ?? "worktree",
+  };
 }
 
 function resolveInputChangeRequest(
@@ -187,12 +240,7 @@ async function resolvePrCheckoutIntent(
     headRef,
   }) ?? [{ remoteName: "origin", remoteRef: `refs/heads/${headRef}` }];
   const localBranchName = service.buildPrLocalBranchName?.({ headRef, checkoutTarget });
-  const headRepositoryOwner = checkoutTarget.isCrossRepository
-    ? checkoutTarget.headOwnerLogin?.trim() || undefined
-    : undefined;
-  const pushRemoteUrl = checkoutTarget.isCrossRepository
-    ? checkoutTarget.headRepositorySshUrl || checkoutTarget.headRepositoryUrl || undefined
-    : undefined;
+  const crossRepository = resolveCrossRepositoryFields(checkoutTarget);
   const trackOriginHead = !checkoutTarget.isCrossRepository;
 
   return {
@@ -200,13 +248,40 @@ async function resolvePrCheckoutIntent(
     forge: deps.forge,
     changeRequestNumber: params.changeRequestNumber,
     headRef,
-    ...(headRepositoryOwner ? { headRepositoryOwner } : {}),
+    ...crossRepository,
     baseRefName,
     checkoutRefs: checkoutTarget.checkoutRefs ?? defaultRefs,
     ...(localBranchName && localBranchName !== headRef ? { localBranchName } : {}),
-    ...(pushRemoteUrl ? { pushRemoteUrl } : {}),
     ...(trackOriginHead ? { trackOriginHead } : {}),
   };
+}
+
+function resolveCrossRepositoryFields(target: PullRequestCheckoutTarget): {
+  headRepositoryOwner?: string;
+  headRepository?: string;
+  pushRemoteUrl?: string;
+} {
+  if (!target.isCrossRepository) return {};
+  const headRepositoryOwner = target.headOwnerLogin?.trim() || undefined;
+  const headRepository = resolveHeadRepository(target);
+  const pushRemoteUrl = target.headRepositorySshUrl || target.headRepositoryUrl || undefined;
+  return {
+    ...(headRepositoryOwner ? { headRepositoryOwner } : {}),
+    ...(headRepository ? { headRepository } : {}),
+    ...(pushRemoteUrl ? { pushRemoteUrl } : {}),
+  };
+}
+
+function resolveHeadRepository(target: PullRequestCheckoutTarget): string | undefined {
+  const url = target.headRepositoryUrl ?? target.headRepositorySshUrl;
+  if (!url) return target.headOwnerLogin?.trim() || "unknown repository";
+  const path = url
+    .replace(/\.git$/, "")
+    .split(/[/:]/)
+    .filter(Boolean);
+  const repository = path.at(-1);
+  const owner = target.headOwnerLogin?.trim() || path.at(-2);
+  return (owner && repository ? `${owner}/${repository}` : repository) ?? "unknown repository";
 }
 
 function hasCheckoutRefs(target: PullRequestCheckoutTarget): boolean {

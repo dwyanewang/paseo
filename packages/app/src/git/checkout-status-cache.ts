@@ -9,7 +9,7 @@ import {
 } from "@/git/query-keys";
 import { invalidateDraftAgentCommandsForCwd } from "@/hooks/agent-commands-query";
 import { type CheckoutPrStatusPayload, normalizeCheckoutPrStatusPayload } from "@/git/pr-status";
-import { expireStaleDiffModeOverrides } from "@/review/store";
+import { expireWorkingDiffComparisons } from "@/git/working-diff-comparison";
 
 export type CheckoutStatusPayload = CheckoutStatusResponse["payload"];
 export type { CheckoutPrStatusPayload } from "@/git/pr-status";
@@ -32,7 +32,7 @@ export async function fetchCheckoutStatus({
   cwd: string;
 }): Promise<CheckoutStatusPayload> {
   const payload = await client.getCheckoutStatus(cwd);
-  expireStaleDiffModeOverrides({ serverId, cwd, isDirty: payload.isGit && payload.isDirty });
+  expireWorkingDiffComparisons({ serverId, cwd, isDirty: payload.isGit && payload.isDirty });
   return payload;
 }
 
@@ -94,7 +94,7 @@ export function applyCheckoutStatusUpdateFromEvent({
       timing: checkoutIdentityChanged ? "now" : "next-open",
     });
   }
-  expireStaleDiffModeOverrides({
+  expireWorkingDiffComparisons({
     serverId,
     cwd: payload.cwd,
     isDirty: payload.isGit && payload.isDirty,

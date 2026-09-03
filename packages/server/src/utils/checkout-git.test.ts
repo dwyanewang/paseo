@@ -3656,6 +3656,13 @@ const x = 1;
     await expect(resolveRepositoryDefaultBranch(repoDir)).resolves.toBe("main");
   });
 
+  it("falls back to the currently checked-out branch when origin/HEAD is unset and no main/master branch exists", async () => {
+    execFileSync("git", ["checkout", "-b", "trunk"], { cwd: repoDir });
+    execFileSync("git", ["branch", "-D", "main"], { cwd: repoDir });
+
+    await expect(resolveRepositoryDefaultBranch(repoDir)).resolves.toBe("trunk");
+  });
+
   it("merges to stored baseRefName when baseRef is not provided", async () => {
     // Create a non-default base branch with a unique commit.
     execFileSync("git", ["checkout", "-b", "develop"], { cwd: repoDir });

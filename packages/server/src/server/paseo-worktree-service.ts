@@ -7,6 +7,7 @@ import type { PersistedWorkspaceRecord } from "./workspace-registry.js";
 import type { WorkspaceProvisioningService } from "./session/workspace-provisioning/workspace-provisioning-service.js";
 import {
   createWorktreeCore,
+  type CheckoutBranchCopy,
   type CreateWorktreeCoreDeps,
   type CreateWorktreeCoreInput,
 } from "./worktree-core.js";
@@ -41,6 +42,7 @@ export interface CreatePaseoWorktreeResult {
   workspace: PersistedWorkspaceRecord;
   repoRoot: string;
   created: boolean;
+  checkoutBranchCopy: CheckoutBranchCopy | null;
 }
 
 export type CreatePaseoWorktreeFn = (
@@ -100,6 +102,17 @@ async function createPaseoWorktreeWithPriority(
       baseBranch: resolveIntentBaseBranch(createdWorktree.intent),
       title: input.title?.trim() || resolveFirstAgentPromptTitle(input.firstAgentContext),
       expectsInitialAgent: Boolean(input.firstAgentContext),
+      ...(createdWorktree.intent.kind === "checkout-change-request" &&
+      createdWorktree.intent.headRepository
+        ? {
+            untrustedSource: {
+              kind: "change_request" as const,
+              forge: createdWorktree.intent.forge,
+              number: createdWorktree.intent.changeRequestNumber,
+              headRepository: createdWorktree.intent.headRepository,
+            },
+          }
+        : {}),
     });
 
     deps.github.invalidate({ cwd: createdWorktree.worktree.worktreePath });
@@ -110,6 +123,7 @@ async function createPaseoWorktreeWithPriority(
       workspace,
       repoRoot: createdWorktree.repoRoot,
       created: createdWorktree.created,
+      checkoutBranchCopy: createdWorktree.checkoutBranchCopy,
     };
   } catch (error) {
     if (!createdWorktree.created) {
@@ -252,7 +266,11 @@ function maybeMarkFirstAgentBranchAutoNameEligible(options: {
   createdWorktree: Awaited<ReturnType<typeof createWorktreeCore>>;
 }): void {
   const { createdWorktree } = options;
-  if (!createdWorktree.created || createdWorktree.intent.kind !== "branch-off") {
+  if (
+    !createdWorktree.created ||
+    (createdWorktree.intent.kind !== "branch-off" &&
+      createdWorktree.intent.kind !== "branch-off-change-request")
+  ) {
     return;
   }
 
@@ -267,6 +285,7 @@ function resolveIntentBaseBranch(intent: WorktreeCreationIntent): string | null 
   switch (intent.kind) {
     case "branch-off":
       return normalizeBaseRefName(intent.baseBranch);
+    case "branch-off-change-request":
     case "checkout-change-request":
       return normalizeBaseRefName(intent.baseRefName);
     case "checkout-github-pr":
