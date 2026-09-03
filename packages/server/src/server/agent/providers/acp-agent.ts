@@ -1083,6 +1083,7 @@ export class ACPAgentClient implements AgentClient {
       }
 
       const sessions: ImportableProviderSession[] = [];
+      const scanLimit = Math.min(options?.scanLimit ?? options?.limit ?? 500, 500);
       let cursor: string | null | undefined;
       for (;;) {
         const page: ListSessionsResponse = await this.runACPRequest(() =>
@@ -1100,7 +1101,7 @@ export class ACPAgentClient implements AgentClient {
         }
         cursor = page.nextCursor ?? null;
         if (!cursor) break;
-        if (options?.limit && sessions.length >= options.limit) break;
+        if (sessions.length >= scanLimit) break;
       }
 
       return typeof options?.limit === "number" ? sessions.slice(0, options.limit) : sessions;
