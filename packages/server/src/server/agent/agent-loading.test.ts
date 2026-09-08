@@ -89,6 +89,13 @@ async function createLoaderHarness(options: LoaderHarnessOptions = {}) {
     storage,
     manager,
     calls,
+    requireRecord: async (agentId: string) => {
+      const record = await storage.get(agentId);
+      if (!record) {
+        throw new Error(`expected a stored record for ${agentId}`);
+      }
+      return record;
+    },
     load: async (agentId: string, broadcastTimeline = false) =>
       await ensureAgentLoaded(agentId, {
         agentManager: manager,
@@ -376,10 +383,7 @@ test("does not create an interactive session for an archived record without pers
   const harness = await createLoaderHarness({ archiveNativeSession: async () => undefined });
   const agentId = "00000000-0000-4000-8000-000000000306";
   await harness.createArchived(agentId);
-  const archivedRecord = await harness.storage.get(agentId);
-  if (!archivedRecord) {
-    throw new Error("expected archived record");
-  }
+  const archivedRecord = await harness.requireRecord(agentId);
   await harness.storage.upsert({ ...archivedRecord, persistence: undefined });
   const createCountBeforeLoad = harness.calls.createCount;
 
