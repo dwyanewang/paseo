@@ -5081,6 +5081,7 @@ class ClaudeAgentSession implements AgentSession {
     const configDir = resolveClaudeConfigDir({
       configDir: this.configDir,
       runtimeSettings: this.runtimeSettings,
+      launchEnv: this.launchEnv,
     });
     const candidates = [cwd];
     try {
