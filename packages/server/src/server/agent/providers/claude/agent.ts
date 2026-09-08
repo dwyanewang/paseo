@@ -83,7 +83,7 @@ import {
   type ClaudeRewindSdk,
 } from "./rewind.js";
 import { normalizeProviderReplayTimestamp } from "../../provider-history-timestamps.js";
-import { claudeConfigDir, claudeProjectDirSync } from "./project-dir.js";
+import { claudeConfigDir, claudeProjectDirSync, resolveClaudeConfigDir } from "./project-dir.js";
 import { THINKING_APPLIES_NEXT_TURN_NOTICE } from "../../provider-notices.js";
 import {
   isProviderImageMarkdown,
@@ -5113,7 +5113,11 @@ class ClaudeAgentSession implements AgentSession {
   private resolveHistoryPath(sessionId: string): string | null {
     const cwd = this.config.cwd;
     if (!cwd) return null;
-    const configDir = this.configDir ?? claudeConfigDir(this.buildSdkEnv());
+    const configDir = resolveClaudeConfigDir({
+      configDir: this.configDir,
+      runtimeSettings: this.runtimeSettings,
+      launchEnv: this.launchEnv,
+    });
     const candidates = [cwd];
     try {
       const realCwd = fs.realpathSync(cwd);

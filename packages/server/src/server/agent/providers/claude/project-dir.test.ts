@@ -121,6 +121,29 @@ describe("resolveClaudeConfigDir", () => {
     vi.unstubAllEnvs();
   });
 
+  test("prefers a launch environment's CLAUDE_CONFIG_DIR over the provider profile", () => {
+    // `createProviderEnv` overlays launchEnv on top of the profile settings, so a
+    // plugin that redirects CLAUDE_CONFIG_DIR for one open must win here too, or
+    // the transcript lookup resolves a different directory than the session ran in.
+    const launchConfigDir = join(tmpdir(), "paseo-claude-config-launch");
+    expect(
+      resolveClaudeConfigDir({
+        runtimeSettings: { env: { CLAUDE_CONFIG_DIR: profileConfigDir } },
+        launchEnv: { CLAUDE_CONFIG_DIR: launchConfigDir },
+      }),
+    ).toBe(launchConfigDir);
+  });
+
+  test("prefers an explicit config directory over the launch environment", () => {
+    const explicitConfigDir = join(tmpdir(), "paseo-claude-config-explicit");
+    expect(
+      resolveClaudeConfigDir({
+        configDir: explicitConfigDir,
+        launchEnv: { CLAUDE_CONFIG_DIR: join(tmpdir(), "paseo-claude-config-launch") },
+      }),
+    ).toBe(explicitConfigDir);
+  });
+
   test("prefers a provider profile's CLAUDE_CONFIG_DIR over the daemon environment", () => {
     expect(
       resolveClaudeConfigDir({
