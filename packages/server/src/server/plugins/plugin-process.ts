@@ -411,6 +411,70 @@ async function shutdown(): Promise<void> {
   process.disconnect();
 }
 
+function handleForgeInvocation(
+  message: Extract<PluginProcessRequest, { type: "invoke_forge" }>,
+): void {
+  const contribution = forgeProviders.get(message.providerId);
+  if (!contribution) {
+    send({
+      type: "forge_error",
+      requestId: message.requestId,
+      error: { message: `Unknown forge provider: ${message.providerId}` },
+    });
+    return;
+  }
+  const invocation = Promise.resolve().then(() => {
+    if (message.method === "probeHost") {
+      if (!contribution.probeHost) {
+        throw new Error(`Forge provider ${message.providerId} has no host probe`);
+      }
+      const host = parsePluginForgeInput("probeHost", message.input);
+      return contribution.probeHost(host);
+    }
+    const input = parsePluginForgeInput(message.method, message.input);
+    const method = contribution.service[message.method];
+    if (typeof method !== "function") {
+      throw new Error(`Forge provider ${message.providerId} does not implement ${message.method}`);
+    }
+    const invokeMethod = method as (this: PluginForgeServerService, input?: unknown) => unknown;
+    if (message.method === "dispose") {
+      disposedForgeProviders.add(message.providerId);
+      return invokeMethod.call(contribution.service);
+    }
+    return invokeMethod.call(contribution.service, input);
+  });
+  void invocation.then(
+    (output) => send({ type: "forge_result", requestId: message.requestId, output }),
+    (error) =>
+      send({
+        type: "forge_error",
+        requestId: message.requestId,
+        error: serializeForgeError(error),
+      }),
+  );
+}
+
+function handleMessageWhileStopping(message: PluginProcessRequest): void {
+  if (message.type === "provider.catalog_key") {
+    send({ type: "error", requestId: message.requestId, error: "Plugin is stopping" });
+  } else if (message.type === "provider.connect") {
+    send({
+      type: "provider.connect_failed",
+      connectionId: message.connectionId,
+      error: "Plugin is stopping",
+    });
+  } else if (message.type === "provider.send") {
+    send({
+      type: "provider.rejected",
+      connectionId: message.connectionId,
+      acceptanceId: message.acceptanceId,
+      error: "Plugin is stopping",
+    });
+  } else if (message.type === "provider.close") {
+    send({ type: "provider.closed", connectionId: message.connectionId });
+  }
+}
+
 process.on("message", (rawMessage: unknown) => {
   const parsed = PluginProcessRequestSchema.safeParse(rawMessage);
   if (!parsed.success) {
@@ -445,24 +509,7 @@ process.on("message", (rawMessage: unknown) => {
     return;
   }
   if (stopping) {
-    if (message.type === "provider.catalog_key") {
-      send({ type: "error", requestId: message.requestId, error: "Plugin is stopping" });
-    } else if (message.type === "provider.connect") {
-      send({
-        type: "provider.connect_failed",
-        connectionId: message.connectionId,
-        error: "Plugin is stopping",
-      });
-    } else if (message.type === "provider.send") {
-      send({
-        type: "provider.rejected",
-        connectionId: message.connectionId,
-        acceptanceId: message.acceptanceId,
-        error: "Plugin is stopping",
-      });
-    } else if (message.type === "provider.close") {
-      send({ type: "provider.closed", connectionId: message.connectionId });
-    }
+    handleMessageWhileStopping(message);
     return;
   }
   if (message.type === "provider.catalog_key") {
@@ -517,46 +564,7 @@ process.on("message", (rawMessage: unknown) => {
     return;
   }
   if (message.type === "invoke_forge") {
-    const contribution = forgeProviders.get(message.providerId);
-    if (!contribution) {
-      send({
-        type: "forge_error",
-        requestId: message.requestId,
-        error: { message: `Unknown forge provider: ${message.providerId}` },
-      });
-      return;
-    }
-    const invocation = Promise.resolve().then(() => {
-      if (message.method === "probeHost") {
-        if (!contribution.probeHost) {
-          throw new Error(`Forge provider ${message.providerId} has no host probe`);
-        }
-        const host = parsePluginForgeInput("probeHost", message.input);
-        return contribution.probeHost(host);
-      }
-      const input = parsePluginForgeInput(message.method, message.input);
-      const method = contribution.service[message.method];
-      if (typeof method !== "function") {
-        throw new Error(
-          `Forge provider ${message.providerId} does not implement ${message.method}`,
-        );
-      }
-      const invokeMethod = method as (this: PluginForgeServerService, input?: unknown) => unknown;
-      if (message.method === "dispose") {
-        disposedForgeProviders.add(message.providerId);
-        return invokeMethod.call(contribution.service);
-      }
-      return invokeMethod.call(contribution.service, input);
-    });
-    void invocation.then(
-      (output) => send({ type: "forge_result", requestId: message.requestId, output }),
-      (error) =>
-        send({
-          type: "forge_error",
-          requestId: message.requestId,
-          error: serializeForgeError(error),
-        }),
-    );
+    handleForgeInvocation(message);
     return;
   }
   const registered = handlers.get(message.method);

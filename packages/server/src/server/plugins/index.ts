@@ -341,7 +341,9 @@ export class PluginService {
         throw new Error("Plugins are globally disabled");
       }
       this.errors.delete(pluginId);
-      await this.stopPlugin(pluginId);
+      const stopping = this.stopPlugin(pluginId);
+      this.notify(pluginId);
+      await stopping;
       await this.startExplicit(pluginId, source.path);
       this.notify(pluginId);
       return this.requireItem(pluginId);
@@ -365,11 +367,11 @@ export class PluginService {
   async disablePlugin(pluginId: string): Promise<PluginListItem> {
     const source = this.requireSource(pluginId);
     this.patchSource(pluginId, { ...source, enabled: false });
+    this.errors.delete(pluginId);
     const stopping = this.stopPlugin(pluginId);
+    this.notify(pluginId);
     return this.enqueue(async () => {
       await stopping;
-      this.errors.delete(pluginId);
-      this.notify(pluginId);
       return this.requireItem(pluginId);
     });
   }
@@ -380,6 +382,8 @@ export class PluginService {
     const sources = { ...this.configStore.get().plugins };
     delete sources[pluginId];
     this.configStore.patch({ plugins: sources });
+    this.errors.delete(pluginId);
+    this.notify(pluginId);
     await this.enqueue(async () => {
       await stopping;
       this.runtime.clearLogs(pluginId);
