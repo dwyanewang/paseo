@@ -27,6 +27,11 @@ const sourcePatchedDependenciesHelper = path.join(
   "dwyanewang",
   "prepare-patched-dependencies.mjs",
 );
+const sourceExpoRouterTypesHelper = path.join(
+  repoRoot,
+  "dwyanewang",
+  "refresh-expo-router-types.mjs",
+);
 
 function run(cwd, command, args, env = {}) {
   return spawnSync(command, args, {
@@ -181,6 +186,10 @@ function createFixture({
   copyFileSync(
     sourcePatchedDependenciesHelper,
     path.join(controlsRoot, "prepare-patched-dependencies.mjs"),
+  );
+  copyFileSync(
+    sourceExpoRouterTypesHelper,
+    path.join(controlsRoot, "refresh-expo-router-types.mjs"),
   );
 
   writeExecutable(

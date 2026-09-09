@@ -143,6 +143,7 @@ function createFixture({ advanceUpstream = false, rebuildRwMain = false } = {}) 
     "prepare-rw-main-for-build.sh",
     "build-paseo-state.sh",
     "prepare-patched-dependencies.mjs",
+    "refresh-expo-router-types.mjs",
     "rebuild-rw-main.sh",
     "sync-rw-main-branches.sh",
   ]) {

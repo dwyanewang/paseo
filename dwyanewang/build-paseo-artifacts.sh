@@ -177,8 +177,10 @@ state_helper="$control_root/dwyanewang/build-paseo-state.sh"
 [[ -f "$state_helper" ]] || fail "missing build state helper: $state_helper"
 source "$state_helper"
 patched_dependencies_helper=${PASEO_PATCHED_DEPENDENCIES_HELPER:-"$control_root/dwyanewang/prepare-patched-dependencies.mjs"}
+expo_router_types_helper=${PASEO_EXPO_ROUTER_TYPES_HELPER:-"$control_root/dwyanewang/refresh-expo-router-types.mjs"}
 [[ -f "$patched_dependencies_helper" ]] ||
   fail "missing patched dependencies helper: $patched_dependencies_helper"
+[[ -f "$expo_router_types_helper" ]] || fail "missing Expo Router types helper: $expo_router_types_helper"
 [[ -d "$build_root_arg" ]] || fail "build root is not a directory: $build_root_arg"
 build_root=$(realpath -e -- "$build_root_arg")
 build_repo_root=$(git -C "$build_root" rev-parse --show-toplevel 2>/dev/null) ||
@@ -526,6 +528,7 @@ prepare_local_overlay() {
   stage "local-overlay: refresh generated workspace declarations"
   (
     cd "$build_root"
+    node "$expo_router_types_helper" --root "$build_root"
     npm run build --workspace=@getpaseo/relay
     npm run build:client
     npm run build:plugin

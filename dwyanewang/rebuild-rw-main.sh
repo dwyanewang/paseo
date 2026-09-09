@@ -84,6 +84,7 @@ script_dir=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 control_root=$(git -C "$script_dir/.." rev-parse --show-toplevel)
 patched_dependencies_helper=${PASEO_PATCHED_DEPENDENCIES_HELPER:-"$control_root/dwyanewang/prepare-patched-dependencies.mjs"}
 build_state_helper=${PASEO_BUILD_STATE_HELPER:-"$control_root/dwyanewang/build-paseo-state.sh"}
+expo_router_types_helper=${PASEO_EXPO_ROUTER_TYPES_HELPER:-"$control_root/dwyanewang/refresh-expo-router-types.mjs"}
 
 upstream_branch=main
 base_branch=rw-base
@@ -104,6 +105,7 @@ fail() {
 [[ -f "$build_state_helper" ]] || fail "missing build state helper: $build_state_helper"
 [[ -f "$patched_dependencies_helper" ]] ||
   fail "missing patched dependencies helper: $patched_dependencies_helper"
+[[ -f "$expo_router_types_helper" ]] || fail "missing Expo Router types helper: $expo_router_types_helper"
 # shellcheck disable=SC1090
 source "$build_state_helper"
 
@@ -365,6 +367,10 @@ verify_installed_patches() {
   node "$patched_dependencies_helper" verify --root "$build_root"
 }
 
+refresh_expo_router_types() {
+  node "$expo_router_types_helper" --root "$build_root"
+}
+
 printf 'Upstream: %s (%s)\n' "$upstream_branch" "$(git rev-parse --short "$main_head")"
 printf 'Base candidate: %s\n' "$base_candidate_head"
 for branch_name in "${integration_branches[@]}"; do
@@ -385,6 +391,7 @@ if ((!dry_run)) && ((base_rebuilt == 0)) && target_matches_inputs; then
   else
     verify_installed_patches
   fi
+  refresh_expo_router_types
   if ((push_target)); then
     push_candidates "$base_candidate_head" "$target_before"
     printf 'Updated origin/%s and origin/%s atomically.\n' "$base_branch" "$target_branch"
@@ -417,6 +424,7 @@ if [[ "$starting_branch" != "$target_branch" ]] ||
 else
   verify_installed_patches
 fi
+refresh_expo_router_types
 
 validation_mode=full
 if paseo_verify_build_stamp "$build_root" "$server_build_stamp" tree readiness HEAD; then

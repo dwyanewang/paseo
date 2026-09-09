@@ -124,6 +124,7 @@ function createFixture({
     "build-paseo-state.sh",
     "manage-rw-base.sh",
     "prepare-patched-dependencies.mjs",
+    "refresh-expo-router-types.mjs",
     "rebuild-rw-main.sh",
   ]) {
     const target = path.join(controlsRoot, scriptName);

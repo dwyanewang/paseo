@@ -36,6 +36,7 @@ repo_root=$(realpath -e -- "$repo_root")
 vitest_files=(
   scripts/build-paseo-artifacts.test.mjs
   scripts/prepare-rw-main-for-build.test.mjs
+  scripts/refresh-expo-router-types.test.mjs
   scripts/rw-base-lifecycle.test.mjs
   scripts/rw-main-review-gate.test.mjs
 )

@@ -143,6 +143,15 @@ function createFixture({
     path.join(controlDir, "rebuild-rw-main.sh"),
   );
   copyFileSync(
+    path.join(repoRoot, "dwyanewang", "refresh-expo-router-types.mjs"),
+    path.join(controlDir, "refresh-expo-router-types.mjs"),
+  );
+  const expoRouterTypesHelper = path.join(binDir, "refresh-expo-router-types.mjs");
+  copyFileSync(
+    path.join(repoRoot, "dwyanewang", "refresh-expo-router-types.mjs"),
+    expoRouterTypesHelper,
+  );
+  copyFileSync(
     path.join(repoRoot, "dwyanewang", "build-paseo-state.sh"),
     path.join(controlDir, "build-paseo-state.sh"),
   );
@@ -256,6 +265,7 @@ exec /usr/bin/diff "$@"
     env: {
       GH_CALL_LOG: ghCallLog,
       NPM_CALL_LOG: npmCallLog,
+      PASEO_EXPO_ROUTER_TYPES_HELPER: expoRouterTypesHelper,
       PASEO_TEST_BUILD_ROOT: root,
       PASEO_PATCHED_DEPENDENCIES_HELPER: path.join(binDir, "prepare-patched-dependencies.mjs"),
       PATH: `${binDir}:${process.env.PATH}`,
