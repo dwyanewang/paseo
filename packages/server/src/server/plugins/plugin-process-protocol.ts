@@ -259,7 +259,11 @@ export const PluginProcessMessageSchema: z.ZodType<PluginProcessMessage> = z.dis
       .object({ type: z.literal("error"), requestId: z.string().min(1), error: z.string() })
       .strict(),
     z
-      .object({ type: z.literal("forge_result"), requestId: z.string().min(1), output: z.unknown() })
+      .object({
+        type: z.literal("forge_result"),
+        requestId: z.string().min(1),
+        output: z.unknown(),
+      })
       .strict(),
     z
       .object({
