@@ -8007,6 +8007,18 @@ test("native archive and restore release the loaded session writer", async () =>
     ): Promise<AgentSession> {
       return this.createSession({ provider: "codex", cwd: workdir, ...config });
     }
+    override async readSessionHistory() {
+      return {
+        events: [
+          {
+            type: "timeline" as const,
+            provider: "codex" as const,
+            item: { type: "assistant_message" as const, text: "Archived provider history" },
+          },
+        ],
+        coverage: { kind: "complete" as const },
+      };
+    }
     override async archiveNativeSession(handle: AgentPersistenceHandle): Promise<void> {
       if (!this.session?.closed) throw new Error("native thread has an active writer");
       await super.archiveNativeSession(handle);
@@ -8025,9 +8037,14 @@ test("native archive and restore release the loaded session writer", async () =>
     });
     await manager.archiveAgent(agent.id);
     expect(client.archivedHandles).toHaveLength(1);
-    // Opening archived history can retain a writer, including records archived by older daemons.
-    await ensureAgentLoaded(agent.id, { agentManager: manager, agentStorage: storage, logger });
-    expect(client.session?.closed).toBe(false);
+    const archivedSnapshot = await ensureAgentLoaded(agent.id, {
+      agentManager: manager,
+      agentStorage: storage,
+      logger,
+    });
+    expect(archivedSnapshot.lifecycle).toBe("closed");
+    expect(manager.getAgent(agent.id)).toBeNull();
+    expect(client.session?.closed).toBe(true);
     await manager.unarchiveSnapshot(agent.id);
     expect(client.unarchivedHandles).toHaveLength(1);
     expect((await storage.get(agent.id))?.archivedAt).toBeNull();
