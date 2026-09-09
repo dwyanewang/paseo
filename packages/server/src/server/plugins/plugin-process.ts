@@ -461,6 +461,51 @@ export function createPluginWorker(options: {
     );
   }
 
+  function handleForgeInvocation(
+    message: Extract<PluginProcessRequest, { type: "invoke_forge" }>,
+  ): void {
+    const contribution = forgeProviders.get(message.providerId);
+    if (!contribution) {
+      send({
+        type: "forge_error",
+        requestId: message.requestId,
+        error: { message: `Unknown forge provider: ${message.providerId}` },
+      });
+      return;
+    }
+    const invocation = Promise.resolve().then(() => {
+      if (message.method === "probeHost") {
+        if (!contribution.probeHost) {
+          throw new Error(`Forge provider ${message.providerId} has no host probe`);
+        }
+        const host = parsePluginForgeInput("probeHost", message.input);
+        return contribution.probeHost(host);
+      }
+      const input = parsePluginForgeInput(message.method, message.input);
+      const method = contribution.service[message.method];
+      if (typeof method !== "function") {
+        throw new Error(
+          `Forge provider ${message.providerId} does not implement ${message.method}`,
+        );
+      }
+      const invokeMethod = method as (this: PluginForgeServerService, input?: unknown) => unknown;
+      if (message.method === "dispose") {
+        disposedForgeProviders.add(message.providerId);
+        return invokeMethod.call(contribution.service);
+      }
+      return invokeMethod.call(contribution.service, input);
+    });
+    void invocation.then(
+      (output) => send({ type: "forge_result", requestId: message.requestId, output }),
+      (error) =>
+        send({
+          type: "forge_error",
+          requestId: message.requestId,
+          error: serializeForgeError(error),
+        }),
+    );
+  }
+
   function rejectWhileStopping(message: PluginProcessRequest): void {
     if (
       message.type === "provider.status" ||
@@ -589,47 +634,15 @@ export function createPluginWorker(options: {
       handleHookMessage(message);
       return;
     }
+    handleInvocation(message);
+  }
+  channel.onMessage(handleMessage);
+
+  function handleInvocation(
+    message: Extract<PluginProcessRequest, { type: "invoke" | "invoke_forge" }>,
+  ): void {
     if (message.type === "invoke_forge") {
-      const contribution = forgeProviders.get(message.providerId);
-      if (!contribution) {
-        send({
-          type: "forge_error",
-          requestId: message.requestId,
-          error: { message: `Unknown forge provider: ${message.providerId}` },
-        });
-        return;
-      }
-      const invocation = Promise.resolve().then(() => {
-        if (message.method === "probeHost") {
-          if (!contribution.probeHost) {
-            throw new Error(`Forge provider ${message.providerId} has no host probe`);
-          }
-          const host = parsePluginForgeInput("probeHost", message.input);
-          return contribution.probeHost(host);
-        }
-        const input = parsePluginForgeInput(message.method, message.input);
-        const method = contribution.service[message.method];
-        if (typeof method !== "function") {
-          throw new Error(
-            `Forge provider ${message.providerId} does not implement ${message.method}`,
-          );
-        }
-        const invokeMethod = method as (this: PluginForgeServerService, input?: unknown) => unknown;
-        if (message.method === "dispose") {
-          disposedForgeProviders.add(message.providerId);
-          return invokeMethod.call(contribution.service);
-        }
-        return invokeMethod.call(contribution.service, input);
-      });
-      void invocation.then(
-        (output) => send({ type: "forge_result", requestId: message.requestId, output }),
-        (error) =>
-          send({
-            type: "forge_error",
-            requestId: message.requestId,
-            error: serializeForgeError(error),
-          }),
-      );
+      handleForgeInvocation(message);
       return;
     }
     const registered = handlers.get(message.method);
@@ -654,7 +667,6 @@ export function createPluginWorker(options: {
           send({ type: "error", requestId: message.requestId, error: describeError(error) }),
       );
   }
-  channel.onMessage(handleMessage);
 
   function handleHookMessage(
     message: Extract<PluginProcessRequest, { type: "hook" | "hook.cancel" }>,
