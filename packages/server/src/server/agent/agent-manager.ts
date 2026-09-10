@@ -2335,7 +2335,7 @@ export class AgentManager {
         this.emitState(historySnapshot, { persist: false });
       }
     } else if (shouldPersist && !nextRecord.internal) {
-      this.dispatchArchivedStoredAgent(nextRecord);
+      this.dispatchStoredAgentState(nextRecord);
     }
   }
 
