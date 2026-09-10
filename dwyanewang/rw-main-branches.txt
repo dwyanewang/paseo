@@ -2,9 +2,9 @@
 # sync-rw-main-branches.sh removes merged PRs; new entries are explicit only.
 # Each entry records the main/head pair last semantically reviewed.
 
-fix/android-keyboard-covers-input # PR #2467 # reviewed-main:7bcf167862ce9bb040007d1469c77c00928a84c8 # reviewed-head:8541863f8a5736e767cdb0b96c1b311df0548eeb
-refactor/provider-history-read # PR #4473 # reviewed-main:7bcf167862ce9bb040007d1469c77c00928a84c8 # reviewed-head:e1d28764c7860e2327decd0e9b5e147d0c8eca88
-feat/file-image-actions # PR #4063 # reviewed-main:7bcf167862ce9bb040007d1469c77c00928a84c8 # reviewed-head:956b2e3c1c6d3f9f9875f74fe3b7142d5f869508
-feat/forge-plugin-infrastructure # PR #3894 # reviewed-main:7bcf167862ce9bb040007d1469c77c00928a84c8 # reviewed-head:a900da83e96abab03b0067d29bd6915e1a96a6bf
-fix/skill-cache-invalidation-scoped # PR #4463 # reviewed-main:7bcf167862ce9bb040007d1469c77c00928a84c8 # reviewed-head:317f35973e70ea482ed6b3dc94ed4e7f521aa859
-fix/electron-explorer-tab-menu # PR #3890 # reviewed-main:7bcf167862ce9bb040007d1469c77c00928a84c8 # reviewed-head:99cb41ddf9fb3fd5b90f44a6ccef49b11c33ef21
+fix/android-keyboard-covers-input # PR #2467 # reviewed-main:d7c7044dfc91d1d18721dc8757ac3bb913d8c232 # reviewed-head:8541863f8a5736e767cdb0b96c1b311df0548eeb
+refactor/provider-history-read # PR #4473 # reviewed-main:d7c7044dfc91d1d18721dc8757ac3bb913d8c232 # reviewed-head:e1d28764c7860e2327decd0e9b5e147d0c8eca88
+feat/file-image-actions # PR #4063 # reviewed-main:d7c7044dfc91d1d18721dc8757ac3bb913d8c232 # reviewed-head:956b2e3c1c6d3f9f9875f74fe3b7142d5f869508
+feat/forge-plugin-infrastructure # PR #3894 # reviewed-main:d7c7044dfc91d1d18721dc8757ac3bb913d8c232 # reviewed-head:a900da83e96abab03b0067d29bd6915e1a96a6bf
+fix/skill-cache-invalidation-scoped # PR #4463 # reviewed-main:d7c7044dfc91d1d18721dc8757ac3bb913d8c232 # reviewed-head:317f35973e70ea482ed6b3dc94ed4e7f521aa859
+fix/electron-explorer-tab-menu # PR #3890 # reviewed-main:d7c7044dfc91d1d18721dc8757ac3bb913d8c232 # reviewed-head:99cb41ddf9fb3fd5b90f44a6ccef49b11c33ef21
