@@ -4,7 +4,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: bash dwyanewang/prepare-rw-main-for-build.sh --build-root PATH [options]
+Usage: bash dwyanewang/prepare-rw-main-for-build.sh --build-root PATH --run-id ID [options]
 
 Run the source-control preflight for build-paseo as one deterministic command:
 validate worktrees, synchronize main, maintain the overlay manifest, and run
@@ -13,8 +13,13 @@ the atomic rw-base/rw-main readiness gate.
   --build-root PATH         Dedicated product build worktree (required).
   --push                    Atomically update origin/rw-base and origin/rw-main.
   --state-file PATH         Atomically write sourceable readiness results on success.
+  --run-id ID               Required request identity; reuse across all attempts.
+  --requested-at EPOCH      Original user-request time (defaults to now).
+  --no-fetch                Reuse this run's frozen main; never fetch/ff/push main.
+  --refresh-main            Explicitly refresh this run's main snapshot.
   --add-pr NUMBER           Forward an explicit PR addition to manifest sync.
   --add-branch BRANCH       Forward an explicit personal branch addition.
+  --update-pr BRANCH NUMBER Update an existing branch's PR mapping explicitly.
   --remove-branch BRANCH    Forward a reviewed branch removal.
   --accept-review-request PATH
                             Forward one frozen semantic-review request.
@@ -32,6 +37,11 @@ EOF
 build_root_arg=
 push_target=0
 state_file_arg=
+run_id=
+requested_at=
+no_fetch=0
+refresh_main=0
+accepting_review=0
 declare -a sync_args=()
 
 while (($# > 0)); do
@@ -64,15 +74,37 @@ while (($# > 0)); do
       state_file_arg=$2
       shift 2
       ;;
+    --run-id | --requested-at)
+      (($# >= 2)) || { printf 'Missing value for %s.\n' "$1" >&2; exit 2; }
+      if [[ "$1" == --run-id ]]; then
+        [[ -z "$run_id" && "$2" =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]{0,95}$ ]] || exit 2
+        run_id=$2
+      else
+        [[ -z "$requested_at" && "$2" =~ ^[1-9][0-9]{0,9}$ ]] || exit 2
+        requested_at=$2
+      fi
+      shift 2
+      ;;
+    --no-fetch)
+      no_fetch=1
+      shift
+      ;;
+    --refresh-main)
+      refresh_main=1
+      shift
+      ;;
     --add-pr | --add-branch | --remove-branch | --accept-main-review | --accept-review-request)
       (($# >= 2)) || {
         printf 'Missing value for %s.\n' "$1" >&2
         exit 2
       }
       sync_args+=("$1" "$2")
+      if [[ "$1" == --accept-review-request || "$1" == --accept-main-review ]]; then
+        accepting_review=1
+      fi
       shift 2
       ;;
-    --accept-branch-head)
+    --accept-branch-head | --update-pr)
       (($# >= 3)) || {
         printf '%s\n' 'Missing BRANCH or SHA for --accept-branch-head.' >&2
         exit 2
@@ -91,6 +123,16 @@ while (($# > 0)); do
       ;;
   esac
 done
+
+((!no_fetch || !refresh_main)) || { printf '%s\n' '--no-fetch and --refresh-main are mutually exclusive.' >&2; exit 2; }
+if [[ -z "$run_id" ]]; then
+  printf '%s\n' '--run-id is required; retries must reuse the original ID with --no-fetch or --refresh-main.' >&2
+  exit 2
+fi
+if ((accepting_review && !no_fetch)); then
+  printf '%s\n' 'Accepting review requires the same --run-id and --no-fetch; refresh separately before reviewing.' >&2
+  exit 2
+fi
 
 [[ -n "$build_root_arg" ]] || {
   printf '%s\n' '--build-root is required.' >&2
@@ -179,6 +221,41 @@ if [[ -n "$state_file" ]]; then
   rm -f -- "$state_file"
 fi
 
+run_dir="$build_root/.dev/build-paseo-runs/$run_id"
+[[ ! -L "$run_dir" ]] || fail "run directory is a symlink: $run_dir"
+mkdir -p -- "$run_dir"
+export PASEO_BUILD_REQUEST_STAGE_LOG="$run_dir/preflight-stages.log"
+export PASEO_BUILD_ATTEMPT="$(date +%Y%m%d-%H%M%S)-$$"
+attempt_log="$run_dir/preflight-$PASEO_BUILD_ATTEMPT.log"
+exec > >(exec {build_lock_fd}>&-; tee -a "$attempt_log") \
+  2> >(exec {build_lock_fd}>&-; tee -a "$attempt_log" >&2)
+trap 'code=$?; paseo_build_stage "preflight:end exit=$code elapsed=$(( $(date +%s) - started_at ))s"; exit "$code"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+paseo_build_stage 'preflight:start'
+printf 'PASEO_BUILD_RUN_ID=%s\nPASEO_BUILD_RUN_DIR=%s\n' "$run_id" "$run_dir"
+if [[ -f "$run_dir/requested-at" ]]; then
+  saved_requested_at=$(<"$run_dir/requested-at")
+  [[ "$saved_requested_at" =~ ^[1-9][0-9]{0,9}$ ]] || fail 'invalid saved request time'
+  [[ -z "$requested_at" || "$requested_at" == "$saved_requested_at" ]] || fail 'request time changed'
+  requested_at=$saved_requested_at
+else
+  requested_at=${requested_at:-$started_at}
+  ((requested_at <= started_at)) || fail 'request time is in the future'
+  printf '%s\n' "$requested_at" >"$run_dir/requested-at"
+fi
+snapshot_file="$run_dir/main.snapshot"
+frozen_main=
+frozen_at=
+if [[ -f "$snapshot_file" ]]; then
+  read -r frozen_main frozen_at snapshot_extra <"$snapshot_file" || fail "unreadable main snapshot: $snapshot_file"
+  [[ "$frozen_main" =~ ^[0-9a-f]{40}$ && "$frozen_at" =~ ^[1-9][0-9]{0,9}$ && -z "$snapshot_extra" ]] ||
+    fail 'invalid main snapshot'
+  ((no_fetch || refresh_main)) || fail 'run already has a snapshot; use --no-fetch or --refresh-main'
+elif ((no_fetch)); then
+  fail '--no-fetch requires an existing main snapshot'
+fi
+
 current_control_branch=$(git -C "$control_root" symbolic-ref --quiet --short HEAD) ||
   fail "control worktree is detached: $control_root"
 [[ "$current_control_branch" == "$control_branch" ]] ||
@@ -208,31 +285,44 @@ fi
 
 main_sync_started=$(date +%s)
 main_before=$(git -C "$control_root" rev-parse "$upstream_branch")
-git -C "$control_root" fetch upstream
-git -C "$control_root" fetch origin --prune
-
-if [[ -n "$main_worktree" ]]; then
-  git -C "$main_worktree" merge --ff-only upstream/main
+if ((no_fetch)); then
+  paseo_assert_frozen_main "$control_root" "$frozen_main" || fail 'frozen main validation failed'
+  main_after=$frozen_main
+  paseo_build_stage "main:reuse snapshot=$frozen_main frozen-at=$frozen_at"
 else
-  git -C "$control_root" merge-base --is-ancestor "$upstream_branch" upstream/main ||
-    fail "$upstream_branch cannot be fast-forwarded to upstream/main"
-  git -C "$control_root" branch -f "$upstream_branch" upstream/main
-fi
+  paseo_build_timed main:fetch-upstream git -C "$control_root" fetch upstream
+  paseo_build_timed main:fetch-origin git -C "$control_root" fetch origin --prune
 
-main_after=$(git -C "$control_root" rev-parse "$upstream_branch")
-origin_main=$(git -C "$control_root" rev-parse --verify refs/remotes/origin/main 2>/dev/null || true)
-if [[ "$origin_main" == "$main_after" ]]; then
-  printf '%s\n' 'origin/main already matches; remote unchanged.'
-else
-  git -C "$control_root" push origin main:main
-  printf '%s\n' 'Updated origin/main.'
+  if [[ -n "$main_worktree" ]]; then
+    git -C "$main_worktree" merge --ff-only upstream/main
+  else
+    git -C "$control_root" merge-base --is-ancestor "$upstream_branch" upstream/main ||
+      fail "$upstream_branch cannot be fast-forwarded to upstream/main"
+    git -C "$control_root" branch -f "$upstream_branch" upstream/main
+  fi
+
+  main_after=$(git -C "$control_root" rev-parse "$upstream_branch")
+  origin_main=$(git -C "$control_root" rev-parse --verify refs/remotes/origin/main 2>/dev/null || true)
+  if [[ "$origin_main" == "$main_after" ]]; then
+    printf '%s\n' 'origin/main already matches; remote unchanged.'
+  else
+    paseo_build_timed main:push git -C "$control_root" push origin main:main
+    printf '%s\n' 'Updated origin/main.'
+  fi
+  frozen_main=$main_after
+  frozen_at=$(date +%s)
+  snapshot_temp=$(mktemp "$run_dir/.main.snapshot.XXXXXX")
+  printf '%s %s\n' "$frozen_main" "$frozen_at" >"$snapshot_temp"
+  mv -- "$snapshot_temp" "$snapshot_file"
+  paseo_build_stage "main:freeze snapshot=$frozen_main frozen-at=$frozen_at"
 fi
 printf 'PASEO_MAIN_BEFORE=%s\nPASEO_MAIN_AFTER=%s\nPASEO_MAIN_SYNC_SECONDS=%s\n' \
   "$main_before" "$main_after" "$(( $(date +%s) - main_sync_started ))"
 
 manifest_sync_started=$(date +%s)
 sync_status=0
-(cd "$control_root" && bash dwyanewang/sync-rw-main-branches.sh --check-mergeability "${sync_args[@]}") ||
+(cd "$control_root" && paseo_build_timed manifest:sync bash dwyanewang/sync-rw-main-branches.sh \
+  --frozen-main "$frozen_main" --check-mergeability "${sync_args[@]}") ||
   sync_status=$?
 printf 'PASEO_MANIFEST_SYNC_SECONDS=%s\n' "$(( $(date +%s) - manifest_sync_started ))"
 if ((sync_status == 3)); then
@@ -252,11 +342,11 @@ build_starting_branch=$(git -C "$build_root" branch --show-current)
 rw_base_before=$(git -C "$build_root" rev-parse --verify "$base_branch" 2>/dev/null || true)
 rw_main_before=$(git -C "$build_root" rev-parse --verify "$target_branch" 2>/dev/null || true)
 rebuild_started=$(date +%s)
-rebuild_args=(--build-root "$build_root")
+rebuild_args=(--build-root "$build_root" --frozen-main "$frozen_main")
 if ((push_target)); then
   rebuild_args+=(--push)
 fi
-bash "$control_root/dwyanewang/rebuild-rw-main.sh" "${rebuild_args[@]}"
+paseo_build_timed readiness bash "$control_root/dwyanewang/rebuild-rw-main.sh" "${rebuild_args[@]}"
 rw_base_after=$(git -C "$build_root" rev-parse "$base_branch")
 rw_main_after=$(git -C "$build_root" rev-parse "$target_branch")
 if [[ "$rw_base_before" == "$rw_base_after" ]]; then
@@ -320,6 +410,9 @@ if [[ -n "$state_file" ]]; then
     control_head "$control_head" \
     main_before "$main_before" \
     main_after "$main_after" \
+    paseo_build_run_id "$run_id" \
+    paseo_build_requested_at "$requested_at" \
+    paseo_build_frozen_at "$frozen_at" \
     paseo_preflight_total_seconds "$total_seconds" \
     paseo_preflight_status ready
   printf 'PASEO_PREFLIGHT_STATE_FILE=%s\n' "$state_file"

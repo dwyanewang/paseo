@@ -312,10 +312,15 @@ full_log="$run_dir/build.log"
 stage_log="$run_dir/stages.log"
 exit_status_file="$run_dir/exit-status"
 result_file="$run_dir/result.env"
+request_stage_log=
+request_run_dir=
+request_id=
+request_started_epoch=
+request_frozen_at=
 : >"$full_log"
 : >"$stage_log"
 
-exec > >(tee -a "$full_log") 2>&1
+exec > >(exec {build_lock_fd}>&-; tee -a "$full_log") 2>&1
 
 started_epoch=$(date +%s)
 terminal_webview=packages/app/src/terminal/webview/terminal-emulator-webview-html.ts
@@ -436,6 +441,9 @@ finish() {
     fi
   fi
   write_exit_status "$status"
+  if [[ -n "$request_stage_log" ]]; then
+    stage "artifacts:end exit=$status elapsed=$(( $(date +%s) - started_epoch ))s"
+  fi
   if ((status == 0)); then
     printf 'PASEO_ARTIFACT_BUILD_STATUS=ready\n'
   else
@@ -456,6 +464,9 @@ stage() {
   printf -v line '[%s] %s' "$(date '+%Y-%m-%d %H:%M:%S %z')" "$1"
   printf '%s\n' "$line"
   printf '%s\n' "$line" >>"$stage_log"
+  if [[ -n "$request_stage_log" ]]; then
+    printf '%s artifact-attempt=%s\n' "$line" "$run_id" >>"$request_stage_log"
+  fi
 }
 
 install_local_overlay_dependencies() {
@@ -814,6 +825,7 @@ if [[ -n "$preflight_state_arg" ]]; then
     fail "preflight state does not exist: $preflight_state_arg"
   unset paseo_preflight_status rw_base_rebuilt rw_base_after rw_main_rebuilt
   unset dependencies_reinstalled rw_main_after main_after control_head
+  unset paseo_build_run_id paseo_build_requested_at paseo_build_frozen_at
   # The file is written atomically by prepare-rw-main-for-build.sh and is a
   # sourceable shell state contract shared by the two versioned orchestrators.
   source "$preflight_state"
@@ -847,6 +859,23 @@ if [[ -n "$preflight_state_arg" ]]; then
   current_control_head=$(git -C "$control_root" rev-parse HEAD)
   [[ "$current_control_head" == "$control_head" ]] ||
     fail "preflight state is stale: control expected $control_head, current $current_control_head"
+  if [[ -n "${paseo_build_run_id:-}" ]]; then
+    [[ "$paseo_build_run_id" =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]{0,95}$ ]] || fail 'invalid request run id'
+    [[ "${paseo_build_requested_at:-}" =~ ^[1-9][0-9]{0,9}$ && "${paseo_build_frozen_at:-}" =~ ^[1-9][0-9]{0,9}$ ]] ||
+      fail 'invalid request timestamps'
+    request_id=$paseo_build_run_id
+    request_run_dir="$build_root/.dev/build-paseo-runs/$request_id"
+    [[ -d "$request_run_dir" && ! -L "$request_run_dir" ]] || fail 'request log directory is missing or a symlink'
+    [[ "$(<"$request_run_dir/requested-at")" == "$paseo_build_requested_at" ]] || fail 'request start time changed'
+    [[ "$(<"$request_run_dir/main.snapshot")" == "$main_after $paseo_build_frozen_at" ]] || fail 'request snapshot changed; rerun preflight'
+    request_started_epoch=$paseo_build_requested_at
+    request_frozen_at=$paseo_build_frozen_at
+    ((request_started_epoch <= request_frozen_at && request_frozen_at <= started_epoch)) || fail 'invalid request time ordering'
+    request_stage_log="$request_run_dir/preflight-stages.log"
+    stage "artifacts:start log=$full_log result=$result_file"
+    printf 'PASEO_BUILD_REQUEST_DIR=%s\nPASEO_BUILD_SNAPSHOT_MAIN=%s\nPASEO_BUILD_FROZEN_AT=%s\nPASEO_BUILD_REQUEST_STAGE_LOG=%s\n' \
+      "$request_run_dir" "$main_after" "$request_frozen_at" "$request_stage_log"
+  fi
   preflight_mode=ready-state
 fi
 
@@ -1132,6 +1161,11 @@ result_temp=$(mktemp "${result_file}.tmp.XXXXXX")
   printf 'paseo_artifact_stage_log=%q\n' "$stage_log"
   printf 'paseo_artifact_exit_status_file=%q\n' "$exit_status_file"
   printf 'paseo_artifact_total_seconds=%q\n' "$total_seconds"
+  printf 'paseo_build_request_id=%q\n' "$request_id"
+  printf 'paseo_build_request_dir=%q\n' "$request_run_dir"
+  printf 'paseo_build_request_total_seconds=%q\n' "$((finished_epoch - ${request_started_epoch:-$started_epoch}))"
+  printf 'paseo_build_snapshot_main=%q\n' "${main_after:-}"
+  printf 'paseo_build_frozen_at=%q\n' "$request_frozen_at"
   printf 'paseo_artifact_targets=%q\n' "$selected_targets_csv"
   printf 'paseo_artifact_preflight_mode=%q\n' "$preflight_mode"
   printf 'paseo_artifact_server_build_mode=%q\n' "$server_build_mode"

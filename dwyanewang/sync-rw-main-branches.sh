@@ -13,6 +13,8 @@ belong in rw-base and are managed by manage-rw-base.sh.
 
   --add-pr NUMBER           Add an open getpaseo/paseo PR owned by dwyanewang.
   --add-branch BRANCH       Add a pushed origin branch as a temporary reviewed overlay.
+  --update-pr BRANCH NUMBER Explicitly remap an existing branch to an open PR.
+  --frozen-main SHA         Require this run's main snapshot and upstream ancestry.
   --remove-branch BRANCH    Remove a branch confirmed to be absorbed upstream.
   --accept-review-request PATH
                             Accept one frozen review request after semantic review.
@@ -32,6 +34,8 @@ dry_run=0
 check_mergeability=0
 accept_main_review=
 accept_review_request=
+frozen_main=
+declare -A updated_prs=()
 declare -a addition_kinds=()
 declare -a addition_values=()
 declare -a removal_branches=()
@@ -40,6 +44,19 @@ declare -A expected_branch_heads=()
 
 while (($# > 0)); do
   case "$1" in
+    --frozen-main)
+      (($# >= 2)) || exit 2
+      [[ -z "$frozen_main" && "$2" =~ ^[0-9a-f]{40}$ ]] || exit 2
+      frozen_main=$2
+      shift 2
+      ;;
+    --update-pr)
+      (($# >= 3)) || { printf '%s\n' 'Missing BRANCH or NUMBER for --update-pr.' >&2; exit 2; }
+      git check-ref-format --branch "$2" >/dev/null || exit 2
+      [[ "$3" =~ ^[1-9][0-9]*$ && -z "${updated_prs[$2]+present}" ]] || exit 2
+      updated_prs[$2]=$3
+      shift 3
+      ;;
     --add-pr)
       (($# >= 2)) || {
         printf '%s\n' 'Missing value for --add-pr.' >&2
@@ -153,6 +170,11 @@ fail() {
   printf 'sync-rw-main-branches: %s\n' "$1" >&2
   exit 1
 }
+
+source "$script_dir/build-paseo-state.sh"
+if [[ -n "$frozen_main" ]]; then
+  paseo_assert_frozen_main "$repo_root" "$frozen_main" || fail 'frozen main validation failed'
+fi
 
 declare -A request_branch_main_starts=()
 declare -A request_branch_head_starts=()
@@ -355,6 +377,10 @@ for index in "${!addition_kinds[@]}"; do
     request_pr_query "${addition_values[$index]}"
   fi
 done
+for branch_name in "${!updated_prs[@]}"; do
+  [[ -z "${requested_removals[$branch_name]+present}" ]] || fail "$branch_name cannot be updated and removed together"
+  request_pr_query "${updated_prs[$branch_name]}"
+done
 
 batch_query_prs() {
   ((${#requested_pr_numbers[@]} > 0)) || return 0
@@ -416,7 +442,9 @@ load_pr() {
   pr_url=${queried_pr_urls[$requested_number]}
 }
 
+paseo_build_stage 'manifest:graphql:start'
 batch_query_prs
+paseo_build_stage 'manifest:graphql:end'
 
 validate_source_branch() {
   local branch_name=$1
@@ -473,19 +501,35 @@ while IFS= read -r line || [[ -n "$line" ]]; do
   entry_pr=
   if [[ "$line" =~ \#[[:space:]]*PR[[:space:]]*\#([1-9][0-9]*)([[:space:]]|$) ]]; then
     entry_pr=${BASH_REMATCH[1]}
+  fi
+  if [[ -n "${updated_prs[$entry]+present}" ]]; then
+    load_pr "${updated_prs[$entry]}"
+    [[ "$pr_state" == OPEN && "$pr_head_owner" == "$expected_pr_owner" && "$pr_head_branch" == "$entry" ]] ||
+      fail "replacement PR #${updated_prs[$entry]} must be open and belong to $expected_pr_owner/$entry"
+    validate_source_branch "$entry"
+    printf 'Updating %s: PR #%s -> #%s.\n' "$entry" "${entry_pr:-none}" "${updated_prs[$entry]}"
+    entry_pr=${updated_prs[$entry]}
+    line="$entry # PR #$entry_pr # reviewed-main:$parsed_reviewed_main # reviewed-head:$parsed_reviewed_head"
+  fi
+  if [[ -n "$entry_pr" ]]; then
     [[ -z "${seen_manifest_prs[$entry_pr]+present}" ]] ||
       fail "duplicate PR in manifest: #$entry_pr"
     seen_manifest_prs[$entry_pr]=1
 
     load_pr "$entry_pr"
+    [[ "$pr_head_owner" == "$expected_pr_owner" && "$pr_head_branch" == "$entry" ]] ||
+      fail "PR #$entry_pr does not belong to $expected_pr_owner/$entry; use --update-pr explicitly"
     if [[ "$pr_state" == "MERGED" ]]; then
       [[ -n "$pr_merge_commit" ]] || fail "merged PR #$entry_pr has no merge commit"
-      if ! git merge-base --is-ancestor "$pr_merge_commit" "$base_branch"; then
+      if git merge-base --is-ancestor "$pr_merge_commit" "$base_branch"; then
+        printf 'Removing %s: upstream PR #%s is merged into %s.\n' "$entry" "$entry_pr" "$base_branch"
+        automatically_removed_branches[$entry]=1
+        continue
+      elif [[ -z "$frozen_main" ]]; then
         fail "PR #$entry_pr is merged but $base_branch does not contain $pr_merge_commit; sync main first"
+      else
+        printf 'Keeping %s: PR #%s merged after this run snapshot.\n' "$entry" "$entry_pr"
       fi
-      printf 'Removing %s: upstream PR #%s is merged into %s.\n' "$entry" "$entry_pr" "$base_branch"
-      automatically_removed_branches[$entry]=1
-      continue
     fi
   fi
 
@@ -500,6 +544,10 @@ while IFS= read -r line || [[ -n "$line" ]]; do
   fi
   output_lines+=("$line")
 done <"$manifest_path"
+
+for branch_name in "${!updated_prs[@]}"; do
+  [[ -n "${branch_indexes[$branch_name]+present}" ]] || fail "cannot update PR for unlisted branch: $branch_name"
+done
 
 for branch_name in "${removal_branches[@]}"; do
   if [[ -n "${automatically_removed_branches[$branch_name]+present}" ]]; then
@@ -586,6 +634,10 @@ declare -A review_main_starts=()
 for branch_name in "${!branch_indexes[@]}"; do
   line_index=${branch_indexes[$branch_name]}
   current_branch_heads[$branch_name]=$(git rev-parse "$branch_name")
+  if [[ -n "$frozen_main" && -z "${dropped_line_indexes[$line_index]+present}" ]]; then
+    paseo_assert_frozen_ancestry "$repo_root" "$frozen_main" "${current_branch_heads[$branch_name]}" "$branch_name" ||
+      fail 'overlay is outside the main snapshot'
+  fi
   if [[ -n "${newly_added_branches[$branch_name]+present}" ]] ||
     [[ "${branch_reviewed_mains[$branch_name]}" != "$base_head" ]] ||
     [[ "${branch_reviewed_heads[$branch_name]}" != "${current_branch_heads[$branch_name]}" ]]; then
@@ -606,6 +658,21 @@ fi
 if ((${#review_branches[@]} > 0)); then
   mapfile -t review_branches < <(printf '%s\n' "${review_branches[@]}" | sort)
 fi
+
+verify_frozen_inputs() {
+  [[ -n "$frozen_main" ]] || return 0
+  local branch_name line_index
+  paseo_assert_frozen_main "$repo_root" "$frozen_main" || fail 'frozen main validation failed'
+  [[ "$(git rev-parse --verify "refs/heads/$persistent_base_branch" 2>/dev/null || true)" == "$persistent_base_head" ]] ||
+    fail 'rw-base moved during manifest evaluation'
+  for branch_name in "${!current_branch_heads[@]}"; do
+    [[ "$(git rev-parse "$branch_name")" == "${current_branch_heads[$branch_name]}" ]] || fail "$branch_name moved during manifest evaluation"
+    line_index=${branch_indexes[$branch_name]}
+    [[ -z "${dropped_line_indexes[$line_index]+present}" ]] || continue
+    paseo_assert_frozen_ancestry "$repo_root" "$frozen_main" "${current_branch_heads[$branch_name]}" "$branch_name" ||
+      fail 'overlay is outside the main snapshot'
+  done
+}
 
 if [[ -n "$accept_main_review" ]]; then
   declare -A required_expected_heads=()
@@ -745,11 +812,15 @@ write_review_request() {
   )
 }
 
+if [[ -n "$frozen_main" && -n "$persistent_base_head" ]]; then
+  paseo_assert_frozen_ancestry "$repo_root" "$frozen_main" "$persistent_base_head" "$persistent_base_branch" ||
+    fail 'rw-base is outside the main snapshot'
+fi
 if ((check_mergeability)) &&
-  { [[ "$persistent_base_head" != "$base_head" ]] || ((${#review_branches[@]} > 0)) ||
+  { ((${#review_branches[@]} > 0)) ||
     [[ -n "$accept_main_review" ]] || ((${#removal_branches[@]} > 0)) ||
     ((${#automatically_removed_branches[@]} > 0)); }; then
-  check_candidate_mergeability
+  paseo_build_timed manifest:mergeability check_candidate_mergeability
 fi
 
 print_review_report() {
@@ -836,6 +907,7 @@ print_review_report() {
 if ((${#review_branches[@]} > 0)) && [[ -z "$accept_main_review" ]]; then
   review_request_path=$(write_review_request)
   print_review_report
+  verify_frozen_inputs
   printf 'PASEO_REVIEW_REQUEST_FILE=%s\n' "$review_request_path"
   printf 'Accept the frozen coordinates with --accept-review-request %q.\n' "$review_request_path"
   exit 3
@@ -864,6 +936,7 @@ done >"$proposed_manifest"
 
 # Recheck immediately before any manifest result is accepted. This catches refs
 # that moved while PR metadata and semantic ranges were being evaluated.
+verify_frozen_inputs
 verify_accepted_ref_tips
 
 if cmp --silent "$manifest_path" "$proposed_manifest"; then
@@ -883,6 +956,7 @@ chmod --reference="$manifest_path" "$proposed_manifest"
 # Keep the final ref check adjacent to the atomic manifest replacement. The
 # earlier check protects comparison/reporting; this one closes that reporting
 # window before accepted coordinates are persisted.
+verify_frozen_inputs
 verify_accepted_ref_tips
 mv -- "$proposed_manifest" "$manifest_path"
 trap - EXIT

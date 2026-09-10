@@ -13,6 +13,7 @@ candidate passes repository checks.
   --build-root PATH       Worktree used to assemble and check candidates.
   --base-candidate REF    Use an already prepared rw-base candidate instead of
                           merging main into the current rw-base.
+  --frozen-main SHA       Build this run snapshot even if tracking refs advance.
   --dry-run               Verify candidates without moving rw-base or rw-main.
   --push                  Atomically update origin/rw-base and origin/rw-main.
   --help                  Show this help.
@@ -23,8 +24,15 @@ dry_run=0
 push_target=0
 build_root_arg=
 base_candidate_arg=
+frozen_main=
 while (($# > 0)); do
   case "$1" in
+    --frozen-main)
+      (($# >= 2)) || exit 2
+      [[ -z "$frozen_main" && "$2" =~ ^[0-9a-f]{40}$ ]] || exit 2
+      frozen_main=$2
+      shift 2
+      ;;
     --build-root)
       (($# >= 2)) || {
         printf '%s\n' 'Missing value for --build-root.' >&2
@@ -161,7 +169,7 @@ cd "$build_root"
 [[ -z "$(git status --porcelain)" ]] || fail "build worktree is not clean: $build_root"
 printf '%s\n' 'Activating repository-pinned mise toolchain for readiness validation...'
 command -v mise >/dev/null || fail "mise is required"
-mise install
+paseo_build_timed readiness:toolchain mise install
 eval "$(mise activate bash)"
 starting_branch=$(git symbolic-ref --quiet --short HEAD) || fail "detached HEAD is not supported"
 starting_head=$(git rev-parse HEAD)
@@ -170,6 +178,10 @@ server_build_stamp="$build_root/.dev/build-paseo-server-build.env"
 git show-ref --verify --quiet "refs/heads/$upstream_branch" ||
   fail "missing local branch: $upstream_branch"
 main_head=$(git rev-parse "$upstream_branch")
+control_head_before=$(git -C "$control_root" rev-parse HEAD)
+if [[ -n "$frozen_main" ]]; then
+  paseo_assert_frozen_main "$build_root" "$frozen_main" || fail 'frozen main validation failed'
+else
 for mirror_ref in refs/remotes/upstream/main refs/remotes/origin/main; do
   if git show-ref --verify --quiet "$mirror_ref"; then
     mirror_head=$(git rev-parse "$mirror_ref")
@@ -177,6 +189,7 @@ for mirror_ref in refs/remotes/upstream/main refs/remotes/origin/main; do
       fail "$upstream_branch differs from $mirror_ref; synchronize main first"
   fi
 done
+fi
 
 base_before=$(git rev-parse --verify "$base_branch" 2>/dev/null || true)
 if [[ -z "$base_candidate_arg" && -z "$base_before" ]]; then
@@ -185,6 +198,7 @@ fi
 
 declare -a integration_branches=()
 declare -A seen_branches=()
+declare -A integration_heads=()
 while IFS= read -r line || [[ -n "$line" ]]; do
   entry=${line%%#*}
   entry=${entry#"${entry%%[![:space:]]*}"}
@@ -210,6 +224,11 @@ while IFS= read -r line || [[ -n "$line" ]]; do
   fi
 
   branch_head=$(git rev-parse "$entry")
+  integration_heads[$entry]=$branch_head
+  if [[ -n "$frozen_main" ]]; then
+    paseo_assert_frozen_ancestry "$build_root" "$frozen_main" "$branch_head" "$entry" ||
+      fail 'overlay is outside the main snapshot'
+  fi
   [[ "$entry_reviewed_main" == "$main_head" ]] ||
     fail "$entry has not been reviewed against $upstream_branch $main_head (manifest: $entry_reviewed_main)"
   [[ "$entry_reviewed_head" == "$branch_head" ]] ||
@@ -264,16 +283,25 @@ if [[ -n "$base_candidate_arg" ]]; then
   git cat-file -e "$base_candidate_arg^{commit}" 2>/dev/null ||
     fail "base candidate is not a commit: $base_candidate_arg"
   base_candidate_head=$(git rev-parse "$base_candidate_arg")
+  if [[ -n "$frozen_main" ]]; then
+    paseo_assert_frozen_ancestry "$build_root" "$frozen_main" "$base_candidate_head" 'base candidate' ||
+      fail 'base candidate is outside the main snapshot'
+  fi
   git merge-base --is-ancestor "$main_head" "$base_candidate_head" ||
     fail "base candidate does not contain current main $main_head"
 else
+  if [[ -n "$frozen_main" ]]; then
+    paseo_assert_frozen_ancestry "$build_root" "$frozen_main" "$base_before" "$base_branch" ||
+      fail 'rw-base is outside the main snapshot'
+  fi
   git switch --quiet --create "$base_candidate_branch" "$base_branch"
   created_base_candidate=1
   if ! git merge-base --is-ancestor "$main_head" HEAD; then
     if git merge-base --is-ancestor HEAD "$main_head"; then
-      git merge --ff-only "$upstream_branch"
+      git merge --ff-only "$main_head"
     else
-      GIT_MERGE_AUTOEDIT=no git merge --no-ff --no-edit "$upstream_branch"
+      GIT_MERGE_AUTOEDIT=no git merge --no-ff --no-edit \
+        -m "Merge branch 'main' into $base_candidate_branch" "$main_head"
     fi
   fi
   base_candidate_head=$(git rev-parse HEAD)
@@ -290,7 +318,7 @@ target_matches_inputs() {
   for ((merge_index = ${#integration_branches[@]} - 1; merge_index >= 0; merge_index--)); do
     read -r -a commit_and_parents < <(git rev-list --parents -n 1 "$current_commit")
     [[ ${#commit_and_parents[@]} -eq 3 ]] || return 1
-    branch_head=$(git rev-parse "${integration_branches[$merge_index]}")
+    branch_head=${integration_heads[${integration_branches[$merge_index]}]}
     [[ "${commit_and_parents[2]}" == "$branch_head" ]] || return 1
     current_commit=${commit_and_parents[1]}
   done
@@ -336,7 +364,7 @@ install_dependencies() {
     --new-ref "$new_ref" \
     --state-file "$refresh_state"
   printf '%s\n' 'Installing dependencies for the selected product tree...'
-  if npm install 2>&1 | tee "$install_log"; then
+  if paseo_build_timed readiness:npm-install npm install 2>&1 | tee "$install_log"; then
     pipeline_status=("${PIPESTATUS[@]}")
   else
     pipeline_status=("${PIPESTATUS[@]}")
@@ -368,7 +396,30 @@ verify_installed_patches() {
 }
 
 refresh_expo_router_types() {
-  node "$expo_router_types_helper" --root "$build_root"
+  paseo_build_timed readiness:router-types node "$expo_router_types_helper" --root "$build_root"
+}
+
+verify_candidate_inputs() {
+  local branch_name
+  [[ "$(git -C "$control_root" rev-parse "refs/heads/$packaging_branch")" == "$control_head_before" ]] || fail 'control HEAD moved during readiness'
+  if [[ "$control_root" != "$build_root" ]]; then
+    [[ "$(git -C "$control_root" rev-parse HEAD)" == "$control_head_before" ]] || fail 'control checkout moved during readiness'
+    [[ -z "$(git -C "$control_root" status --porcelain)" ]] || fail 'control worktree changed during readiness'
+  fi
+  [[ "$(git rev-parse "$upstream_branch")" == "$main_head" ]] || fail 'main moved during readiness'
+  [[ "$(git rev-parse --verify "refs/heads/$base_branch" 2>/dev/null || true)" == "$base_before" ]] || fail 'rw-base moved during readiness'
+  [[ "$(git rev-parse --verify "$target_branch" 2>/dev/null || true)" == "$target_before" ]] || fail 'rw-main moved during readiness'
+  if [[ -n "$frozen_main" ]]; then
+    paseo_assert_frozen_main "$build_root" "$frozen_main" || fail 'frozen main validation failed'
+  fi
+  for branch_name in "${integration_branches[@]}"; do
+    [[ "$(git rev-parse "$branch_name")" == "${integration_heads[$branch_name]}" ]] || fail "$branch_name moved during readiness"
+    require_clean_worktree "$branch_name"
+    if [[ -n "$frozen_main" ]]; then
+      paseo_assert_frozen_ancestry "$build_root" "$frozen_main" "${integration_heads[$branch_name]}" "$branch_name" ||
+        fail 'overlay is outside the main snapshot'
+    fi
+  done
 }
 
 printf 'Upstream: %s (%s)\n' "$upstream_branch" "$(git rev-parse --short "$main_head")"
@@ -392,6 +443,7 @@ if ((!dry_run)) && ((base_rebuilt == 0)) && target_matches_inputs; then
     verify_installed_patches
   fi
   refresh_expo_router_types
+  verify_candidate_inputs
   if ((push_target)); then
     push_candidates "$base_candidate_head" "$target_before"
     printf 'Updated origin/%s and origin/%s atomically.\n' "$base_branch" "$target_branch"
@@ -414,7 +466,8 @@ created_target_candidate=1
 
 for branch_name in "${integration_branches[@]}"; do
   printf 'Merging overlay %s...\n' "$branch_name"
-  GIT_MERGE_AUTOEDIT=no git merge --no-ff --no-edit "$branch_name"
+  GIT_MERGE_AUTOEDIT=no git merge --no-ff --no-edit \
+    -m "Merge branch '$branch_name' into $target_candidate_branch" "${integration_heads[$branch_name]}"
 done
 
 validate_patch_registry
@@ -427,22 +480,26 @@ fi
 refresh_expo_router_types
 
 validation_mode=full
+stamp_check_started=$SECONDS
+paseo_build_stage 'readiness:stamp-check:start'
 if paseo_verify_build_stamp "$build_root" "$server_build_stamp" tree readiness HEAD; then
+  paseo_build_stage "readiness:stamp-check:end exit=0 elapsed=$((SECONDS - stamp_check_started))s"
   validation_mode=trusted-tree-reuse
   printf 'Reusing trusted readiness validation for candidate tree %s.\n' \
     "$(git rev-parse --short HEAD^{tree})"
 else
+  paseo_build_stage "readiness:stamp-check:end exit=1 reason=${PASEO_BUILD_STAMP_MISS_REASON:-unknown} elapsed=$((SECONDS - stamp_check_started))s"
   printf 'Readiness stamp miss (%s); refreshing generated workspace declarations...\n' \
     "${PASEO_BUILD_STAMP_MISS_REASON:-unknown}"
-  npm run build:server
+  paseo_build_timed readiness:build-server npm run build:server
 
   printf '%s\n' 'Running repository checks...'
-  npm run format:check
-  npm run typecheck
-  npm run lint
+  paseo_build_timed readiness:format-check npm run format:check
+  paseo_build_timed readiness:typecheck npm run typecheck
+  paseo_build_timed readiness:lint npm run lint
 fi
 [[ -z "$(git status --porcelain)" ]] || fail "repository checks left tracked or untracked changes"
-if paseo_write_build_stamp "$build_root" "$server_build_stamp" readiness HEAD; then
+if paseo_build_timed readiness:stamp-write paseo_write_build_stamp "$build_root" "$server_build_stamp" readiness HEAD; then
   printf 'PASEO_SERVER_BUILD_STAMP_FILE=%s\n' "$server_build_stamp"
 else
   rm -f -- "$server_build_stamp"
@@ -454,6 +511,7 @@ printf 'PASEO_RW_MAIN_VALIDATION_MODE=%s\n' "$validation_mode"
 
 target_candidate_head=$(git rev-parse HEAD)
 printf 'Final candidate: %s\n' "$target_candidate_head"
+verify_candidate_inputs
 
 if ((dry_run)); then
   git switch --quiet "$starting_branch"

@@ -612,6 +612,44 @@ test("runs the complete three-platform artifact chain from one ready state", () 
   });
 });
 
+test("links artifact stages and results to the original request including preflight time", () => {
+  withFixture({}, (fixture) => {
+    const parent = path.join(fixture.buildRoot, ".dev/build-paseo-runs/original-request");
+    mkdirSync(parent, { recursive: true });
+    const requestedAt = Math.floor(Date.now() / 1000) - 600;
+    const frozenAt = requestedAt + 20;
+    const main = git(fixture.controlRoot, "rev-parse", "main");
+    writeFileSync(path.join(parent, "requested-at"), `${requestedAt}\n`);
+    writeFileSync(path.join(parent, "main.snapshot"), `${main} ${frozenAt}\n`);
+    writeFileSync(
+      fixture.preflightState,
+      `${readFileSync(fixture.preflightState, "utf8")}paseo_build_run_id=original-request\npaseo_build_requested_at=${requestedAt}\npaseo_build_frozen_at=${frozenAt}\n`,
+    );
+    const result = runBuild(fixture, "linked-artifacts", ["--target", "server"]);
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.equal(
+      result.stdout.match(/^PASEO_BUILD_REQUEST_STAGE_LOG=(.+)$/m)?.[1],
+      path.join(parent, "preflight-stages.log"),
+    );
+    assert.equal(
+      result.stdout.match(/^PASEO_BUILD_STAGE_LOG=(.+)$/m)?.[1],
+      path.join(fixture.buildRoot, ".dev/linked-artifacts/stages.log"),
+    );
+    const log = readFileSync(path.join(parent, "preflight-stages.log"), "utf8");
+    assert.match(log, /artifacts:start/);
+    assert.match(log, /server:.*build workspace/);
+    assert.match(log, /artifacts:end exit=0/);
+    const state = readFileSync(
+      path.join(fixture.buildRoot, ".dev/linked-artifacts/result.env"),
+      "utf8",
+    );
+    assert.match(state, /paseo_build_request_id=original-request/);
+    assert.match(state, new RegExp(`paseo_build_snapshot_main=${main}`));
+    const total = Number(state.match(/^paseo_build_request_total_seconds=(\d+)$/m)[1]);
+    assert.ok(total >= 600, state);
+  });
+});
+
 test("builds only the Windows artifact while retaining its server prerequisites", () => {
   withFixture({}, (fixture) => {
     const result = runBuild(fixture, "windows-only", ["--target", "desktop"], { ANDROID_HOME: "" });
@@ -1187,6 +1225,36 @@ test("rejects incomplete or failed resource summaries before distribution", () =
       assert.doesNotMatch(readFileSync(fixture.commandLog, "utf8"), /serve\|8800 10800/);
     });
   }
+});
+
+test("the artifact log writer never inherits the build lock", () => {
+  withFixture({}, (fixture) => {
+    const fdLog = path.join(fixture.fixtureRoot, "tee-fds.log");
+    writeExecutable(
+      path.join(path.dirname(fixture.npmPath), "tee"),
+      `#!/usr/bin/env bash
+set -euo pipefail
+inherited=0
+for fd in /proc/$$/fd/*; do
+  if [[ "$(readlink -- "$fd" 2>/dev/null || true)" == "$PASEO_TEST_BUILD_ROOT/.dev/build-paseo-artifacts.lock" ]]; then
+    inherited=1
+  fi
+done
+printf '%s\\n' "$inherited" >>"$PASEO_TEST_TEE_FD_LOG"
+exec /usr/bin/tee "$@"
+`,
+    );
+    const result = runBuild(fixture, "tee-lock-release", ["--target", "server"], {
+      PASEO_TEST_TEE_FD_LOG: fdLog,
+    });
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.equal(readFileSync(fdLog, "utf8"), "0\n");
+    assert.match(
+      readFileSync(path.join(fixture.buildRoot, ".dev/tee-lock-release/build.log"), "utf8"),
+      /PASEO_ARTIFACT_BUILD_STATUS=ready/,
+    );
+    assertBuildLockAvailable(fixture);
+  });
 });
 
 test("a long-lived download process does not inherit the build lock", () => {

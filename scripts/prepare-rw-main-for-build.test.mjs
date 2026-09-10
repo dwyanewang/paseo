@@ -190,6 +190,9 @@ if [[ "$*" == --version ]]; then
   printf '%s\\n' '10.9.0'
   exit 0
 fi
+if [[ "$*" == 'run typecheck' && -n "\${PASEO_TEST_TYPECHECK_EXIT:-}" ]]; then
+  exit "$PASEO_TEST_TYPECHECK_EXIT"
+fi
 if [[ "$*" == *build:server* ]]; then
   root=$PASEO_TEST_BUILD_ROOT
   for workspace in highlight relay protocol client server cli; do
@@ -227,6 +230,8 @@ fi
       PATH: `${binRoot}:${process.env.PATH}`,
     },
     fixtureRoot,
+    featureRoot,
+    upstreamRoot,
     miseCallLog,
     reviewedMain,
     stampFile: path.join(buildRoot, ".dev", "build-paseo-server-build.env"),
@@ -269,7 +274,7 @@ function withFixture(options, callback) {
 
 test("runs the unchanged source preflight and rw-main no-op as one command", () => {
   withFixture({}, (fixture) => {
-    const result = runPreflight(fixture);
+    const result = runPreflight(fixture, "--run-id", "no-op");
 
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /No-op: rw-base and rw-main already match every input/);
@@ -301,7 +306,7 @@ test("runs the unchanged source preflight and rw-main no-op as one command", () 
 
 test("records a readiness build stamp after rebuilding rw-main", () => {
   withFixture({ rebuildRwMain: true }, (fixture) => {
-    const result = runPreflight(fixture);
+    const result = runPreflight(fixture, "--run-id", "stamp");
 
     assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
     assert.match(readFileSync(fixture.commandLog, "utf8"), /npm\|run build:server/);
@@ -360,7 +365,7 @@ test("refuses preflight while the shared build lock is held and preserves the ol
     const readyPath = path.join(fixture.fixtureRoot, "preflight-lock-ready");
     const holder = startLockHolder(lockPath, readyPath);
     try {
-      const result = runPreflight(fixture);
+      const result = runPreflight(fixture, "--run-id", "locked");
       assert.equal(result.status, 1, `${result.stdout}\n${result.stderr}`);
       assert.match(result.stderr, /another build-paseo workflow already owns the build root/);
       assert.equal(readFileSync(fixture.stateFile, "utf8"), "previous-state\n");
@@ -370,9 +375,21 @@ test("refuses preflight while the shared build lock is held and preserves the ol
   });
 });
 
+test("missing run-id fails before syncing, creating a request, or deleting ready state", () => {
+  withFixture({ advanceUpstream: true }, (fixture) => {
+    writeFileSync(fixture.stateFile, "previous-state\n");
+    const result = runPreflight(fixture);
+    assert.equal(result.status, 2, `${result.stdout}\n${result.stderr}`);
+    assert.match(result.stderr, /--run-id is required/);
+    assert.equal(git(fixture.controlRoot, "rev-parse", "main"), fixture.reviewedMain);
+    assert.equal(readFileSync(fixture.stateFile, "utf8"), "previous-state\n");
+    assert.equal(existsSync(path.join(fixture.buildRoot, ".dev/build-paseo-runs")), false);
+  });
+});
+
 test("propagates semantic-review status before rebuilding rw-main", () => {
   withFixture({ advanceUpstream: true }, (fixture) => {
-    const result = runPreflight(fixture);
+    const result = runPreflight(fixture, "--run-id", "review-status");
 
     assert.equal(result.status, 3, result.stderr);
     assert.match(result.stdout, /Semantic review required before rebuilding rw-main/);
@@ -386,10 +403,163 @@ test("propagates semantic-review status before rebuilding rw-main", () => {
     const requestPath = reviewRequestPath(result);
     assert.equal(existsSync(requestPath), true);
 
-    const accepted = runPreflight(fixture, "--accept-review-request", requestPath);
+    const accepted = runPreflight(
+      fixture,
+      "--run-id",
+      "review-status",
+      "--no-fetch",
+      "--accept-review-request",
+      requestPath,
+    );
     assert.equal(accepted.status, 4, accepted.stderr);
     assert.match(accepted.stdout, /PASEO_PREFLIGHT_STATUS=manifest-changed/);
     assert.doesNotMatch(accepted.stdout, /PASEO_REBUILD_SECONDS=/);
     assert.equal(existsSync(fixture.stateFile), false);
   });
 }, 15_000);
+
+test("one request accepts and rebuilds its frozen main after another worktree fetches newer upstream", () => {
+  withFixture({ advanceUpstream: true }, (fixture) => {
+    const options = ["--run-id", "frozen-review", "--requested-at", "1700000000"];
+    const first = runPreflight(fixture, ...options);
+    assert.equal(first.status, 3, first.stderr);
+    const request = reviewRequestPath(first);
+    const updater = path.join(fixture.fixtureRoot, "upstream-updater");
+    writeFileSync(path.join(updater, "later.txt"), "later upstream\n");
+    git(updater, "add", "later.txt");
+    git(updater, "commit", "-m", "later upstream");
+    git(updater, "push", "origin", "main");
+    git(fixture.featureRoot, "fetch", "upstream");
+    const newerMain = git(updater, "rev-parse", "HEAD");
+
+    const runRoot = path.join(fixture.buildRoot, ".dev/build-paseo-runs");
+    const runsBefore = readdirSync(runRoot);
+    const omittedRun = runPreflight(fixture);
+    assert.equal(omittedRun.status, 2, omittedRun.stderr);
+    assert.match(omittedRun.stderr, /--run-id is required/);
+    assert.deepEqual(readdirSync(runRoot), runsBefore);
+    assert.equal(git(fixture.controlRoot, "rev-parse", "main"), fixture.upstreamMain);
+
+    const accidentalRefresh = runPreflight(fixture, ...options);
+    assert.equal(accidentalRefresh.status, 1);
+    assert.match(accidentalRefresh.stderr, /--no-fetch.*--refresh-main/);
+    assert.equal(git(fixture.controlRoot, "rev-parse", "main"), fixture.upstreamMain);
+
+    const accepted = runPreflight(
+      fixture,
+      ...options,
+      "--no-fetch",
+      "--accept-review-request",
+      request,
+    );
+    assert.equal(accepted.status, 4, `${accepted.stdout}\n${accepted.stderr}`);
+    git(fixture.controlRoot, "add", "dwyanewang/rw-main-branches.txt");
+    git(fixture.controlRoot, "commit", "-m", "accept review once");
+    const built = runPreflight(fixture, ...options, "--no-fetch");
+    assert.equal(built.status, 0, `${built.stdout}\n${built.stderr}`);
+    assert.equal(git(fixture.controlRoot, "rev-parse", "main"), fixture.upstreamMain);
+    assert.equal(
+      run(fixture.controlRoot, "git", ["merge-base", "--is-ancestor", newerMain, "rw-main"]).status,
+      1,
+    );
+    const runDir = path.join(fixture.buildRoot, ".dev/build-paseo-runs/frozen-review");
+    const log = readFileSync(path.join(runDir, "preflight-stages.log"), "utf8");
+    assert.match(log, /preflight:end exit=3/);
+    assert.match(log, /preflight:end exit=4/);
+    assert.match(log, /readiness:typecheck:end exit=0/);
+    assert.match(log, /preflight:end exit=0/);
+    assert.match(readFileSync(fixture.stateFile, "utf8"), /paseo_build_run_id=frozen-review/);
+    assert.equal(readFileSync(path.join(runDir, "requested-at"), "utf8").trim(), "1700000000");
+  });
+}, 30_000);
+
+test("no-fetch refuses an absent snapshot and removes old readiness without fetching", () => {
+  withFixture({ advanceUpstream: true }, (fixture) => {
+    writeFileSync(fixture.stateFile, "previous-state\n");
+    const result = runPreflight(fixture, "--run-id", "missing", "--no-fetch");
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /snapshot/);
+    assert.equal(existsSync(fixture.stateFile), false);
+    assert.equal(git(fixture.controlRoot, "rev-parse", "main"), fixture.reviewedMain);
+  });
+});
+
+test("an empty snapshot fails with an actionable error and preserves request history", () => {
+  withFixture({ advanceUpstream: true }, (fixture) => {
+    const runDir = path.join(fixture.buildRoot, ".dev/build-paseo-runs/empty-snapshot");
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(path.join(runDir, "requested-at"), "1700000000\n");
+    writeFileSync(path.join(runDir, "main.snapshot"), "");
+    writeFileSync(path.join(runDir, "preflight-stages.log"), "previous attempt\n");
+    writeFileSync(fixture.stateFile, "previous-state\n");
+    const result = runPreflight(fixture, "--run-id", "empty-snapshot", "--no-fetch");
+    assert.equal(result.status, 1, `${result.stdout}\n${result.stderr}`);
+    assert.match(result.stderr, /unreadable main snapshot/);
+    assert.equal(git(fixture.controlRoot, "rev-parse", "main"), fixture.reviewedMain);
+    assert.equal(existsSync(fixture.stateFile), false);
+    assert.equal(readFileSync(path.join(runDir, "requested-at"), "utf8"), "1700000000\n");
+    assert.equal(readFileSync(path.join(runDir, "main.snapshot"), "utf8"), "");
+    const log = readFileSync(path.join(runDir, "preflight-stages.log"), "utf8");
+    assert.match(log, /^previous attempt\n/);
+    assert.match(log, /preflight:end exit=1/);
+    assertBuildLockAvailable(fixture);
+  });
+});
+
+test("a rebased overlay cannot smuggle later upstream into a frozen request; explicit refresh requires new review", () => {
+  withFixture({ advanceUpstream: true }, (fixture) => {
+    const first = runPreflight(fixture, "--run-id", "ancestry");
+    assert.equal(first.status, 3, first.stderr);
+    const oldRequest = reviewRequestPath(first);
+    const updater = path.join(fixture.fixtureRoot, "upstream-updater");
+    writeFileSync(path.join(updater, "later.txt"), "newer upstream\n");
+    git(updater, "add", "later.txt");
+    git(updater, "commit", "-m", "newer upstream");
+    git(updater, "push", "origin", "main");
+    git(fixture.featureRoot, "fetch", "upstream");
+    git(fixture.featureRoot, "rebase", "upstream/main");
+    const baseBefore = git(fixture.controlRoot, "rev-parse", "rw-base");
+    const rejected = runPreflight(fixture, "--run-id", "ancestry", "--no-fetch");
+    assert.equal(rejected.status, 1);
+    assert.match(rejected.stderr, /feature\/one introduces upstream .* beyond frozen main/);
+    assert.equal(git(fixture.controlRoot, "rev-parse", "rw-base"), baseBefore);
+    assert.equal(existsSync(fixture.stateFile), false);
+
+    const refreshed = runPreflight(fixture, "--run-id", "ancestry", "--refresh-main");
+    assert.equal(refreshed.status, 3, `${refreshed.stdout}\n${refreshed.stderr}`);
+    assert.notEqual(reviewRequestPath(refreshed), oldRequest);
+    const stale = runPreflight(
+      fixture,
+      "--run-id",
+      "ancestry",
+      "--no-fetch",
+      "--accept-review-request",
+      oldRequest,
+    );
+    assert.equal(stale.status, 1);
+    assert.match(stale.stderr, /must equal current main/);
+  });
+}, 30_000);
+
+test("failed readiness keeps stage logs and the real exit code, but not a ready state or moved product refs", () => {
+  withFixture({ rebuildRwMain: true }, (fixture) => {
+    const base = git(fixture.controlRoot, "rev-parse", "rw-base");
+    const target = git(fixture.controlRoot, "rev-parse", "rw-main");
+    fixture.env.PASEO_TEST_TYPECHECK_EXIT = "7";
+    const result = runPreflight(fixture, "--run-id", "failed-check");
+    assert.equal(result.status, 7, `${result.stdout}\n${result.stderr}`);
+    const log = readFileSync(
+      path.join(fixture.buildRoot, ".dev/build-paseo-runs/failed-check/preflight-stages.log"),
+      "utf8",
+    );
+    assert.match(log, /readiness:build-server:end exit=0/);
+    assert.match(log, /readiness:typecheck:end exit=7/);
+    assert.match(log, /preflight:end exit=7/);
+    assert.doesNotMatch(log, /readiness:lint:start/);
+    assert.equal(existsSync(fixture.stateFile), false);
+    assert.equal(git(fixture.controlRoot, "rev-parse", "rw-base"), base);
+    assert.equal(git(fixture.controlRoot, "rev-parse", "rw-main"), target);
+    assert.equal(git(fixture.buildRoot, "branch", "--show-current"), "rw-main");
+    assertBuildLockAvailable(fixture);
+  });
+}, 30_000);

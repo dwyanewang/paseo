@@ -75,9 +75,11 @@ function createFixture({
   conflictingOverlay = false,
   patchEquivalent = false,
   prState,
+  prIdentity = { branch: "feature/one", owner: "dwyanewang" },
   secondBranch = false,
   secondPending = false,
   secondPr = false,
+  replacementPr,
 } = {}) {
   const root = mkdtempSync(path.join(tmpdir(), "paseo-rw-main-review-"));
   git(root, "init", "-b", "main");
@@ -182,8 +184,8 @@ function createFixture({
     [
       "1",
       prState ?? "OPEN",
-      "feature/one",
-      "dwyanewang",
+      prIdentity.branch,
+      prIdentity.owner,
       mergeCommit,
       "Feature one",
       "https://example.test/pr/1",
@@ -198,6 +200,17 @@ function createFixture({
       "",
       "Feature two",
       "https://example.test/pr/2",
+    ]);
+  }
+  if (replacementPr) {
+    ghRows.push([
+      "3",
+      "OPEN",
+      replacementPr.branch ?? "feature/one",
+      replacementPr.owner ?? "dwyanewang",
+      "",
+      "Replacement",
+      "https://example.test/pr/3",
     ]);
   }
   const ghOutput = ghRows
@@ -299,6 +312,109 @@ function withFixture(options, callback) {
     rmSync(fixture.root, { force: true, recursive: true });
   }
 }
+
+test("explicit PR remapping and semantic acceptance update the manifest once", () => {
+  withFixture({ prState: "MERGED", replacementPr: {} }, (fixture) => {
+    git(fixture.root, "update-ref", "refs/remotes/origin/feature/one", fixture.featureHead);
+    const before = readFileSync(fixture.manifestPath, "utf8");
+    const proposed = runSync(fixture, "--update-pr", "feature/one", "3");
+    assert.equal(proposed.status, 3, proposed.stderr);
+    assert.equal(readFileSync(fixture.manifestPath, "utf8"), before);
+    const accepted = runSync(
+      fixture,
+      "--update-pr",
+      "feature/one",
+      "3",
+      "--accept-review-request",
+      reviewRequestPath(proposed),
+    );
+    assert.equal(accepted.status, 0, accepted.stderr);
+    assert.match(
+      readFileSync(fixture.manifestPath, "utf8"),
+      new RegExp(
+        `feature/one # PR #3 # reviewed-main:${fixture.currentMain} # reviewed-head:${fixture.featureHead}`,
+      ),
+    );
+    assert.equal(readFileSync(fixture.ghCallLog, "utf8").trim().split("\n").length, 2);
+  });
+});
+
+test("PR remapping rejects a different head branch without changing the manifest", () => {
+  withFixture(
+    { prState: "CLOSED", replacementPr: { branch: "feature/someone-else" } },
+    (fixture) => {
+      const before = readFileSync(fixture.manifestPath, "utf8");
+      const result = runSync(fixture, "--update-pr", "feature/one", "3");
+      assert.equal(result.status, 1);
+      assert.match(
+        result.stderr,
+        /replacement PR #3 must be open and belong to dwyanewang\/feature\/one/,
+      );
+      assert.equal(readFileSync(fixture.manifestPath, "utf8"), before);
+    },
+  );
+});
+
+test.each([
+  { branch: "feature/renamed", owner: "dwyanewang" },
+  { branch: "feature/one", owner: "another-owner" },
+])(
+  "existing manifest PR identity mismatch is rejected without changing the manifest: %j",
+  (identity) => {
+    withFixture({ advanceMain: false, prState: "CLOSED", prIdentity: identity }, (fixture) => {
+      const before = readFileSync(fixture.manifestPath, "utf8");
+      const result = runSync(fixture, "--dry-run");
+      assert.equal(result.status, 1, `${result.stdout}\n${result.stderr}`);
+      assert.match(
+        result.stderr,
+        /PR #1 does not belong to dwyanewang\/feature\/one; use --update-pr explicitly/,
+      );
+      assert.equal(readFileSync(fixture.manifestPath, "utf8"), before);
+    });
+  },
+);
+
+test("a closed existing PR with matching owner and head remains a valid overlay", () => {
+  withFixture({ advanceMain: false, prState: "CLOSED" }, (fixture) => {
+    const before = readFileSync(fixture.manifestPath, "utf8");
+    const result = runSync(fixture, "--dry-run");
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.equal(readFileSync(fixture.manifestPath, "utf8"), before);
+  });
+});
+
+test("a PR merged after the frozen snapshot stays in this run's manifest", () => {
+  withFixture({ prState: "MERGED", advanceMain: false }, (fixture) => {
+    const laterTree = git(fixture.root, "rev-parse", "main^{tree}");
+    const later = git(
+      fixture.root,
+      "commit-tree",
+      laterTree,
+      "-p",
+      fixture.currentMain,
+      "-m",
+      "later upstream merge",
+    );
+    git(fixture.root, "update-ref", "refs/remotes/upstream/main", later);
+    const gh = path.join(fixture.root, ".git/test-bin/gh");
+    writeFileSync(gh, readFileSync(gh, "utf8").replace(fixture.currentMain, later));
+    const before = readFileSync(fixture.manifestPath, "utf8");
+    const result = runSync(fixture, "--frozen-main", fixture.currentMain);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /merged after this run snapshot/);
+    assert.equal(readFileSync(fixture.manifestPath, "utf8"), before);
+  });
+});
+
+test("a fully reviewed manifest does not repeat the temporary mergeability build", () => {
+  withFixture({ advanceMain: false }, (fixture) => {
+    git(fixture.root, "update-ref", "refs/heads/rw-base", fixture.featureHead);
+    const result = runSync(fixture, "--check-mergeability");
+    assert.equal(result.status, 0, result.stderr);
+    assert.doesNotMatch(result.stdout, /Mergeability preflight/);
+    assert.equal(git(fixture.root, "rev-parse", "rw-base"), fixture.featureHead);
+  });
+});
 
 test("keeps existing behavior when main has already been reviewed", () => {
   withFixture({ advanceMain: false }, (fixture) => {
@@ -670,6 +786,51 @@ test("rebuild rejects a changed branch head before merging or running npm", () =
     assert.doesNotMatch(result.stdout, /Merging|Refreshing|npm/);
   });
 });
+
+test("SHA-pinned rebuild merges retain main and overlay names in product history", () => {
+  withFixture({}, (fixture) => {
+    const base = git(
+      fixture.root,
+      "commit-tree",
+      `${fixture.reviewedMain}^{tree}`,
+      "-p",
+      fixture.reviewedMain,
+      "-m",
+      "persistent base feature",
+    );
+    git(fixture.root, "update-ref", "refs/heads/rw-base", base);
+    writeFileSync(
+      fixture.manifestPath,
+      readFileSync(fixture.manifestPath, "utf8").replace(
+        `reviewed-main:${fixture.reviewedMain}`,
+        `reviewed-main:${fixture.currentMain}`,
+      ),
+    );
+    git(fixture.root, "add", "dwyanewang/rw-main-branches.txt");
+    git(fixture.root, "commit", "-m", "accept current main");
+    const result = run(
+      fixture.root,
+      "bash",
+      ["dwyanewang/rebuild-rw-main.sh", "--build-root", fixture.root, "--dry-run"],
+      fixture.env,
+    );
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    // Dry-run cleanup removes candidate refs, but the reported commit remains readable.
+    const candidate = result.stdout.match(/^Final candidate: ([0-9a-f]{40})$/m)?.[1];
+    assert.notEqual(candidate, undefined, result.stdout);
+    assert.match(
+      git(fixture.root, "log", "-1", "--format=%s", candidate),
+      /Merge branch 'feature\/one' into rw-main-rebuild-/,
+    );
+    assert.match(
+      git(fixture.root, "log", "-1", "--format=%s", `${candidate}^1`),
+      /Merge branch 'main' into rw-base-sync-/,
+    );
+    assert.equal(git(fixture.root, "rev-parse", `${candidate}^2`), fixture.featureHead);
+    assert.equal(git(fixture.root, "rev-parse", `${candidate}^1^2`), fixture.currentMain);
+    assert.equal(git(fixture.root, "rev-parse", "rw-base"), base);
+  });
+}, 30_000);
 
 test("rebuild refreshes workspace declarations before repository checks", () => {
   withFixture({ advanceMain: false }, (fixture) => {

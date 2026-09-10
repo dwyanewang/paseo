@@ -34,6 +34,7 @@ repo_root=$(git -C "$script_dir" rev-parse --show-toplevel 2>/dev/null) || {
 repo_root=$(realpath -e -- "$repo_root")
 
 vitest_files=(
+  scripts/build-paseo-state.test.mjs
   scripts/build-paseo-artifacts.test.mjs
   scripts/prepare-rw-main-for-build.test.mjs
   scripts/refresh-expo-router-types.test.mjs
