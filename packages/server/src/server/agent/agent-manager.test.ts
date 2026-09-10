@@ -7304,6 +7304,64 @@ test("dedicated history reads use only the in-memory timeline", async () => {
   }
 });
 
+test("clearAgentAttention publishes archived attention changes without loading history", async () => {
+  const agentId = "00000000-0000-4000-8000-000000000132";
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-unloaded-attention-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const client = new TestAgentClient();
+  const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+  const before: StoredAgentRecord = {
+    id: agentId,
+    provider: "codex",
+    cwd: workdir,
+    createdAt: "2026-08-30T00:00:00.000Z",
+    updatedAt: "2026-08-30T00:00:01.000Z",
+    labels: {},
+    lastStatus: "closed",
+    config: null,
+    persistence: {
+      provider: "codex",
+      sessionId: "unloaded-attention-session",
+      metadata: { cwd: workdir },
+    },
+    requiresAttention: true,
+    attentionReason: "error",
+    attentionTimestamp: "2026-08-30T00:00:01.000Z",
+    archivedAt: "2026-08-30T00:00:02.000Z",
+  };
+  const stateEvents: AgentManagerEvent[] = [];
+  const unsubscribe = manager.subscribe((event) => stateEvents.push(event), {
+    agentId,
+    replayState: false,
+  });
+
+  try {
+    await storage.upsert(before);
+    await manager.clearAgentAttention(agentId);
+
+    const stored = await storage.get(agentId);
+    expectArchivedAgentRecord(stored, "closed");
+    expect(stored?.archivedAt).toBe(before.archivedAt);
+    expect(manager.getAgent(agentId)).toBeNull();
+    expect(manager.getHistorySnapshot(agentId)).toBeNull();
+    expect(stateEvents).toEqual([
+      expect.objectContaining({
+        type: "agent_state",
+        agent: expect.objectContaining({
+          id: agentId,
+          lifecycle: "closed",
+          attention: { requiresAttention: false },
+        }),
+      }),
+    ]);
+    expect(client.createdConfigs).toEqual([]);
+    expect(client.resumeOverrides).toEqual([]);
+  } finally {
+    unsubscribe();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("clearAgentAttention clears archived history snapshots without resuming a provider runtime", async () => {
   const agentId = "00000000-0000-4000-8000-000000000131";
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-archived-attention-"));
