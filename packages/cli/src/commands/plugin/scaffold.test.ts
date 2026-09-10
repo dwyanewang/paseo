@@ -515,32 +515,30 @@ export const forgeServerProvider = defineForgeServerProvider({
 `,
       ),
       writeFile(
-        path.join(directory, "index.ts"),
-        `import type { PluginContext } from "@getpaseo/plugin";
+        path.join(directory, "index.client.tsx"),
+        `import type { PluginClientContext } from "@getpaseo/plugin/client";
 import { forgeClientProvider } from "./forge.client";
+
+export default function contribute(client: PluginClientContext) {
+  client.addForgeClientProvider(forgeClientProvider);
+  return () => {};
+}
+`,
+      ),
+      writeFile(
+        path.join(directory, "index.server.ts"),
+        `import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { forgeServerProvider } from "./forge.server";
 
-export default function contribute(plugin: PluginContext) {
-  plugin.addForgeClientProvider(forgeClientProvider);
-  plugin.addForgeServerProvider(forgeServerProvider);
+export default function contribute(server: PluginServerContext) {
+  server.addForgeServerProvider(forgeServerProvider);
   return () => {};
 }
 `,
       ),
     ]);
 
-    const configPath = path.join(directory, "tsconfig.json");
-    const loaded = ts.readConfigFile(configPath, ts.sys.readFile);
-    const parsed = ts.parseJsonConfigFileContent(loaded.config, ts.sys, directory);
-    const diagnostics = ts.getPreEmitDiagnostics(
-      ts.createProgram(parsed.fileNames, parsed.options),
-    );
-
-    expect(
-      diagnostics.map((diagnostic) =>
-        ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n"),
-      ),
-    ).toEqual([]);
+    await expect(typecheckPlugin(directory)).resolves.toBeUndefined();
   }, 20_000);
 
   it("refuses to write into a non-empty directory", async () => {
