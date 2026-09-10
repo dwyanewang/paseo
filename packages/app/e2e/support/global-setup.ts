@@ -13,6 +13,21 @@ export interface WaitForServerOptions {
   getRecentOutput?: () => string;
 }
 
+export interface MetroWarmupOptions {
+  childProcess?: ChildProcess | null;
+  getRecentOutput?: () => string;
+  reportProgress?: (message: string) => void;
+  timeoutMs?: number;
+}
+
+interface MetroWarmupAssetArgs extends MetroWarmupOptions {
+  deadline: number;
+  phase: "bundle" | "document";
+  startedAt: number;
+  timeoutMs: number;
+  url: URL;
+}
+
 type ServerProbe = (host: string, port: number) => Promise<void>;
 
 const RESERVED_LOCAL_PORTS = new Set([
@@ -122,13 +137,52 @@ export async function waitForMetro(port: number, options: WaitForServerOptions):
   await waitForServer(port, options, probeMetro);
 }
 
-export async function warmMetro(port: number): Promise<void> {
-  const origin = `http://127.0.0.1:${port}`;
-  const documentResponse = await fetch(origin, { signal: AbortSignal.timeout(120_000) });
-  if (!documentResponse.ok) {
-    throw new Error(`Metro document warmup failed with HTTP ${documentResponse.status}`);
+function describeProcess(childProcess?: ChildProcess | null): string {
+  if (!childProcess) return "unavailable";
+  if (childProcess.exitCode !== null) return `exit-${childProcess.exitCode}`;
+  if (childProcess.signalCode !== null) return `signal-${childProcess.signalCode}`;
+  return childProcess.pid ? `running-pid-${childProcess.pid}` : "running-pid-unavailable";
+}
+
+async function fetchMetroWarmupAsset(args: MetroWarmupAssetArgs): Promise<Uint8Array> {
+  const phaseStartedAt = Date.now();
+  const remainingMs = Math.max(1, args.deadline - phaseStartedAt);
+  args.reportProgress?.(
+    `phase=${args.phase} status=start url=${args.url.toString()} remaining-ms=${remainingMs}`,
+  );
+  try {
+    const response = await fetch(args.url, { signal: AbortSignal.timeout(remainingMs) });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    const payload = new Uint8Array(await response.arrayBuffer());
+    args.reportProgress?.(
+      `phase=${args.phase} status=complete url=${args.url.toString()} http-status=${response.status} bytes=${payload.byteLength} phase-elapsed-ms=${Date.now() - phaseStartedAt} total-elapsed-ms=${Date.now() - args.startedAt}`,
+    );
+    return payload;
+  } catch (error) {
+    const cause = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+    throw new Error(
+      `Metro warmup failed: phase=${args.phase} url=${args.url.toString()} phase-elapsed-ms=${Date.now() - phaseStartedAt} total-elapsed-ms=${Date.now() - args.startedAt} timeout-ms=${args.timeoutMs} process=${describeProcess(args.childProcess)} cause=${cause}.${formatRecentOutput(args.getRecentOutput)}`,
+      { cause: error },
+    );
   }
-  const document = await documentResponse.text();
+}
+
+export async function warmMetro(port: number, options: MetroWarmupOptions = {}): Promise<void> {
+  const origin = `http://127.0.0.1:${port}`;
+  const timeoutMs = options.timeoutMs ?? 120_000;
+  const startedAt = Date.now();
+  const deadline = startedAt + timeoutMs;
+  const documentBytes = await fetchMetroWarmupAsset({
+    ...options,
+    deadline,
+    phase: "document",
+    startedAt,
+    timeoutMs,
+    url: new URL(origin),
+  });
+  const document = new TextDecoder().decode(documentBytes);
   const scriptSources = [...document.matchAll(/<script[^>]+src=["']([^"']+)["']/g)].map(
     (match) => match[1],
   );
@@ -138,13 +192,14 @@ export async function warmMetro(port: number): Promise<void> {
   for (const source of scriptSources) {
     const scriptUrl = new URL(source, origin);
     if (scriptUrl.origin !== origin) continue;
-    const response = await fetch(scriptUrl, { signal: AbortSignal.timeout(120_000) });
-    if (!response.ok) {
-      throw new Error(
-        `Metro bundle warmup failed for ${scriptUrl.pathname}: HTTP ${response.status}`,
-      );
-    }
-    await response.arrayBuffer();
+    await fetchMetroWarmupAsset({
+      ...options,
+      deadline,
+      phase: "bundle",
+      startedAt,
+      timeoutMs,
+      url: scriptUrl,
+    });
   }
 }
 
@@ -200,7 +255,11 @@ export default async function globalSetup() {
       childProcess: metroProcess,
       getRecentOutput: metroOutput.dump,
     });
-    await warmMetro(metroPort);
+    await warmMetro(metroPort, {
+      childProcess: metroProcess,
+      getRecentOutput: metroOutput.dump,
+      reportProgress: (message) => process.stdout.write(`[e2e] Metro warmup ${message}\n`),
+    });
     process.env.E2E_METRO_PORT = String(metroPort);
     console.log(`[e2e] Metro warmed on port ${metroPort}`);
 

@@ -3,8 +3,14 @@ import { afterEach, expect, test } from "vitest";
 
 import { waitForMetro, warmMetro } from "../e2e/support/global-setup";
 
+interface MetroResponse {
+  body: string;
+  delayMs?: number;
+  status: number;
+}
+
 class MetroPort {
-  private readonly responses = new Map<string, { status: number; body: string }>();
+  private readonly responses = new Map<string, MetroResponse>();
   readonly requests: string[] = [];
 
   private constructor(
@@ -18,8 +24,15 @@ class MetroPort {
       const pathname = new URL(request.url ?? "/", "http://localhost").pathname;
       endpoint.requests.push(pathname);
       const served = endpoint.responses.get(pathname) ?? { status: 500, body: "fallback" };
-      response.writeHead(served.status, { "content-type": "text/plain" });
-      response.end(served.body);
+      const send = () => {
+        response.writeHead(served.status, { "content-type": "text/plain" });
+        response.end(served.body);
+      };
+      if (served.delayMs) {
+        setTimeout(send, served.delayMs);
+      } else {
+        send();
+      }
     });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const address = server.address();
@@ -41,6 +54,14 @@ class MetroPort {
       body: '<html><script src="/index.bundle?platform=web"></script></html>',
     });
     this.responses.set("/index.bundle", { status: 200, body: "compiled bundle" });
+  }
+
+  delayBundle(delayMs: number): void {
+    this.responses.set("/index.bundle", {
+      status: 200,
+      body: "compiled bundle",
+      delayMs,
+    });
   }
 
   async close(): Promise<void> {
@@ -79,8 +100,35 @@ test("Metro readiness rejects another HTTP listener on the selected port", async
 test("Metro warmup compiles the document's same-origin scripts before tests start", async () => {
   endpoint = await MetroPort.listen();
   endpoint.serveWarmableDocument();
+  const progress: string[] = [];
 
-  await warmMetro(endpoint.port);
+  await warmMetro(endpoint.port, { reportProgress: (message) => progress.push(message) });
 
   expect(endpoint.requests).toEqual(["/", "/index.bundle"]);
+  expect(progress).toHaveLength(4);
+  expect(progress[0]).toMatch(/^phase=document status=start /);
+  expect(progress[1]).toMatch(
+    /^phase=document status=complete .* http-status=200 bytes=63 phase-elapsed-ms=\d+ total-elapsed-ms=\d+$/,
+  );
+  expect(progress[2]).toMatch(/^phase=bundle status=start .*index\.bundle\?platform=web/);
+  expect(progress[3]).toMatch(
+    /^phase=bundle status=complete .* http-status=200 bytes=15 phase-elapsed-ms=\d+ total-elapsed-ms=\d+$/,
+  );
+});
+
+test("Metro warmup timeout identifies the phase, URL, process state, and recent output", async () => {
+  endpoint = await MetroPort.listen();
+  endpoint.serveWarmableDocument();
+  endpoint.delayBundle(100);
+
+  await expect(
+    warmMetro(endpoint.port, {
+      timeoutMs: 20,
+      getRecentOutput: () => "[stdout] Bundling JavaScript",
+    }),
+  ).rejects.toThrow(
+    new RegExp(
+      `phase=bundle url=http://127\\.0\\.0\\.1:${endpoint.port}/index\\.bundle\\?platform=web phase-elapsed-ms=\\d+ total-elapsed-ms=\\d+ timeout-ms=20 process=unavailable cause=TimeoutError:[\\s\\S]*Recent output:\\n\\[stdout\\] Bundling JavaScript`,
+    ),
+  );
 });
