@@ -217,6 +217,22 @@ function advanceUpstreamWithoutFetching(fixture, label) {
   return git(updaterRoot, "rev-parse", "HEAD");
 }
 
+function createRunSnapshot(
+  fixture,
+  runId,
+  {
+    main = git(fixture.controlRoot, "rev-parse", "main"),
+    requestedAt = 1_700_000_000,
+    frozenAt = requestedAt + 1,
+  } = {},
+) {
+  const runDir = path.join(fixture.buildRoot, ".dev", "build-paseo-runs", runId);
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(path.join(runDir, "requested-at"), `${requestedAt}\n`);
+  writeFileSync(path.join(runDir, "main.snapshot"), `${main} ${frozenAt}\n`);
+  return { frozenAt, main, requestedAt, runDir };
+}
+
 function advanceMainWithConflictingPatchAndCreateFeature(fixture, { sameTarget = false } = {}) {
   const updaterRoot = path.join(fixture.fixtureRoot, "upstream-patch-updater");
   git(fixture.fixtureRoot, "clone", fixture.upstreamRoot, updaterRoot);
@@ -388,6 +404,41 @@ test("writes a prepare-compatible ready state after a successful promotion", () 
       "install",
       "activate bash",
     ]);
+  });
+});
+
+test("run-bound lifecycle keeps the request main and writes its identity after upstream advances", () => {
+  withFixture({}, (fixture) => {
+    const runId = "frozen-lifecycle";
+    const request = createRunSnapshot(fixture, runId);
+    const newerMain = advanceUpstreamWithoutFetching(fixture, "later-upstream");
+    git(fixture.controlRoot, "fetch", "upstream");
+
+    const result = runManage(fixture, "promote", [
+      "--run-id",
+      runId,
+      "--state-file",
+      fixture.lifecycleState,
+      "--feature",
+      "feature-one",
+      "--branch",
+      "feature/one",
+    ]);
+
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.equal(git(fixture.controlRoot, "rev-parse", "main"), request.main);
+    assert.equal(git(fixture.controlRoot, "rev-parse", "origin/main"), request.main);
+    assert.equal(git(fixture.controlRoot, "rev-parse", "upstream/main"), newerMain);
+    assert.equal(existsSync(path.join(fixture.buildRoot, "later-upstream.txt")), false);
+    const state = readFileSync(fixture.lifecycleState, "utf8");
+    assert.match(state, new RegExp(`main_after=${request.main}`));
+    assert.match(state, new RegExp(`paseo_build_run_id=${runId}`));
+    assert.match(state, new RegExp(`paseo_build_requested_at=${request.requestedAt}`));
+    assert.match(state, new RegExp(`paseo_build_frozen_at=${request.frozenAt}`));
+    assert.match(
+      readFileSync(path.join(request.runDir, "preflight-stages.log"), "utf8"),
+      new RegExp(`lifecycle:main-reuse snapshot=${request.main}`),
+    );
   });
 });
 
@@ -680,6 +731,57 @@ test("refreshes upstream before continue and rejects a moved frozen main", () =>
     assert.equal(continued.status, 1);
     assert.match(continued.stderr, /upstream\/main moved since the operation was created/);
     assert.equal(existsSync(requestPath), true);
+  });
+}, 20_000);
+
+test("run-bound continue allows remote main to advance while preserving every frozen input", () => {
+  withFixture({ retainedFeatureUsesSharedPath: true }, (fixture) => {
+    promoteBoth(fixture);
+    const updaterRoot = path.join(fixture.fixtureRoot, "run-bound-upstream");
+    git(fixture.fixtureRoot, "clone", fixture.upstreamRoot, updaterRoot);
+    git(updaterRoot, "config", "user.name", "Upstream User");
+    git(updaterRoot, "config", "user.email", "upstream@example.com");
+    writeFileSync(path.join(updaterRoot, "shared.txt"), "upstream\n");
+    git(updaterRoot, "add", "shared.txt");
+    git(updaterRoot, "commit", "-m", "refactor: replace shared behavior");
+    git(updaterRoot, "push", "origin", "main");
+    git(fixture.controlRoot, "fetch", "upstream");
+    git(fixture.controlRoot, "branch", "-f", "main", "upstream/main");
+    git(fixture.controlRoot, "push", "origin", "main:main");
+    git(fixture.controlRoot, "fetch", "origin");
+
+    const runId = "run-bound-continue";
+    const request = createRunSnapshot(fixture, runId);
+    const result = runManage(fixture, "retire", [
+      "--run-id",
+      runId,
+      "--state-file",
+      fixture.lifecycleState,
+      "--feature",
+      "feature-one",
+      "--replacement",
+      "upstream-refactor",
+    ]);
+    assert.equal(result.status, 5, `${result.stdout}\n${result.stderr}`);
+    const requestPath = result.stdout.match(/^PASEO_RW_BASE_OPERATION=(.+)$/m)?.[1];
+    assert.notEqual(requestPath, undefined, result.stdout);
+    assert.match(readFileSync(requestPath, "utf8"), new RegExp(`operation_run_id=${runId}`));
+
+    const laterMain = advanceUpstreamWithoutFetching(fixture, "after-conflict");
+    git(fixture.controlRoot, "fetch", "upstream");
+    const operationWorktree = path.join(path.dirname(requestPath), "worktree");
+    writeFileSync(path.join(operationWorktree, "shared.txt"), "feature two\n");
+    git(operationWorktree, "add", "shared.txt");
+
+    const continued = runManage(fixture, "continue", ["--operation", requestPath]);
+    assert.equal(continued.status, 0, `${continued.stdout}\n${continued.stderr}`);
+    assert.equal(git(fixture.controlRoot, "rev-parse", "main"), request.main);
+    assert.equal(git(fixture.controlRoot, "rev-parse", "upstream/main"), laterMain);
+    assert.equal(readFileSync(path.join(fixture.buildRoot, "shared.txt"), "utf8"), "feature two\n");
+    const state = readFileSync(fixture.lifecycleState, "utf8");
+    assert.match(state, new RegExp(`paseo_build_run_id=${runId}`));
+    assert.match(state, new RegExp(`paseo_build_requested_at=${request.requestedAt}`));
+    assert.match(state, new RegExp(`paseo_build_frozen_at=${request.frozenAt}`));
   });
 }, 20_000);
 

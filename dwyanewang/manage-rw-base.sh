@@ -4,7 +4,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: bash dwyanewang/manage-rw-base.sh --build-root PATH [--push] [--state-file PATH] COMMAND [options]
+Usage: bash dwyanewang/manage-rw-base.sh --build-root PATH [--push] [--state-file PATH] [--run-id ID] COMMAND [options]
 
 Manage traceable local features on the persistent rw-base branch.
 
@@ -33,6 +33,8 @@ Global options:
   --build-root PATH  Dedicated rw-main product worktree (required).
   --push             Atomically push rw-base and rw-main after validation.
   --state-file PATH  Atomically write a prepare-compatible ready state on success.
+  --run-id ID        Bind a new lifecycle operation to an existing build request's
+                     frozen main snapshot. Not accepted by status/continue/abort.
   --adopt-commit REF Mark a currently UNMANAGED first-parent commit as explicitly
                      reconciled by this maintenance integration. Repeatable.
   --help             Show this help.
@@ -42,6 +44,7 @@ EOF
 build_root_arg=
 push_target=0
 state_file_arg=
+run_id_arg=
 command_name=
 operation_arg=
 replacement=
@@ -78,6 +81,18 @@ while (($# > 0)); do
         exit 2
       }
       state_file_arg=$2
+      shift 2
+      ;;
+    --run-id)
+      (($# >= 2)) || {
+        printf '%s\n' 'Missing value for --run-id.' >&2
+        exit 2
+      }
+      [[ -z "$run_id_arg" && "$2" =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]{0,95}$ ]] || {
+        printf '%s\n' '--run-id must be unique and contain only letters, digits, underscores, or hyphens.' >&2
+        exit 2
+      }
+      run_id_arg=$2
       shift 2
       ;;
     --feature)
@@ -480,6 +495,7 @@ if [[ "$command_name" == status ]]; then
   ((${#requested_features[@]} == 0 && ${#requested_branches[@]} == 0 && ${#requested_adoption_refs[@]} == 0)) ||
     fail "status does not accept feature, branch, or adoption options"
   [[ -z "$state_file" ]] || fail "status does not accept --state-file"
+  [[ -z "$run_id_arg" ]] || fail "status does not accept --run-id"
   print_status
   exit 0
 fi
@@ -492,6 +508,38 @@ flock -n "$lock_fd" || fail "another build-paseo workflow owns $build_root"
 
 operation_parent="$(dirname -- "$build_root")/.paseo-rw-base-operations"
 mkdir -p -- "$operation_parent"
+
+operation_mode=standalone
+operation_run_id=
+operation_requested_at=
+operation_frozen_at=
+request_stage_log=
+
+load_run_snapshot() {
+  [[ -n "$run_id_arg" ]] || return 0
+  local run_dir requested_at_file snapshot_file snapshot_contents
+  run_dir="$build_root/.dev/build-paseo-runs/$run_id_arg"
+  [[ -d "$run_dir" && ! -L "$run_dir" ]] || fail "build request directory is missing or a symlink: $run_dir"
+  requested_at_file="$run_dir/requested-at"
+  snapshot_file="$run_dir/main.snapshot"
+  [[ -f "$requested_at_file" && ! -L "$requested_at_file" ]] || fail "build request time is missing or a symlink: $requested_at_file"
+  [[ -f "$snapshot_file" && ! -L "$snapshot_file" ]] || fail "build request main snapshot is missing or a symlink: $snapshot_file"
+  operation_requested_at=$(<"$requested_at_file")
+  snapshot_contents=$(<"$snapshot_file")
+  [[ "$operation_requested_at" =~ ^[1-9][0-9]{0,9}$ ]] || fail 'invalid build request time'
+  [[ "$snapshot_contents" =~ ^([0-9a-f]{40})\ ([1-9][0-9]{0,9})$ ]] ||
+    fail 'invalid build request main snapshot'
+  main_head=${BASH_REMATCH[1]}
+  operation_frozen_at=${BASH_REMATCH[2]}
+  ((operation_requested_at <= operation_frozen_at && operation_frozen_at <= started_at)) ||
+    fail 'invalid build request time ordering'
+  operation_mode=run-bound
+  operation_run_id=$run_id_arg
+  request_stage_log="$run_dir/preflight-stages.log"
+  export PASEO_BUILD_REQUEST_STAGE_LOG="$request_stage_log"
+  paseo_assert_frozen_main "$control_root" "$main_head" || fail 'frozen main validation failed'
+  paseo_build_stage "lifecycle:main-reuse snapshot=$main_head frozen-at=$operation_frozen_at"
+}
 
 prepare_state_destination() {
   [[ -n "$state_file" ]] || return 0
@@ -527,6 +575,7 @@ load_request() {
     fail "operation request content does not match its token"
   operation_dir=$(dirname -- "$request_path")
   unset operation_action operation_base_before operation_main operation_control operation_state_file
+  unset operation_mode operation_run_id operation_requested_at operation_frozen_at
   unset operation_replacement operation_branch_name operation_worktree
   unset operation_feature_count operation_replay_count
   unset operation_features operation_branches operation_heads operation_replay_commits
@@ -535,6 +584,20 @@ load_request() {
   source "$request_path"
   [[ "${operation_version:-}" == 1 ]] || fail "unsupported operation request version"
   operation_state_file=${operation_state_file:-}
+  operation_mode=${operation_mode:-standalone}
+  operation_run_id=${operation_run_id:-}
+  operation_requested_at=${operation_requested_at:-}
+  operation_frozen_at=${operation_frozen_at:-}
+  [[ "$operation_mode" == standalone || "$operation_mode" == run-bound ]] ||
+    fail "invalid operation mode: $operation_mode"
+  if [[ "$operation_mode" == run-bound ]]; then
+    [[ "$operation_run_id" =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]{0,95}$ ]] ||
+      fail 'invalid run-bound operation ID'
+    [[ "$operation_requested_at" =~ ^[1-9][0-9]{0,9}$ && "$operation_frozen_at" =~ ^[1-9][0-9]{0,9}$ ]] ||
+      fail 'invalid run-bound operation timestamps'
+  elif [[ -n "$operation_run_id$operation_requested_at$operation_frozen_at" ]]; then
+    fail 'standalone operation contains build request coordinates'
+  fi
   if ! declare -p operation_adopted_commits >/dev/null 2>&1; then
     operation_adopted_commits=()
   fi
@@ -547,16 +610,38 @@ verify_frozen_request() {
     fail "control HEAD moved since the operation was created"
   [[ "$(git -C "$control_root" rev-parse "$upstream_branch")" == "$operation_main" ]] ||
     fail "main moved since the operation was created"
-  current_remote_head=$(
-    git -C "$control_root" rev-parse --verify refs/remotes/upstream/main 2>/dev/null || true
-  )
-  [[ "$current_remote_head" == "$operation_main" ]] ||
-    fail "upstream/main moved since the operation was created"
-  current_remote_head=$(
-    git -C "$control_root" rev-parse --verify refs/remotes/origin/main 2>/dev/null || true
-  )
-  [[ "$current_remote_head" == "$operation_main" ]] ||
-    fail "origin/main moved since the operation was created"
+  if [[ "$operation_mode" == run-bound ]]; then
+    paseo_assert_frozen_main "$control_root" "$operation_main" ||
+      fail 'run-bound operation main validation failed'
+    local run_dir saved_requested_at snapshot_contents saved_main saved_frozen_at
+    run_dir="$build_root/.dev/build-paseo-runs/$operation_run_id"
+    [[ -d "$run_dir" && ! -L "$run_dir" ]] || fail 'run-bound operation request directory is missing or a symlink'
+    [[ -f "$run_dir/requested-at" && ! -L "$run_dir/requested-at" ]] ||
+      fail 'run-bound operation request time is missing or a symlink'
+    [[ -f "$run_dir/main.snapshot" && ! -L "$run_dir/main.snapshot" ]] ||
+      fail 'run-bound operation main snapshot is missing or a symlink'
+    saved_requested_at=$(<"$run_dir/requested-at") || fail 'run-bound operation request time is unreadable'
+    snapshot_contents=$(<"$run_dir/main.snapshot") || fail 'run-bound operation main snapshot is unreadable'
+    [[ "$snapshot_contents" =~ ^([0-9a-f]{40})\ ([1-9][0-9]{0,9})$ ]] ||
+      fail 'run-bound operation main snapshot is invalid'
+    saved_main=${BASH_REMATCH[1]}
+    saved_frozen_at=${BASH_REMATCH[2]}
+    [[ "$saved_requested_at" == "$operation_requested_at" ]] ||
+      fail 'build request time changed since the operation was created'
+    [[ "$saved_main" == "$operation_main" && "$saved_frozen_at" == "$operation_frozen_at" ]] ||
+      fail 'build request main snapshot changed since the operation was created'
+  else
+    current_remote_head=$(
+      git -C "$control_root" rev-parse --verify refs/remotes/upstream/main 2>/dev/null || true
+    )
+    [[ "$current_remote_head" == "$operation_main" ]] ||
+      fail "upstream/main moved since the operation was created"
+    current_remote_head=$(
+      git -C "$control_root" rev-parse --verify refs/remotes/origin/main 2>/dev/null || true
+    )
+    [[ "$current_remote_head" == "$operation_main" ]] ||
+      fail "origin/main moved since the operation was created"
+  fi
   current_base=$(git -C "$control_root" rev-parse --verify "$base_branch" 2>/dev/null || true)
   [[ "$current_base" == "$operation_base_before" ]] ||
     fail "rw-base moved since the operation was created"
@@ -600,6 +685,10 @@ create_request() {
     printf 'operation_main=%q\n' "$main_head"
     printf 'operation_control=%q\n' "$control_head"
     printf 'operation_state_file=%q\n' "$state_file"
+    printf 'operation_mode=%q\n' "$operation_mode"
+    printf 'operation_run_id=%q\n' "$operation_run_id"
+    printf 'operation_requested_at=%q\n' "$operation_requested_at"
+    printf 'operation_frozen_at=%q\n' "$operation_frozen_at"
     printf 'operation_replacement=%q\n' "$replacement"
     printf 'operation_feature_count=%q\n' "${#requested_features[@]}"
     printf 'operation_replay_count=%q\n' "${#replay_commits[@]}"
@@ -642,6 +731,12 @@ load_request_with_meta() {
   [[ -f "$operation_request.meta" ]] || fail "operation metadata is missing"
   # shellcheck disable=SC1090
   source "$operation_request.meta"
+}
+
+activate_operation_request_log() {
+  [[ "$operation_mode" == run-bound ]] || return 0
+  local run_dir="$build_root/.dev/build-paseo-runs/$operation_run_id"
+  export PASEO_BUILD_REQUEST_STAGE_LOG="$run_dir/preflight-stages.log"
 }
 
 write_shell_array() {
@@ -919,6 +1014,7 @@ validate_conflict_resolution() {
 
 if [[ "$command_name" == abort ]]; then
   [[ -z "$state_file" ]] || fail "abort does not accept --state-file"
+  [[ -z "$run_id_arg" ]] || fail "abort does not accept --run-id"
   ((${#requested_adoption_refs[@]} == 0)) || fail "abort does not accept --adopt-commit"
   [[ -n "$operation_arg" ]] || fail "abort requires --operation REQUEST"
   cleanup_operation "$operation_arg"
@@ -1022,6 +1118,9 @@ finalize_operation() {
   local rw_base_rebuilt rw_main_rebuilt dependencies_reinstalled total_seconds
   build_starting_branch=$(git -C "$build_root" branch --show-current)
   rw_main_before=$(git -C "$control_root" rev-parse --verify "$target_branch" 2>/dev/null || true)
+  if [[ "$operation_mode" == run-bound ]]; then
+    rebuild_args+=(--frozen-main "$operation_main")
+  fi
   if ((push_target)); then rebuild_args+=(--push); fi
   if ! bash "$control_root/dwyanewang/rebuild-rw-main.sh" "${rebuild_args[@]}"; then
     printf 'PASEO_RW_BASE_OPERATION=%s\n' "$operation_request"
@@ -1054,6 +1153,9 @@ finalize_operation() {
       control_head "$control_after" \
       main_before "$operation_main" \
       main_after "$main_after" \
+      paseo_build_run_id "$operation_run_id" \
+      paseo_build_requested_at "$operation_requested_at" \
+      paseo_build_frozen_at "$operation_frozen_at" \
       paseo_preflight_total_seconds "$total_seconds" \
       paseo_preflight_status ready; then
       printf 'PASEO_PREFLIGHT_STATE_FILE=%s\n' "$state_file"
@@ -1064,11 +1166,13 @@ finalize_operation() {
         >&2
     fi
   fi
+  paseo_build_stage "lifecycle:complete action=$operation_action main=$operation_main"
   printf '%s\n' 'rw-base lifecycle operation completed.'
 }
 
 if [[ "$command_name" == continue ]]; then
   ((${#requested_adoption_refs[@]} == 0)) || fail "continue does not accept --adopt-commit"
+  [[ -z "$run_id_arg" ]] || fail "continue does not accept --run-id; the operation already freezes its request identity"
   [[ -n "$operation_arg" ]] || fail "continue requires --operation REQUEST"
   requested_state_file=$state_file
   load_request_with_meta "$operation_arg"
@@ -1076,7 +1180,11 @@ if [[ "$command_name" == continue ]]; then
     fail "--state-file does not match the frozen operation request"
   fi
   state_file=$operation_state_file
-  refresh_remote_refs
+  activate_operation_request_log
+  paseo_build_stage "lifecycle:continue:start action=$operation_action main=$operation_main"
+  if [[ "$operation_mode" == standalone ]]; then
+    refresh_remote_refs
+  fi
   prepare_state_destination
   verify_frozen_request
   [[ -f "$operation_dir/progress.env" ]] || fail "operation progress is missing"
@@ -1116,21 +1224,27 @@ if [[ "$command_name" == continue ]]; then
 fi
 
 [[ -z "$operation_arg" ]] || fail "$command_name does not accept --operation"
-prepare_state_destination
 [[ -z "$(git -C "$control_root" status --porcelain)" ]] ||
   fail "control worktree is not clean: $control_root"
 [[ -z "$(git -C "$build_root" status --porcelain)" ]] ||
   fail "build worktree is not clean: $build_root"
 require_clean_worktree "$target_branch"
 
-sync_main_with_upstream
-main_head=$(git -C "$control_root" rev-parse "$upstream_branch")
-for mirror_ref in refs/remotes/upstream/main refs/remotes/origin/main; do
-  if git -C "$control_root" show-ref --verify --quiet "$mirror_ref"; then
-    [[ "$(git -C "$control_root" rev-parse "$mirror_ref")" == "$main_head" ]] ||
-      fail "main differs from $mirror_ref; run the normal preflight first"
-  fi
-done
+if [[ -n "$run_id_arg" ]]; then
+  load_run_snapshot
+  prepare_state_destination
+else
+  prepare_state_destination
+  sync_main_with_upstream
+  main_head=$(git -C "$control_root" rev-parse "$upstream_branch")
+  for mirror_ref in refs/remotes/upstream/main refs/remotes/origin/main; do
+    if git -C "$control_root" show-ref --verify --quiet "$mirror_ref"; then
+      [[ "$(git -C "$control_root" rev-parse "$mirror_ref")" == "$main_head" ]] ||
+        fail "main differs from $mirror_ref; run the normal preflight first"
+    fi
+  done
+fi
+paseo_build_stage "lifecycle:$command_name:start mode=$operation_mode main=$main_head"
 base_before=$(git -C "$control_root" rev-parse --verify "$base_branch" 2>/dev/null || true)
 control_head=$(git -C "$control_root" rev-parse HEAD)
 load_feature_state

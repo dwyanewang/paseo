@@ -491,7 +491,15 @@ else
   paseo_build_stage "readiness:stamp-check:end exit=1 reason=${PASEO_BUILD_STAMP_MISS_REASON:-unknown} elapsed=$((SECONDS - stamp_check_started))s"
   printf 'Readiness stamp miss (%s); refreshing generated workspace declarations...\n' \
     "${PASEO_BUILD_STAMP_MISS_REASON:-unknown}"
-  paseo_build_timed readiness:build-server npm run build:server
+  paseo_build_timed readiness:build-server-deps npm run build:server-deps
+  paseo_build_timed readiness:build-app-audio-dep \
+    npm run build --workspace=@getpaseo/expo-two-way-audio
+  paseo_build_timed readiness:typecheck-app-early \
+    npm run typecheck --workspace=@getpaseo/app
+  paseo_build_timed readiness:build-server \
+    npm run build --workspace=@getpaseo/server
+  paseo_build_timed readiness:build-cli \
+    npm run build --workspace=@getpaseo/cli
 
   printf '%s\n' 'Running repository checks...'
   paseo_build_timed readiness:format-check npm run format:check

@@ -245,14 +245,26 @@ if [[ "$*" == --version ]]; then
   printf '%s\\n' '10.9.0'
   exit 0
 fi
-if [[ "$*" == *build:server* ]]; then
+if [[ "$*" == 'run typecheck --workspace=@getpaseo/app' && -n "\${PASEO_TEST_APP_TYPECHECK_EXIT:-}" ]]; then
+  exit "$PASEO_TEST_APP_TYPECHECK_EXIT"
+fi
+if [[ "$*" == 'run build:server-deps' ]]; then
   root=$PASEO_TEST_BUILD_ROOT
-  for workspace in highlight relay protocol client server cli; do
+  for workspace in highlight relay protocol client; do
     mkdir -p "$root/packages/$workspace/dist"
     printf '%s\\n' "$workspace" >"$root/packages/$workspace/dist/index.js"
   done
+elif [[ "$*" == 'run build --workspace=@getpaseo/expo-two-way-audio' ]]; then
+  :
+elif [[ "$*" == 'run build --workspace=@getpaseo/server' ]]; then
+  root=$PASEO_TEST_BUILD_ROOT
   mkdir -p "$root/packages/server/dist/server/server"
+  printf '%s\\n' server >"$root/packages/server/dist/index.js"
   printf '%s\\n' server >"$root/packages/server/dist/server/server/exports.js"
+elif [[ "$*" == 'run build --workspace=@getpaseo/cli' ]]; then
+  root=$PASEO_TEST_BUILD_ROOT
+  mkdir -p "$root/packages/cli/dist"
+  printf '%s\\n' cli >"$root/packages/cli/dist/index.js"
 fi
 `,
   );
@@ -844,12 +856,39 @@ test("rebuild refreshes workspace declarations before repository checks", () => 
     assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
     assert.deepEqual(readFileSync(fixture.npmCallLog, "utf8").trim().split("\n"), [
       "install",
-      "run build:server",
+      "run build:server-deps",
+      "run build --workspace=@getpaseo/expo-two-way-audio",
+      "run typecheck --workspace=@getpaseo/app",
+      "run build --workspace=@getpaseo/server",
+      "run build --workspace=@getpaseo/cli",
       "run format:check",
       "run typecheck",
       "run lint",
       "--version",
     ]);
+  });
+});
+
+test("rebuild fails app typecheck before starting the server and CLI builds", () => {
+  withFixture({ advanceMain: false }, (fixture) => {
+    fixture.env.PASEO_TEST_APP_TYPECHECK_EXIT = "7";
+    const result = run(
+      fixture.root,
+      "bash",
+      ["dwyanewang/rebuild-rw-main.sh", "--build-root", fixture.root, "--dry-run"],
+      fixture.env,
+    );
+
+    assert.equal(result.status, 7, `${result.stdout}\n${result.stderr}`);
+    assert.deepEqual(readFileSync(fixture.npmCallLog, "utf8").trim().split("\n"), [
+      "install",
+      "run build:server-deps",
+      "run build --workspace=@getpaseo/expo-two-way-audio",
+      "run typecheck --workspace=@getpaseo/app",
+    ]);
+    assert.match(result.stdout, /readiness:typecheck-app-early:end exit=7/);
+    assert.doesNotMatch(result.stdout, /readiness:build-server:start/);
+    assert.doesNotMatch(result.stdout, /readiness:build-cli:start/);
   });
 });
 

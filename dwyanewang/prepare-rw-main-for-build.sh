@@ -245,13 +245,17 @@ else
   printf '%s\n' "$requested_at" >"$run_dir/requested-at"
 fi
 snapshot_file="$run_dir/main.snapshot"
+refreshes_file="$run_dir/main.refreshes"
+[[ ! -L "$refreshes_file" ]] || fail "main refresh log is a symlink: $refreshes_file"
 frozen_main=
 frozen_at=
+freeze_reason=initial
 if [[ -f "$snapshot_file" ]]; then
   read -r frozen_main frozen_at snapshot_extra <"$snapshot_file" || fail "unreadable main snapshot: $snapshot_file"
   [[ "$frozen_main" =~ ^[0-9a-f]{40}$ && "$frozen_at" =~ ^[1-9][0-9]{0,9}$ && -z "$snapshot_extra" ]] ||
     fail 'invalid main snapshot'
   ((no_fetch || refresh_main)) || fail 'run already has a snapshot; use --no-fetch or --refresh-main'
+  freeze_reason=refresh
 elif ((no_fetch)); then
   fail '--no-fetch requires an existing main snapshot'
 fi
@@ -314,7 +318,8 @@ else
   snapshot_temp=$(mktemp "$run_dir/.main.snapshot.XXXXXX")
   printf '%s %s\n' "$frozen_main" "$frozen_at" >"$snapshot_temp"
   mv -- "$snapshot_temp" "$snapshot_file"
-  paseo_build_stage "main:freeze snapshot=$frozen_main frozen-at=$frozen_at"
+  printf '%s %s %s\n' "$frozen_main" "$frozen_at" "$freeze_reason" >>"$refreshes_file"
+  paseo_build_stage "main:freeze snapshot=$frozen_main frozen-at=$frozen_at reason=$freeze_reason"
 fi
 printf 'PASEO_MAIN_BEFORE=%s\nPASEO_MAIN_AFTER=%s\nPASEO_MAIN_SYNC_SECONDS=%s\n' \
   "$main_before" "$main_after" "$(( $(date +%s) - main_sync_started ))"

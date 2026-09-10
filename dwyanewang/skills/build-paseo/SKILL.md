@@ -39,7 +39,7 @@ bash "$paseo_chore_root/dwyanewang/prepare-rw-main-for-build.sh" \
   --push
 ```
 
-首次同步后固定本轮 main 快照。后续每次 prepare（包括接受审查和提交清单后重建）保留 `--run-id` 并加 `--no-fetch`；它仍检查洁净度、上游祖先和精确审查坐标，不是 `--skip-preflight`。只有明确刷新本轮上游时改用 `--refresh-main`，随后重新审查失效 request。源分支修复必须 rebase 本轮快照 main，不能借 overlay 带入更晚的上游。
+首次同步后固定本轮 main 快照，并向请求目录的 `main.refreshes` 追加 `initial` 事件。后续每次 prepare（包括接受审查和提交清单后重建）保留 `--run-id` 并加 `--no-fetch`；它仍检查洁净度、上游祖先和精确审查坐标，不是 `--skip-preflight`。只有明确刷新本轮上游时改用 `--refresh-main`，随后重新审查失效 request；刷新会追加 `refresh` 事件而不改变 `main.snapshot` 的单行格式。源分支修复必须 rebase 本轮快照 main，不能借 overlay 带入更晚的上游。
 
 前置日志保存在产品目录 `.dev/build-paseo-runs/$paseo_run_id/`。审查、源分支修复、提交开始/结束时，用 `build-paseo-state.sh` 的 `paseo_build_stage` 追加事件到同目录 `preflight-stages.log`（设置 `PASEO_BUILD_REQUEST_STAGE_LOG`）；命令阶段、失败状态和正式产物阶段由脚本自动记录。`PASEO_BUILD_STAGE_LOG` 仅是产物 attempt 日志的输出路径，不能作为请求日志输入。请求目录还保存快照和起点，完成或明确放弃前不能清理。不要只累计成功阶段。
 
@@ -47,7 +47,7 @@ bash "$paseo_chore_root/dwyanewang/prepare-rw-main-for-build.sh" \
 - rebase 后优先使用报告中的 `git range-diff`：若旧 feature commits 均能与新 commits 对应，且变化仅限冲突解决带来的必要调整，执行增量语义审查；否则执行完整区间审查。AI 必须继续查看冲突解决 diff、路径和验证结果，不能仅凭 patch 等价自动接受。
 - `partial` 则回源功能分支修整、定向验证并推送。`uncertain` 只作为 AI 内部中间态：继续扩大证据范围；仍无法证明上游完整吸收时默认 `keep`，不得自动 `remove`。必须等所有 reviewer 的最终结论返回且集合、坐标核对一致，才能传 `--accept-review-request "$paseo_review_request_file"` 接受；中途的 keep 不算最终结论。接受轮原样重传 request 轮的新增和 PR 重映射参数，再加必要的 `--remove-branch`，并使用同一 `--run-id --no-fetch`；不要退回 main-only 接受方式。
 - 完整同步的前置命令会在语义审查 request 输出前运行一次只读 mergeability 预检：在临时 detached worktree 中按真实顺序模拟 `rw-base + main + overlays` 的合并。冲突会立即报告具体 overlay 和文件并停止，先回源分支 rebase/修复；预检不移动 `rw-base`/`rw-main`、不改清单、不安装依赖，也不运行构建。
-- 正式 readiness 不是对 `rw-base` 和每条 overlay 分别校验。脚本先顺序合并全部层，只对完整 `rw-main` 候选执行一次 `build:server + format:check + typecheck + lint`。同一请求内若重试产生不同 commit 但完全相同的 Git tree，且固定工具链、实际 Node/npm、依赖输入和完整 dist 摘要仍匹配可信 readiness stamp，则复用该结果；任一项变化都完整重跑。
+- 正式 readiness 不是对 `rw-base` 和每条 overlay 分别校验。脚本先顺序合并全部层；stamp miss 时先构建 server 共用依赖与 app audio 依赖，立即运行 app typecheck，成功后才构建 server/CLI，最后仍执行完整 format/typecheck/lint。同一请求内若重试产生不同 commit 但完全相同的 Git tree，且固定工具链、实际 Node/npm、依赖输入和完整 dist 摘要仍匹配可信 readiness stamp，则复用该结果；任一项变化都完整重跑。
 - 退出码 `4`：清单已更新但尚未 ready。集中提交本轮清单变更，不为每项 PR/分支单独提交；校验按下方 hook 规则执行，推送 `chore/build-paseo` 后，保留 `--run-id --no-fetch`、不带增删/重映射/接受参数重跑。
 - 其他非零退出：停止并诊断。readiness gate 未成功，不得启动任一产物构建。
 
@@ -55,8 +55,8 @@ bash "$paseo_chore_root/dwyanewang/prepare-rw-main-for-build.sh" \
 
 ## 长期功能
 
-- lifecycle 可能推进本地 main，使已有 prepare 快照失效。成功生成的 lifecycle ready state 可直接进入产物链，但属于不关联原 run-id 的路径，不能据其产物计时宣称覆盖原请求；若还需继续原 prepare 请求（包括 state 写入失败后的恢复），沿用原 ID 先 `--refresh-main` 并重新审查，不能 `--no-fetch` 或手工改快照。
-- 用户明确要求把功能固化到基线时，完整读取 `打包流程.md` 第 1.3 节并使用 `manage-rw-base.sh promote|maintain|retire|status`；不要把它重新加入临时叠加清单。先检查 `status` 的 `UNMANAGED` 行；存在时 lifecycle 会拒绝自动推断，不能再次 promote。若已证明某个历史直提提交被当前受管功能完整接管，则在修复该功能的同一次 `maintain` 中显式传 `--adopt-commit <SHA>`；它会写入追加式 trailer 并让后续 status 不再报该项。禁止为清掉 `UNMANAGED` 而重写或删除已推送的 `rw-base` 历史。新 lifecycle 会在冻结 request 前自行刷新 upstream/origin、快进并同步 `main`；构建请求把本轮 `paseo_preflight_state` 传给 `--state-file`，验证和发布成功后它会直接生成 ready state，随后进入产物脚本，不再额外调用一次 prepare。冲突 `continue` 会刷新 tracking refs 后按原冻结坐标拒绝任何漂移。
+- 用户明确要求把功能固化到基线时，完整读取 `打包流程.md` 第 1.3 节并使用 `manage-rw-base.sh promote|maintain|retire|status`；不要把它重新加入临时叠加清单。先检查 `status` 的 `UNMANAGED` 行；存在时 lifecycle 会拒绝自动推断，不能再次 promote。若已证明某个历史直提提交被当前受管功能完整接管，则在修复该功能的同一次 `maintain` 中显式传 `--adopt-commit <SHA>`；它会写入追加式 trailer 并让后续 status 不再报该项。禁止为清掉 `UNMANAGED` 而重写或删除已推送的 `rw-base` 历史。
+- 打包请求内的 `promote|maintain|retire` 必须同时传原 `--run-id "$paseo_run_id"` 和 `--state-file "$paseo_preflight_state"`。它读取现有请求快照，不 fetch、不移动或 push main；tracking refs 可以继续前进，只要冻结 main 仍是其祖先。冲突 `continue` 不重复传 run ID，也不隐式 fetch；operation request 已冻结 run/control/main/base/source 坐标。成功 ready state 保留请求身份与计时，直接进入产物链，不再额外 prepare。state 写入失败后沿用同一 run 的 `--no-fetch` prepare 恢复。只有脱离打包请求的 standalone lifecycle 才保持“先同步最新 main”的旧语义。
 - 退出码 `5` 表示生命周期操作保留了冲突 worktree。保存输出的 `PASEO_RW_BASE_OPERATION`；解决并 `git add` 后用 `continue --operation`，或用 `abort --operation` 放弃。不得手工移动 `rw-base`/`rw-main`。
 
 ## 正式产物链与端选择
@@ -88,5 +88,6 @@ bash "$paseo_chore_root/dwyanewang/build-paseo-artifacts.sh" \
 - 修改任意 `dwyanewang/*.sh` 或对应测试后，提交前运行 `bash "$paseo_chore_root/dwyanewang/check-build-paseo.sh"`；它只做 Shell 语法和定向构建控制测试，不代替真实产物打包。
 - 上游 `lefthook.yml` 的 pre-commit typecheck 没有路径过滤，仓库规则也要求每次修改后 typecheck/lint。控制面即将提交时不要先手工跑一遍全仓 typecheck 再让 hook 重复执行：提交前做定向测试、`npm run format` 和一次 lint，由 pre-commit 承担该轮唯一一次全仓 typecheck；若不提交或 hook 未执行，再显式运行 typecheck。
 - 任一步非零即停止，保留真实退出码。失败时按日志症状查询 `踩坑记录.md`；临时叠加修复回源分支，长期功能修复经 `maintain`，不能直接修改候选、`rw-base` 或 `rw-main`。
+- app Playwright 是可选的源分支验证：一次只能运行一个 invocation，不得与 prepare/lifecycle/readiness、`build:server` 或 pre-commit hook 重叠。Metro warmup 超时先保存具体 phase、URL、elapsed、进程状态和近期输出；只有明确改变一个条件才允许最多一次重试，仍失败就保留证据并继续必需 gate，禁止无诊断连续重启。
 - 证据优先读取 `.dev/build-paseo-runs/<轮次>/result.env`、`stages.log`、已选择端的分支日志、`build.log` 和资源 summary。核对 `paseo_artifact_targets`、`paseo_artifact_preflight_mode` 与临时分支 SHA；Windows 目标还要核对 retention limit、保留数和清理数。
 - 只汇报所选端的产物路径/体积/mtime和资源数据；Windows 目标同时汇报历史 zip 保留/清理数量，同时选择 Android 与 Windows 时再汇报并发/回退模式。还要汇报本轮 main 快照 SHA/同步时间、临时分支及冻结 SHA、下载地址，以及从用户消息到下载服务就绪的真实总墙钟。ready-state 产物结果中的 `paseo_build_request_total_seconds` 包含前置与重试（起点取 `--requested-at`）；`paseo_artifact_total_seconds` 仅作产物链分段数据。

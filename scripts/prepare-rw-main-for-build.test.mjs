@@ -193,14 +193,23 @@ fi
 if [[ "$*" == 'run typecheck' && -n "\${PASEO_TEST_TYPECHECK_EXIT:-}" ]]; then
   exit "$PASEO_TEST_TYPECHECK_EXIT"
 fi
-if [[ "$*" == *build:server* ]]; then
+if [[ "$*" == 'run build:server-deps' ]]; then
   root=$PASEO_TEST_BUILD_ROOT
-  for workspace in highlight relay protocol client server cli; do
+  for workspace in highlight relay protocol client; do
     mkdir -p "$root/packages/$workspace/dist"
     printf '%s\\n' "$workspace" >"$root/packages/$workspace/dist/index.js"
   done
+elif [[ "$*" == 'run build --workspace=@getpaseo/expo-two-way-audio' ]]; then
+  :
+elif [[ "$*" == 'run build --workspace=@getpaseo/server' ]]; then
+  root=$PASEO_TEST_BUILD_ROOT
   mkdir -p "$root/packages/server/dist/server/server"
+  printf '%s\\n' server >"$root/packages/server/dist/index.js"
   printf '%s\\n' server >"$root/packages/server/dist/server/server/exports.js"
+elif [[ "$*" == 'run build --workspace=@getpaseo/cli' ]]; then
+  root=$PASEO_TEST_BUILD_ROOT
+  mkdir -p "$root/packages/cli/dist"
+  printf '%s\\n' cli >"$root/packages/cli/dist/index.js"
 fi
 `,
   );
@@ -470,6 +479,10 @@ test("one request accepts and rebuilds its frozen main after another worktree fe
     assert.match(log, /preflight:end exit=0/);
     assert.match(readFileSync(fixture.stateFile, "utf8"), /paseo_build_run_id=frozen-review/);
     assert.equal(readFileSync(path.join(runDir, "requested-at"), "utf8").trim(), "1700000000");
+    assert.match(
+      readFileSync(path.join(runDir, "main.refreshes"), "utf8"),
+      new RegExp(`^${fixture.upstreamMain} [0-9]+ initial\\n$`),
+    );
   });
 }, 30_000);
 
@@ -528,6 +541,15 @@ test("a rebased overlay cannot smuggle later upstream into a frozen request; exp
     const refreshed = runPreflight(fixture, "--run-id", "ancestry", "--refresh-main");
     assert.equal(refreshed.status, 3, `${refreshed.stdout}\n${refreshed.stderr}`);
     assert.notEqual(reviewRequestPath(refreshed), oldRequest);
+    const refreshes = readFileSync(
+      path.join(fixture.buildRoot, ".dev/build-paseo-runs/ancestry/main.refreshes"),
+      "utf8",
+    )
+      .trim()
+      .split("\n");
+    assert.equal(refreshes.length, 2);
+    assert.match(refreshes[0], new RegExp(`^${fixture.upstreamMain} [0-9]+ initial$`));
+    assert.match(refreshes[1], new RegExp(`^${git(updater, "rev-parse", "HEAD")} [0-9]+ refresh$`));
     const stale = runPreflight(
       fixture,
       "--run-id",
