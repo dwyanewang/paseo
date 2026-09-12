@@ -1,5 +1,11 @@
 import type { PaseoApi } from "@getpaseo/client";
 import type { ZodType, input as ZodInput, output as ZodOutput } from "zod";
+import type {
+  DeepReadonly,
+  PluginSettingsDecision,
+  PluginSettingsErrorCode,
+  SettingsDefinition,
+} from "../settings.js";
 import type { PluginRpcContract } from "../rpc.js";
 import type { PluginCleanup } from "../contracts.js";
 import type { ProviderRegistration } from "./provider.js";
@@ -20,16 +26,43 @@ export type PluginSettingsState<Schema extends ZodType> =
       status: "invalid";
       revision: string;
       error: string;
+      /** Why the document is unusable; set by hosts that also provide `update()`. */
+      code?: PluginSettingsErrorCode;
+    };
+
+export type PluginSettingsUpdateResult<Schema extends ZodType, Result> =
+  | {
+      status: "saved" | "unchanged";
+      revision: string;
+      values: ZodOutput<Schema>;
+      result: Result;
+    }
+  | {
+      status: "invalid";
+      revision: string;
+      error: string;
+      code: PluginSettingsErrorCode;
     };
 
 export interface PluginSettings<Schema extends ZodType> {
   read(): Promise<PluginSettingsState<Schema>>;
   subscribe(listener: (state: PluginSettingsState<Schema>) => void | Promise<void>): PluginCleanup;
+  /**
+   * Runs one read-modify-write serialized with every other access to this document, including
+   * client saves. The mutator receives frozen current values and must decide synchronously;
+   * a commit validates against the schema and notifies subscribers and clients like a save.
+   */
+  update<Result>(
+    mutate: (
+      current: DeepReadonly<ZodOutput<Schema>>,
+    ) => PluginSettingsDecision<ZodInput<Schema>, Result>,
+  ): Promise<PluginSettingsUpdateResult<Schema, Result>>;
 }
 
 export interface PluginServerContext extends PluginLifecycleRegistration {
+  readonly paseo: PaseoApi;
   registerSettings<Schema extends ZodType>(
-    definition: import("../settings.js").SettingsDefinition<Schema>,
+    definition: SettingsDefinition<Schema>,
   ): PluginSettings<Schema>;
   handle<InputSchema extends ZodType, OutputSchema extends ZodType>(
     contract: PluginRpcContract<InputSchema, OutputSchema>,
