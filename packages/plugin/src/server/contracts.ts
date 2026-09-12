@@ -4,6 +4,7 @@ import type { PluginRpcContract } from "../rpc.js";
 import type { PluginCleanup } from "../contracts.js";
 import type { ProviderRegistration } from "./provider.js";
 import type { PluginLifecycleRegistration } from "./lifecycle.js";
+import type { PluginForgeServerProviderContribution } from "../forge.js";
 
 export interface PluginHandlerContext {
   paseo: PaseoApi;
@@ -21,6 +22,7 @@ export interface PluginServerContext extends PluginLifecycleRegistration {
     ) => ZodInput<OutputSchema> | Promise<ZodInput<OutputSchema>>,
   ): void;
   registerProvider(provider: ProviderRegistration): void;
+  addForgeServerProvider(contribution: PluginForgeServerProviderContribution): void;
 }
 
 export type PluginServerContribution = (server: PluginServerContext) => PluginCleanup;
