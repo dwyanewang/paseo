@@ -23,6 +23,7 @@ import {
   pruneFinalizedDraftRecords,
   toDraftInputIfReady,
   type DraftInput,
+  type AgentLaunchDraftMetadata,
   type DraftLifecycleState,
   type DraftRecord,
   type DraftStoreState,
@@ -36,12 +37,22 @@ import {
 import { createDraftPersistStorage } from "./persistence";
 import { createValidatedPersistStorage } from "@/storage/validated-persist-storage";
 
-export type { DraftInput, DraftLifecycleState } from "./state";
+export type { AgentLaunchDraftMetadata, DraftInput, DraftLifecycleState } from "./state";
 
 interface DraftStoreActions {
   getDraftInput: (draftKey: string) => DraftInput | undefined;
   hydrateDraftInput: (input: { draftKey: string }) => Promise<DraftInput | undefined>;
   saveDraftInput: (input: { draftKey: string; draft: DraftInput }) => void;
+  getAgentLaunchMetadata: (draftId: string) => AgentLaunchDraftMetadata | undefined;
+  setAgentLaunchMetadata: (input: {
+    draftKey: string;
+    draft: DraftInput;
+    metadata: AgentLaunchDraftMetadata;
+  }) => void;
+  updateAgentLaunchSubmissionState: (input: {
+    draftId: string;
+    submissionState: AgentLaunchDraftMetadata["submissionState"];
+  }) => void;
   markDraftLifecycle: (input: { draftKey: string; lifecycle: DraftLifecycleState }) => void;
   clearDraftInput: (input: {
     draftKey: string;
@@ -75,6 +86,7 @@ function createDraftRecord(input: {
   draft: DraftInput;
   lifecycle: DraftLifecycleState;
   previousVersion?: number;
+  agentLaunch?: AgentLaunchDraftMetadata;
 }): DraftRecord {
   return {
     input: {
@@ -82,6 +94,7 @@ function createDraftRecord(input: {
       attachments: input.draft.attachments.map(normalizeComposerAttachment),
     },
     lifecycle: input.lifecycle,
+    ...(input.agentLaunch ? { agentLaunch: input.agentLaunch } : {}),
     updatedAt: Date.now(),
     version: (input.previousVersion ?? 0) + 1,
   };
@@ -290,6 +303,7 @@ export const useDraftStore = create<DraftStore>()(
                 draft: migratedDraft,
                 lifecycle: existing.lifecycle,
                 previousVersion: existing.version,
+                agentLaunch: existing.agentLaunch,
               }),
             },
           };
@@ -309,11 +323,55 @@ export const useDraftStore = create<DraftStore>()(
                 draft,
                 lifecycle: "active",
                 previousVersion: existing?.version,
+                agentLaunch: existing?.agentLaunch,
               }),
             },
           };
         });
         scheduleAttachmentGc();
+      },
+
+      getAgentLaunchMetadata: (draftId) =>
+        Object.values(get().drafts).find((record) => record.agentLaunch?.draftId === draftId)
+          ?.agentLaunch,
+
+      setAgentLaunchMetadata: ({ draftKey, draft, metadata }) => {
+        set((state) => {
+          const existing = state.drafts[draftKey];
+          return {
+            drafts: {
+              ...state.drafts,
+              [draftKey]: createDraftRecord({
+                draft,
+                lifecycle: "active",
+                previousVersion: existing?.version,
+                agentLaunch: metadata,
+              }),
+            },
+          };
+        });
+        scheduleAttachmentGc();
+      },
+
+      updateAgentLaunchSubmissionState: ({ draftId, submissionState }) => {
+        set((state) => {
+          const entry = Object.entries(state.drafts).find(
+            ([, record]) => record.agentLaunch?.draftId === draftId,
+          );
+          if (!entry || entry[1].agentLaunch?.submissionState === submissionState) return state;
+          const [draftKey, record] = entry;
+          return {
+            drafts: {
+              ...state.drafts,
+              [draftKey]: {
+                ...record,
+                agentLaunch: { ...record.agentLaunch!, submissionState },
+                updatedAt: Date.now(),
+                version: record.version + 1,
+              },
+            },
+          };
+        });
       },
 
       markDraftLifecycle: ({ draftKey, lifecycle }) => {
@@ -379,6 +437,7 @@ export const useDraftStore = create<DraftStore>()(
                 },
                 lifecycle: "active",
                 previousVersion: existing?.version,
+                agentLaunch: existing?.agentLaunch,
               }),
             },
             attachmentFocusRequestByDraftKey: {

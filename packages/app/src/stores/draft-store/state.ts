@@ -6,7 +6,7 @@ import {
 import { PluginResourceComposerAttachmentSchema } from "@/plugins/attachments";
 import { z } from "zod";
 
-export const DRAFT_STORE_VERSION = 5;
+export const DRAFT_STORE_VERSION = 6;
 export const FINALIZED_DRAFT_TTL_MS = 5 * 60 * 1000;
 
 export interface LegacyDraftImage {
@@ -23,11 +23,26 @@ export interface DraftInput {
 
 export type DraftLifecycleState = "active" | "abandoned" | "sent";
 
+export interface AgentLaunchDraftMetadata {
+  draftId: string;
+  serverId: string;
+  pluginId: string;
+  projectId: string;
+  launchId: string;
+  documentIncarnationId: string;
+  journalKey: string;
+  requestFingerprint: string;
+  labels: Readonly<Record<string, string>>;
+  clientMessageId: string;
+  submissionState: "editable" | "outcome_unknown_readonly";
+}
+
 export type CanonicalDraftInput = DraftInput;
 
 export interface DraftRecord {
   input: CanonicalDraftInput;
   lifecycle: DraftLifecycleState;
+  agentLaunch?: AgentLaunchDraftMetadata;
   updatedAt: number;
   version: number;
 }
@@ -113,6 +128,21 @@ export const CanonicalDraftInputSchema = z.strictObject({
 const DraftRecordSchema: z.ZodType<DraftRecord> = z.strictObject({
   input: CanonicalDraftInputSchema,
   lifecycle: z.enum(["active", "abandoned", "sent"]),
+  agentLaunch: z
+    .strictObject({
+      draftId: z.string(),
+      serverId: z.string(),
+      pluginId: z.string(),
+      projectId: z.string(),
+      launchId: z.string(),
+      documentIncarnationId: z.string(),
+      journalKey: z.string(),
+      requestFingerprint: z.string(),
+      labels: z.record(z.string(), z.string()),
+      clientMessageId: z.string(),
+      submissionState: z.enum(["editable", "outcome_unknown_readonly"]),
+    })
+    .optional(),
   updatedAt: z.number(),
   version: z.number().int().positive(),
 });
