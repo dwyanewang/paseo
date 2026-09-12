@@ -2002,8 +2002,23 @@ export class Session {
     return payload;
   }
 
-  private buildAgentPayload(agent: ManagedAgent): Promise<AgentSnapshotPayload> {
-    return this.enrichAgentPayload(toAgentPayload(agent));
+  private async buildAgentPayload(agent: ManagedAgent): Promise<AgentSnapshotPayload> {
+    const storedRecord = await this.agentStorage.get(agent.id);
+    if (agent.lifecycle === "closed" && storedRecord) {
+      return this.buildStoredAgentPayload(storedRecord);
+    }
+    const title = storedRecord?.title ?? null;
+    const payload = toAgentPayload(agent, { title });
+    const storedUpdatedAt = storedRecord ? resolveStoredAgentPayloadUpdatedAt(storedRecord) : null;
+    if (storedUpdatedAt) {
+      const liveUpdatedAt = Date.parse(payload.updatedAt);
+      const persistedUpdatedAt = Date.parse(storedUpdatedAt);
+      if (Number.isNaN(liveUpdatedAt) || persistedUpdatedAt > liveUpdatedAt) {
+        payload.updatedAt = storedUpdatedAt;
+      }
+    }
+    payload.archivedAt = storedRecord?.archivedAt ?? null;
+    return payload;
   }
 
   private buildStoredAgentPayload(
@@ -4511,7 +4526,8 @@ export class Session {
         const agents = (
           await Promise.all(
             agentIds.map(async (id) => {
-              const agent = this.agentManager.getAgent(id);
+              const agent =
+                this.agentManager.getAgent(id) ?? this.agentManager.getHistorySnapshot(id);
               return agent ? this.buildAgentPayload(agent) : null;
             }),
           )
@@ -7451,7 +7467,7 @@ export class Session {
       pageLimit: input.pageLimit,
     })
       ? (input.fullTimeline ??
-        this.agentManager.fetchTimeline(input.agentId, { direction: "tail", limit: 0 }))
+        this.agentManager.fetchPublicTimeline(input.agentId, { direction: "tail", limit: 0 }))
       : input.controlTimeline;
     const page = selectProjectedTimelinePage({
       rows: selectedTimeline.rows,
@@ -7511,7 +7527,7 @@ export class Session {
       });
       const agentPayload = await this.buildAgentPayload(snapshot);
 
-      const fetchedControlTimeline = this.agentManager.fetchTimeline(msg.agentId, {
+      const fetchedControlTimeline = this.agentManager.fetchPublicTimeline(msg.agentId, {
         direction,
         cursor,
         limit: pageLimit,
@@ -7640,7 +7656,7 @@ export class Session {
         logger: this.sessionLogger,
       });
       const rows = await this.agentManager.getTimelineRows(msg.agentId);
-      const timeline = this.agentManager.fetchTimeline(msg.agentId, {
+      const timeline = this.agentManager.fetchPublicTimeline(msg.agentId, {
         direction: "tail",
         limit: 1,
       });
@@ -7796,7 +7812,7 @@ export class Session {
         logger: this.sessionLogger,
       });
       const agentPayload = await this.buildAgentPayload(snapshot);
-      const timeline = this.agentManager.fetchTimeline(msg.agentId, {
+      const timeline = this.agentManager.fetchPublicTimeline(msg.agentId, {
         direction: "tail",
         limit: 0,
       });
