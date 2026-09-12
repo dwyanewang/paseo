@@ -300,6 +300,8 @@ describe("runGitCommand", () => {
     expect(fakeSpawnController.spawnArgs[0]).toEqual([
       "-c",
       "core.quotepath=false",
+      "-c",
+      "core.fsmonitor=false",
       "fetch",
       remoteUrl,
       "refs/heads/main",
