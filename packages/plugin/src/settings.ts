@@ -11,6 +11,55 @@ export interface SettingsDefinition<Schema extends ZodType = ZodType> {
   migrate?: (values: unknown, fromVersion: number) => unknown | Promise<unknown>;
 }
 
+export type DeepReadonly<Value> = Value extends (...args: never[]) => unknown
+  ? Value
+  : Value extends readonly (infer Item)[]
+    ? readonly DeepReadonly<Item>[]
+    : Value extends object
+      ? { readonly [Key in keyof Value]: DeepReadonly<Value[Key]> }
+      : Value;
+
+export interface PluginSettingsSnapshot<Values> {
+  values: Values;
+  revision: string;
+}
+
+export type PluginSettingsErrorCode =
+  | "stored_invalid"
+  | "migration_failed"
+  | "mutator_threw"
+  | "thenable_returned"
+  | "reentrant_access"
+  | "next_invalid"
+  | "store_poisoned";
+
+export interface PluginSettingsError {
+  code: PluginSettingsErrorCode;
+  message: string;
+}
+
+export type PluginSettingsReadResult<Values> =
+  | { status: "ready"; snapshot: PluginSettingsSnapshot<Values> }
+  | { status: "invalid"; revision: string; error: PluginSettingsError };
+
+export type PluginSettingsDecision<Values, Result> =
+  | { status: "unchanged"; result: Result }
+  | { status: "commit"; values: Values; result: Result };
+
+export type PluginSettingsUpdateResult<Values, Result> =
+  | { status: "saved"; snapshot: PluginSettingsSnapshot<Values>; result: Result }
+  | { status: "unchanged"; snapshot: PluginSettingsSnapshot<Values>; result: Result }
+  | { status: "invalid"; revision: string; error: PluginSettingsError };
+
+export interface PluginSettingsDocument<Schema extends ZodType> {
+  read(): Promise<PluginSettingsReadResult<z.output<Schema>>>;
+  update<Result>(
+    mutate: (
+      current: DeepReadonly<z.output<Schema>>,
+    ) => PluginSettingsDecision<z.input<Schema>, Result>,
+  ): Promise<PluginSettingsUpdateResult<z.output<Schema>, Result>>;
+}
+
 export function defineSettings<Schema extends ZodType>(
   definition: SettingsDefinition<Schema>,
 ): SettingsDefinition<Schema> {

@@ -94,6 +94,15 @@ import { ICON_SIZE, type Theme } from "@/styles/theme";
 import type { ComposerAttachment } from "@/attachments/types";
 import { useDraftWorkspaceAttachmentScopeKey } from "@/attachments/workspace-attachments-store";
 import { requestWorkspaceDraftAgent } from "@/composer/draft/create-agent-request";
+import { useDraftStore } from "@/stores/draft-store";
+import {
+  markAgentCreated,
+  markAgentRequestStarted,
+  markLaunchOutcomeUnknown,
+  markWorkspaceCreated,
+  markWorkspaceRequestStarted,
+  useLaunchOutcomeUnknown,
+} from "@/plugins/agent-launch";
 import { buildWorkspaceDraftAgentConfig } from "@/screens/workspace/workspace-draft-agent-config";
 import type { MessagePayload } from "@/composer/types";
 import type { UserComposerAttachment } from "@/attachments/types";
@@ -181,8 +190,14 @@ function resolveVisibleDraftContextScopeKeys(input: {
 function isNewWorkspacePending(input: {
   pendingAction: "chat" | "empty" | "terminal" | null;
   isDraftHandoffActive: boolean;
+  launchReadOnly: boolean;
 }): boolean {
-  return input.pendingAction !== null || input.isDraftHandoffActive;
+  return input.pendingAction !== null || input.isDraftHandoffActive || input.launchReadOnly;
+}
+
+/** A journal-backed launch with an unknown outcome locks the composer regardless of mode. */
+function resolveTerminalReadOnly(terminalTakesPrompt: boolean, launchReadOnly: boolean): boolean {
+  return !terminalTakesPrompt || launchReadOnly;
 }
 
 function buildFirstAgentContext(input: {
@@ -1128,7 +1143,11 @@ async function submitWorkspaceDraft(input: SubmitDraftInput): Promise<SubmitOutc
     initialSetup,
   } = input;
   const draftId = draftIdInput?.trim() || generateDraftId();
-  const clientMessageId = generateMessageId();
+  const launchMetadata = useDraftStore.getState().getAgentLaunchMetadata(draftId);
+  if (launchMetadata?.submissionState === "outcome_unknown_readonly") {
+    throw new Error("This launch may already have created an agent. Check status before retrying.");
+  }
+  const clientMessageId = launchMetadata?.clientMessageId ?? generateMessageId();
   const timestamp = Date.now();
   const wirePayload = splitComposerAttachmentsForSubmit(attachments, {
     format: resolveComposerAttachmentSubmitFormat({
@@ -1147,24 +1166,43 @@ async function submitWorkspaceDraft(input: SubmitDraftInput): Promise<SubmitOutc
   if (!input.isStillOnCreateScreen()) {
     await createWorkspaceAgentInBackground({
       clearConsumedDraft: input.clearConsumedDraft,
-      createAgent: () =>
-        requestWorkspaceDraftAgent(input.resolveClient(), {
-          workspaceId,
-          config: buildWorkspaceDraftAgentConfig({
-            provider: submission.provider,
-            cwd: submission.cwd,
-            ...(submission.modeId ? { modeId: submission.modeId } : {}),
-            ...(submission.model ? { model: submission.model } : {}),
-            ...(submission.thinkingOptionId
-              ? { thinkingOptionId: submission.thinkingOptionId }
-              : {}),
-            ...(submission.featureValues ? { featureValues: submission.featureValues } : {}),
-          }),
-          text: text.trim(),
-          clientMessageId,
-          ...(wirePayload.images.length > 0 ? { images: wirePayload.images } : {}),
-          ...(wirePayload.attachments.length > 0 ? { attachments: wirePayload.attachments } : {}),
-        }),
+      createAgent: async () => {
+        if (launchMetadata) await markAgentRequestStarted(draftId, workspaceId);
+        try {
+          const agent = await requestWorkspaceDraftAgent(input.resolveClient(), {
+            workspaceId,
+            config: buildWorkspaceDraftAgentConfig({
+              provider: submission.provider,
+              cwd: submission.cwd,
+              ...(submission.modeId ? { modeId: submission.modeId } : {}),
+              ...(submission.model ? { model: submission.model } : {}),
+              ...(submission.thinkingOptionId
+                ? { thinkingOptionId: submission.thinkingOptionId }
+                : {}),
+              ...(submission.featureValues ? { featureValues: submission.featureValues } : {}),
+            }),
+            text: text.trim(),
+            clientMessageId,
+            ...(launchMetadata ? { labels: { ...launchMetadata.labels } } : {}),
+            ...(wirePayload.images.length > 0 ? { images: wirePayload.images } : {}),
+            ...(wirePayload.attachments.length > 0 ? { attachments: wirePayload.attachments } : {}),
+          });
+          if (launchMetadata) {
+            await markAgentCreated({ draftId, workspaceId, agentId: agent.id });
+          }
+          return agent;
+        } catch (error) {
+          if (launchMetadata) {
+            await markLaunchOutcomeUnknown({
+              draftId,
+              stage: "agent_create",
+              workspaceId,
+              message: toErrorMessage(error),
+            });
+          }
+          throw error;
+        }
+      },
     });
     return "background";
   }
@@ -1175,6 +1213,9 @@ async function submitWorkspaceDraft(input: SubmitDraftInput): Promise<SubmitOutc
     workspaceId,
     agentId: null,
     clientMessageId,
+    ...(launchMetadata
+      ? { labels: { ...launchMetadata.labels }, agentLaunchJournalKey: launchMetadata.journalKey }
+      : {}),
     text: text.trim(),
     timestamp,
     ...(wirePayload.images.length > 0 ? { images: wirePayload.images } : {}),
@@ -1189,6 +1230,9 @@ async function submitWorkspaceDraft(input: SubmitDraftInput): Promise<SubmitOutc
     cwd: submission.cwd,
     provider: submission.provider,
     clientMessageId,
+    ...(launchMetadata
+      ? { labels: { ...launchMetadata.labels }, agentLaunchJournalKey: launchMetadata.journalKey }
+      : {}),
     timestamp,
     ...(submission.modeId ? { modeId: submission.modeId } : {}),
     ...(submission.model ? { model: submission.model } : {}),
@@ -1790,6 +1834,7 @@ export function NewWorkspaceScreen({
     projects: projectIconTargets,
   });
   const draftKey = buildNewWorkspaceDraftKey(draftId);
+  const launchOutcome = useLaunchOutcomeUnknown(draftKey);
   const forkDraftSetup = usePendingWorkspaceDraftSetup(draftId);
   const draftContextScopeKey = useDraftWorkspaceAttachmentScopeKey(draftId);
   const visibleDraftContextScopeKeys = useMemo(
@@ -1833,7 +1878,11 @@ export function NewWorkspaceScreen({
   const worktreeSupport = selectedProject
     ? getWorktreeSupportForHostProject({ project: selectedProject, serverId: selectedServerId })
     : "unsupported";
-  const isPending = isNewWorkspacePending({ pendingAction, isDraftHandoffActive });
+  const isPending = isNewWorkspacePending({
+    pendingAction,
+    isDraftHandoffActive,
+    launchReadOnly: launchOutcome.readOnly,
+  });
   const { effectiveIsolation, setIsolation, canCreateWorktree, showRefPicker } =
     useWorkspaceIsolation({
       supportsMultiplicity: supportsWorkspaceMultiplicity,
@@ -2212,6 +2261,19 @@ export function NewWorkspaceScreen({
             cwd: selectedSourceDirectory,
           })
         : null;
+      const launchMetadata = draftId
+        ? useDraftStore.getState().getAgentLaunchMetadata(draftId)
+        : undefined;
+      if (launchMetadata) {
+        const selectedProjectId = getHostProjectId(selectedProject, selectedServerId);
+        if (
+          selectedServerId !== launchMetadata.serverId ||
+          selectedProjectId !== launchMetadata.projectId
+        ) {
+          throw new Error("The launch host or project changed. Reopen the Todo launch.");
+        }
+        await markWorkspaceRequestStarted(draftId!);
+      }
       const checkoutRequest = checkoutStatusForCreate
         ? pickerItemToCheckoutRequest(
             selectedItem ?? defaultBasePickerItem(checkoutStatusForCreate),
@@ -2252,12 +2314,14 @@ export function NewWorkspaceScreen({
             },
             onCheckoutBranchCopy: notifyCheckoutBranchCopy,
           });
+      if (launchMetadata) await markWorkspaceCreated(draftId!, normalizedWorkspace.id);
       setCreatedWorkspace(normalizedWorkspace);
       return normalizedWorkspace;
     },
     [
       buildCreateWorktreeInput,
       createdWorkspace,
+      draftId,
       effectiveIsolation,
       mergeWorkspaces,
       notifyCheckoutBranchCopy,
@@ -2274,6 +2338,29 @@ export function NewWorkspaceScreen({
     ],
   );
 
+  /**
+   * Journals a failed workspace create from outside the create call. `markLaunchOutcomeUnknown`
+   * only locks the draft once `workspaceRequestStartedAt` exists, so earlier validation errors
+   * stay editable.
+   */
+  const ensureWorkspaceWithLaunchJournal = useCallback(
+    async (input: Parameters<typeof ensureWorkspace>[0]) => {
+      try {
+        return await ensureWorkspace(input);
+      } catch (error) {
+        if (draftId) {
+          await markLaunchOutcomeUnknown({
+            draftId,
+            stage: "workspace_create",
+            message: toErrorMessage(error),
+          });
+        }
+        throw error;
+      }
+    },
+    [draftId, ensureWorkspace],
+  );
+
   const handleSubmitNewWorkspace = useCallback(
     async (payload: MessagePayload) => {
       try {
@@ -2285,7 +2372,7 @@ export function NewWorkspaceScreen({
           let outcome: SubmitOutcome = "background";
           await runCreateEmptyWorkspace({
             payload,
-            ensureWorkspace,
+            ensureWorkspace: ensureWorkspaceWithLaunchJournal,
             serverId: selectedServerId,
             navigate: (targetServerId, workspaceId) => {
               if (!isStillOnCreateScreen()) {
@@ -2308,7 +2395,7 @@ export function NewWorkspaceScreen({
           payload,
           composerState,
           forkDraftSetup,
-          ensureWorkspace,
+          ensureWorkspace: ensureWorkspaceWithLaunchJournal,
           serverId: selectedServerId,
           clearDraft: chatDraft.clear,
           draftKey,
@@ -2338,7 +2425,7 @@ export function NewWorkspaceScreen({
       draftId,
       chatDraft.clear,
       draftKey,
-      ensureWorkspace,
+      ensureWorkspaceWithLaunchJournal,
       forkDraftSetup,
       isStillOnCreateScreen,
       launchTarget,
@@ -2362,7 +2449,7 @@ export function NewWorkspaceScreen({
         prompt: terminalPromptText,
         profile: selectedTerminalProfile,
         profileName: selectedTerminalProfile?.name,
-        ensureWorkspace,
+        ensureWorkspace: ensureWorkspaceWithLaunchJournal,
         createTerminal: async (input) => {
           const connectedClient = withConnectedClient();
           const createdTerminal = await connectedClient.createTerminal(
@@ -2411,7 +2498,7 @@ export function NewWorkspaceScreen({
       toast.error(message);
     }
   }, [
-    ensureWorkspace,
+    ensureWorkspaceWithLaunchJournal,
     isStillOnCreateScreen,
     launchTarget,
     queryClient,
@@ -2578,7 +2665,7 @@ export function NewWorkspaceScreen({
               key="terminal"
               externalKeyboardShift
               inputMode="terminal"
-              readOnly={!terminalTakesPrompt}
+              readOnly={resolveTerminalReadOnly(terminalTakesPrompt, launchOutcome.readOnly)}
               placeholder={terminalPlaceholder}
               submitLabel={terminalSubmitLabel}
               agentId={draftKey}
@@ -2614,6 +2701,8 @@ export function NewWorkspaceScreen({
               submitButtonTestID="workspace-create-submit"
               submitIcon="return"
               isSubmitLoading={isPending}
+              readOnly={launchOutcome.readOnly}
+              placeholder={launchOutcome.placeholder}
               waitForForgeAutoAttachOnSubmit
               submitBehavior="preserve-and-lock"
               blurOnSubmit={true}

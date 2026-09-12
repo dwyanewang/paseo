@@ -280,9 +280,19 @@ existing agent-context instances, but it cannot create an agent panel without an
 
 Command Center callbacks use the selected host's existing `PaseoApi` for normal Paseo operations.
 They use typed plugin RPC only for plugin-specific backend work. Surface and panel props expose
-optional client-owned agent and workspace navigation; its absence is the compatibility gate for
-older clients. Other navigation remains limited to registered global surfaces and workspace panels.
-Plugins do not receive Expo Router or workspace-layout store access.
+optional client-owned agent and workspace navigation. They also expose optional
+`openAgentLaunch`, a Host-owned operation that seeds the existing native workspace draft or
+`/new` flow with immutable labels and a stable message ID. Its local journal is scoped by host,
+plugin, document incarnation, and launch ID; request-start is persisted before daemon effects,
+drafts survive app restart, and completed tombstones prevent ordinary replay. Same-key
+serialization covers one JavaScript runtime only, not multiple browser tabs or Electron renderers.
+The capability's absence is the compatibility gate for older clients. The seed prompt is not proof
+of final composer content. The journal lives in `packages/app/src/plugins/agent-launch/`; its
+draft binding is the `agentLaunch` record on the draft store (v6). Journal-backed drafts skip the
+ordinary `CREATE_FAILED → draft` restore after a request-start, and closing such a draft before any
+request-start is an explicit discard. The public contract, including the `no_eligible_workspace`
+rejection, is in the reference under "Native agent launch". Plugins do not receive Expo Router or
+workspace-layout store access.
 
 ## Lifecycle hooks
 
@@ -531,6 +541,15 @@ Settings storage is scoped to the runtime installation ID, never the source path
 Its writer lives with the plugin subprocess, while its directory lives outside managed sources,
 so updates and reloads retain values. Settings-change notifications must not enter the catalog
 reload path: that path disposes the plugin and would destroy open drafts after every save.
+
+`server.registerSettings(definition)` returns the daemon-side handle for that same document.
+`read()` returns `ready` or a typed `invalid`; `update(mutator)` returns `saved`, `unchanged`, or
+typed `invalid`. Mutators are synchronous, receive a deeply frozen detached value, and must return
+either `commit` or `unchanged`. Server updates, client CAS writes, reset, and migration share one
+installation queue and one atomic file. Migration plus mutation persists at most once. Reentry,
+thenables, invalid values, and mutator throws do not write; only watchdog poisoning blocks later
+access until plugin reload. `server.paseo` is the already-connected owner-authority daemon SDK and
+is available during contribution startup as well as handlers and lifecycle callbacks.
 
 ## Contribute a theme
 

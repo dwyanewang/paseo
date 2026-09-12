@@ -43,6 +43,7 @@ function registerSettings(definition: SettingsDefinition) {
   register(handlers.reset.contract, (input) =>
     handlers.reset.handle(handlers.reset.contract.input.parse(input)),
   );
+  return handlers.document;
 }
 
 type RpcHandler = (input: unknown, context: PluginHandlerContext) => unknown | Promise<unknown>;
@@ -326,7 +327,9 @@ function evaluateBundle(bundle: string): void {
   if (typeof setup !== "function") {
     throw new Error("Plugin server bundle must default export a function");
   }
+  if (!paseo) throw new Error("Plugin Paseo API is unavailable");
   const contributedCleanup = setup({
+    paseo,
     handle: register,
     registerProvider,
     registerSettings,
