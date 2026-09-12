@@ -125,11 +125,14 @@ export const getWorkspaceGitSelfHealPhaseMs = getWorkspaceGitObservationReensure
 
 export interface WorkspaceGitRuntimeSnapshot {
   cwd: string;
+  /** Monotonic per-workspace token advanced at the working-tree observation boundary. */
+  worktreeRevision?: number;
   git: {
     isGit: boolean;
     repoRoot: string | null;
     mainRepoRoot: string | null;
     currentBranch: string | null;
+    headOid: string | null;
     remoteUrl: string | null;
     isPaseoOwnedWorktree: boolean;
     isDirty: boolean | null;
@@ -389,6 +392,7 @@ class WorkspaceGitWatcherSubscriptionTimeoutError extends Error {
 
 interface WorkspaceGitTarget {
   cwd: string;
+  worktreeRevision: number;
   listeners: Set<WorkspaceGitListener>;
   workingTreeWatchTarget: WorkingTreeWatchTarget | null;
   debounceTimer: NodeJS.Timeout | null;
@@ -1128,6 +1132,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   private createWorkspaceTarget(cwd: string): WorkspaceGitTarget {
     const target: WorkspaceGitTarget = {
       cwd,
+      worktreeRevision: 0,
       listeners: new Set(),
       workingTreeWatchTarget: null,
       debounceTimer: null,
@@ -1509,6 +1514,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
           if (!workspaceTarget) {
             return;
           }
+          workspaceTarget.worktreeRevision += 1;
           await this.refreshWorkspaceTarget(workspaceTarget, {
             force: false,
             refreshStructure: target.repoRoot === null,
@@ -1727,6 +1733,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     for (const workspaceKey of target.workspaceKeys) {
       const workspaceTarget = this.workspaceTargets.get(workspaceKey);
       if (workspaceTarget) {
+        workspaceTarget.worktreeRevision += 1;
         this.scheduleWorkspaceRefresh(workspaceTarget, { scope: "worktree", reason });
       }
     }
@@ -2261,6 +2268,10 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
           }
         }
         if (refreshWorktree) {
+          workspaceTarget.worktreeRevision += 1;
+          if (workspaceTarget.latestGit) {
+            workspaceTarget.latestSnapshot = this.combineSnapshot(workspaceTarget);
+          }
           const workingTreeTarget = this.getWorkingTreeWatchTargetForWorkspace(workspaceTarget);
           if (workingTreeTarget) {
             workingTreeTargets.add(workingTreeTarget);
@@ -2304,6 +2315,10 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
           const workingTreeTarget = this.getWorkingTreeWatchTargetForWorkspace(workspaceTarget);
           if (workingTreeTarget) {
             workingTreeTargets.add(workingTreeTarget);
+          }
+          workspaceTarget.worktreeRevision += 1;
+          if (workspaceTarget.latestGit) {
+            workspaceTarget.latestSnapshot = this.combineSnapshot(workspaceTarget);
           }
           await this.refreshWorkspaceTarget(workspaceTarget, {
             force: false,
@@ -3012,6 +3027,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       repoRoot: checkoutStatus.repoRoot,
       mainRepoRoot: checkoutStatus.mainRepoRoot,
       currentBranch: checkoutStatus.currentBranch,
+      headOid: checkoutStatus.headOid,
       remoteUrl: checkoutStatus.remoteUrl,
       isPaseoOwnedWorktree: checkoutStatus.isPaseoOwnedWorktree,
       isDirty: refreshWorktree
@@ -3088,6 +3104,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
 
     return {
       cwd: target.cwd,
+      worktreeRevision: target.worktreeRevision,
       git: target.latestGit,
       forge: target.latestForge ?? buildForgeUnavailableSnapshot(),
     };
@@ -3527,11 +3544,13 @@ function parseWorkspaceGitStashList(
 function buildNotGitSnapshot(cwd: string): WorkspaceGitRuntimeSnapshot {
   return {
     cwd,
+    worktreeRevision: 0,
     git: {
       isGit: false,
       repoRoot: null,
       mainRepoRoot: null,
       currentBranch: null,
+      headOid: null,
       remoteUrl: null,
       isPaseoOwnedWorktree: false,
       isDirty: null,
