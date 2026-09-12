@@ -4,6 +4,7 @@ export type {
   PluginServerContribution,
   PluginSettings,
   PluginSettingsState,
+  PluginSettingsUpdateResult,
 } from "./contracts.js";
 export type {
   PluginHookContext,

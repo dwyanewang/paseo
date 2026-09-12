@@ -1,5 +1,8 @@
 export type {
   PluginHostProps,
+  PluginAgentLaunchRequest,
+  PluginAgentLaunchEvent,
+  PluginAgentLaunchOpenResult,
   PluginSurfaceProps,
   PluginIconProps,
   PluginPanelLocation,

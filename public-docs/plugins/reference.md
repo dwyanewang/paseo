@@ -698,14 +698,67 @@ export default function contribute(client: PluginClientContext) {
 
 `PluginSurfaceProps` contains:
 
-| Field        | Meaning                                                                                                                                                                                                                                                                                                                           |
-| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `theme`      | Typed `PluginTheme` color tokens for the active Paseo theme.                                                                                                                                                                                                                                                                      |
-| `host`       | Selected host `id` and display `label`.                                                                                                                                                                                                                                                                                           |
-| `layout`     | `compact` and the `ios`, `android`, or `web` platform.                                                                                                                                                                                                                                                                            |
-| `navigation` | Optional client navigation. `openAgent({ agentId, serverId? })` and `openWorkspace({ workspaceId, serverId? })` open targets on `serverId`, or on the selected host when omitted. `openBrowser({ url, workspaceId, serverId? })` is available only on Electron; see [links and browsers](#external-links-and-workspace-browsers). |
+| Field        | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `theme`      | Typed `PluginTheme` color tokens for the active Paseo theme.                                                                                                                                                                                                                                                                                                                                                                |
+| `host`       | Selected host `id` and display `label`.                                                                                                                                                                                                                                                                                                                                                                                     |
+| `layout`     | `compact` and the `ios`, `android`, or `web` platform.                                                                                                                                                                                                                                                                                                                                                                      |
+| `navigation` | Optional client navigation. `openAgent({ agentId, serverId? })` and `openWorkspace({ workspaceId, serverId? })` open targets on `serverId`, or on the selected host when omitted. `openBrowser({ url, workspaceId, serverId? })` is available only on Electron; see [links and browsers](#external-links-and-workspace-browsers). `openAgentLaunch` opens or restores a Host-owned native launch journal and composer flow. |
 
 Paseo owns the route, header, close action, host picker, error boundary, and query client. The plugin owns the surface body.
+
+## Native agent launch
+
+`navigation.openAgentLaunch(request)` on surface and panel props opens the existing workspace draft or
+`/new` flow seeded with a prompt, immutable correlation labels, and a stable `clientMessageId`. The
+user still chooses provider, model, mode, thinking, isolation, and branch in the native composer and
+submits explicitly; the plugin never creates the agent itself. The capability is optional: an older
+client omits it, and the plugin must show an upgrade notice instead of writing any claim.
+
+```ts
+const result = await navigation.openAgentLaunch({
+  launchId: attemptId,
+  documentIncarnationId,
+  requestFingerprint,
+  projectId,
+  defaultWorkspaceId,
+  title,
+  seedPrompt,
+  clientMessageId,
+  labels,
+  expectedClientInstanceId,
+  workspace: { allowExisting: true, allowCreate: false },
+  onEvent(event) {
+    // best effort; persist your own facts from these
+  },
+});
+```
+
+| Field                               | Contract                                                                                                                                                       |
+| ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `launchId`, `documentIncarnationId` | Together with the host and plugin IDs they key one device-local journal. A reset that changes the incarnation never resumes an old journal.                    |
+| `requestFingerprint`                | Immutable identity of this launch (project, labels, `clientMessageId`, seed). A different fingerprint for the same key is rejected with `launch_key_conflict`. |
+| `projectId`, `defaultWorkspaceId`   | Existing targets are limited to unarchived workspaces of that project; an invalid default is ignored with a diagnostic.                                        |
+| `seedPrompt`, `title`               | Stored in the persisted draft, never in a route URL, and cleared once the launch is terminal. The final composer text is not reported back.                    |
+| `labels`, `clientMessageId`         | Attached to `create_agent_request` on every path: the workspace draft, `/new`, and the background handoff after leaving `/new`.                                |
+| `expectedClientInstanceId`          | Pass the instance returned earlier to resume on the same installation; another device gets `wrong_device` and creates nothing.                                 |
+| `workspace`                         | `allowExisting` opens the draft tab of a same-project workspace; `allowCreate` opens `/new`. Neither available returns `no_eligible_workspace`.                |
+
+Results are `opened`, `restored` (same key reopened; `submissionState` is `editable` or
+`outcome_unknown_readonly`), `completed` (`terminalOutcome` is `agent_known` or `discarded`, with the
+known IDs), or `rejected` with `wrong_device`, `launch_key_conflict`, `journal_invalid`,
+`journal_persist_failed`, or `no_eligible_workspace`. An invalid journal is never deleted silently.
+
+Events are `journal_ready`, `workspace_request_started`, `workspace_created`,
+`agent_request_started`, `agent_created`, `discarded` (`not_submitted`), and `failed` with a `stage`
+and `certainty`. Each request-start is persisted before the daemon request is sent. After a stage's
+request-start, every timeout, disconnect, error, or negative daemon response for that stage is
+`outcome_unknown`: the seeded composer becomes read-only, ordinary retry is disabled, and the
+plugin must offer status checks or an explicit new attempt instead. A stage that never started stays
+`not_submitted`. Reopening the same key replays the journal's facts to `onEvent`; a thrown callback is
+logged and never breaks the native flow. Same-key calls are serialized within one JavaScript runtime
+only; multiple browser tabs or Electron renderers sharing storage are not fenced. Removing the plugin
+clears journals on connected clients; offline devices clean up on reconnect or local GC.
 
 ## Host UI
 
@@ -1167,18 +1220,39 @@ Call `useSettings(preferences)` in any contributed component. It returns a discr
 | `invalid` | `error` and `revision`; stored data is preserved.                        |
 | `error`   | `error` from the read/connection.                                        |
 
-The server handle exposes `read()` and `subscribe()`. `read()` returns the same `ready` or
-`invalid` state as the client hook, including the opaque revision. `subscribe()` returns a cleanup
-function and receives a new `ready` state after a successful save, reset, or migration. Invalid
-writes and revision conflicts do not notify subscribers. Listener failures are logged without
-turning a committed write into a failed save.
+The server handle exposes `read()`, `subscribe()`, and `update()`. `read()` returns the same `ready`
+or `invalid` state as the client hook, including the opaque revision; an `invalid` state also has a
+stable `code`. `subscribe()` returns a cleanup function and receives a new `ready` state after a
+successful save, reset, migration, or server update. Invalid writes and revision conflicts do not
+notify subscribers. Listener failures are logged without turning a committed write into a failed
+save.
 
 ```ts
 const current = await settings.read();
 if (current.status === "ready") {
   // Use current.values and current.revision.
 }
+
+const updated = await settings.update((current) => ({
+  status: "commit",
+  values: { ...current, showMetadata: !current.showMetadata },
+  result: null,
+}));
+if (updated.status === "invalid") {
+  console.warn("Settings require explicit recovery", { code: updated.code });
+}
 ```
+
+`update()` returns `saved` or `unchanged` with `values`, `revision`, and the mutator's `result`,
+or `invalid` with `error` and `code`. The mutator runs synchronously with a deeply frozen detached
+value and must return `commit` or `unchanged`; do not perform I/O or call the same document
+recursively. Server updates, client CAS writes, reset, and migration use one serialized queue, so a
+client save with an older revision is rejected after a server update. Migration plus mutation writes
+and notifies at most once. Stable codes are `stored_invalid`, `migration_failed`, `mutator_threw`,
+`thenable_returned`, `reentrant_access`, `next_invalid`, and `store_poisoned`. A storage operation
+that never settles poisons the store; later access reports `store_poisoned` until plugin reload.
+`server.paseo` exposes the contribution's already-connected daemon SDK, so startup recovery does
+not depend on a first RPC or lifecycle event.
 
 Every state also exposes `saving`, `saveError`, and these actions:
 

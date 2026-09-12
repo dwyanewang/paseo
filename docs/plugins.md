@@ -315,6 +315,18 @@ belongs to the app; plugins do not receive Expo Router or workspace-layout store
 See the public [navigation fields](../public-docs/plugins/reference.md#surfaces-and-sidebar-items)
 and [external links and workspace browsers](../public-docs/plugins/reference.md#external-links-and-workspace-browsers)
 for the author-facing contract.
+Surface and panel props also expose optional
+`openAgentLaunch`, a Host-owned operation that seeds the existing native workspace draft or
+`/new` flow with immutable labels and a stable message ID. Its local journal is scoped by host,
+plugin, document incarnation, and launch ID; request-start is persisted before daemon effects,
+drafts survive app restart, and completed tombstones prevent ordinary replay. Same-key
+serialization covers one JavaScript runtime only, not multiple browser tabs or Electron renderers.
+The capability's absence is the compatibility gate for older clients. The seed prompt is not proof
+of final composer content. The journal lives in `packages/app/src/plugins/agent-launch/`; its
+draft binding is the `agentLaunch` record on the draft store (v6). Journal-backed drafts skip the
+ordinary `CREATE_FAILED → draft` restore after a request-start, and closing such a draft before any
+request-start is an explicit discard. The public contract, including the `no_eligible_workspace`
+rejection, is in the reference under "Native agent launch".
 
 ## Lifecycle hooks
 
@@ -568,9 +580,16 @@ Its writer lives with the plugin subprocess, while its directory lives outside m
 so updates and reloads retain values. Settings-change notifications must not enter the catalog
 reload path: that path disposes the plugin and would destroy open drafts after every save.
 
-`server.registerSettings(definition)` returns a server-side handle. Use `read()` for the current
-`ready` or `invalid` state and `subscribe()` for successful saves, resets, and migrations. The
-subscription cleanup belongs in the plugin's contribution cleanup when it outlives the entry.
+`server.registerSettings(definition)` returns a server-side handle for the same document. Use
+`read()` for the current `ready` or `invalid` state (invalid states carry a stable `code`),
+`subscribe()` for successful saves, resets, migrations, and server updates, and `update(mutator)` for
+a serialized read-modify-write. Mutators are synchronous, receive a deeply frozen detached value, and
+return `commit` or `unchanged`. Server updates, client CAS writes, reset, and migration share one
+installation queue and one atomic file, and every commit notifies subscribers and clients once.
+Reentry, thenables, invalid values, and mutator throws do not write; only watchdog poisoning blocks
+later access until plugin reload. The subscription cleanup belongs in the plugin's contribution
+cleanup when it outlives the entry. `server.paseo` is the already-connected owner-authority daemon
+SDK and is available during contribution startup as well as handlers and lifecycle callbacks.
 
 ## Contribute a theme
 
