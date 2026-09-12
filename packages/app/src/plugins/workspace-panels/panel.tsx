@@ -50,7 +50,7 @@ function PluginPanelBody({ theme }: { theme: PluginTheme }) {
   const host = useMemo(() => ({ id: serverId, label: hostLabel }), [hostLabel, serverId]);
   const layout = useMemo(() => ({ compact, platform: resolvePluginPlatform() }), [compact]);
   const stateSource = useMemo(() => createPluginClientStateSource(serverId), [serverId]);
-  const navigation = usePluginHostNavigation(serverId);
+  const navigation = usePluginHostNavigation(serverId, target.pluginId);
 
   if (!plugin || !contribution || !workspaceExists) {
     return <PluginPanelUnavailable />;
