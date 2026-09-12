@@ -11,7 +11,14 @@ export type {
   PluginTimelineTransformResult,
   PluginCleanup,
 } from "./contracts.js";
-export { defineSettings, settingsRpc, type SettingsDefinition } from "./settings.js";
+export {
+  defineSettings,
+  settingsRpc,
+  type DeepReadonly,
+  type PluginSettingsDecision,
+  type PluginSettingsErrorCode,
+  type SettingsDefinition,
+} from "./settings.js";
 export {
   defineAttachmentSource,
   PluginAttachmentItemSchema,
