@@ -72,7 +72,7 @@ function SurfaceRenderer({
   params: PluginScreenParams;
   theme: PluginTheme;
 }) {
-  const navigation = usePluginHostNavigation(host.id);
+  const navigation = usePluginHostNavigation(host.id, plugin.id);
   return (
     <PluginInstallationProvider plugin={plugin}>
       <Surface theme={theme} host={host} layout={layout} navigation={navigation} params={params} />

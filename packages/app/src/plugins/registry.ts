@@ -4,6 +4,7 @@ import { createPaseoApi } from "@getpaseo/client";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { assertPluginCompatibility } from "@getpaseo/protocol/plugin-requirements";
 import { resolveAppVersion } from "@/utils/app-version";
+import { removePluginAgentLaunchJournals } from "./agent-launch/journal";
 import { createPluginClientRuntime } from "./client-runtime";
 import { runPluginClientBundle } from "./evaluate";
 import type { InstalledPlugin } from "./types";
@@ -64,6 +65,17 @@ export class PluginRegistry {
       this.syncForgeHost(serverId, preserved);
       this.publish();
       for (const plugin of removed) this.dispose(plugin);
+      const configuredIds = new Set(catalog.map((entry) => entry.id));
+      for (const plugin of removed) {
+        if (!configuredIds.has(plugin.id)) {
+          void removePluginAgentLaunchJournals(serverId, plugin.id).catch((error) => {
+            console.warn(
+              `[Plugins] Failed to clear launch journal for ${serverId}/${plugin.id}`,
+              error,
+            );
+          });
+        }
+      }
     }
     const installed = catalog.flatMap((entry) => {
       const key = `${serverId}/${entry.id}`;
