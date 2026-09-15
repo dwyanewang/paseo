@@ -19,7 +19,7 @@ import { test, vi } from "vitest";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-vi.setConfig({ testTimeout: 15_000 });
+vi.setConfig({ testTimeout: 30_000 });
 
 function run(cwd, command, args, env = {}) {
   return spawnSync(command, args, {
@@ -55,7 +55,10 @@ function createFixture({
   git(controlRoot, "config", "user.name", "Test User");
   git(controlRoot, "config", "user.email", "test@example.com");
   writeFileSync(path.join(controlRoot, ".gitignore"), ".dev/\nnode_modules/\n");
+  writeFileSync(path.join(controlRoot, ".tool-versions"), "nodejs 22.20.0\n");
+  writeFileSync(path.join(controlRoot, ".mise.toml"), '[tools]\nnodejs = "22.20.0"\n');
   writeFileSync(path.join(controlRoot, "package.json"), '{"name":"fixture"}\n');
+  writeFileSync(path.join(controlRoot, "package-lock.json"), '{"lockfileVersion":3}\n');
   writeFileSync(path.join(controlRoot, "shared.txt"), "seed\n");
   mkdirSync(path.join(controlRoot, "scripts"));
   writeFileSync(
@@ -67,7 +70,17 @@ function createFixture({
       "",
     ].join("\n"),
   );
-  git(controlRoot, "add", ".gitignore", "package.json", "scripts", "shared.txt");
+  git(
+    controlRoot,
+    "add",
+    ".gitignore",
+    ".tool-versions",
+    ".mise.toml",
+    "package.json",
+    "package-lock.json",
+    "scripts",
+    "shared.txt",
+  );
   git(controlRoot, "commit", "-m", "seed");
   const initialMain = git(controlRoot, "rev-parse", "main");
 
@@ -126,6 +139,7 @@ function createFixture({
     "prepare-patched-dependencies.mjs",
     "refresh-expo-router-types.mjs",
     "rebuild-rw-main.sh",
+    "rw-conflict-evidence.sh",
   ]) {
     const target = path.join(controlsRoot, scriptName);
     copyFileSync(path.join(repoRoot, "dwyanewang", scriptName), target);
@@ -141,6 +155,7 @@ function createFixture({
     [
       "#!/usr/bin/env bash",
       "set -euo pipefail",
+      'if [[ "$*" == --version ]]; then printf "%s\\n" "10.9.0"; exit 0; fi',
       'if [[ -f "patches/example+1.0.0.patch" ]]; then',
       '  mkdir -p "node_modules/example/android" "node_modules/example/src"',
       '  printf "ndkVersion = old\\n" >"node_modules/example/android/build.gradle"',
@@ -301,6 +316,18 @@ function runManage(fixture, command, args = [], extraEnv = {}) {
     "bash",
     [fixture.script, "--build-root", fixture.buildRoot, "--push", command, ...args],
     { ...fixture.env, ...extraEnv },
+  );
+}
+
+function completeConflictReview(requestPath, operationWorktree, explanation = "reviewed") {
+  const operationDir = path.dirname(requestPath);
+  const reviewPath = path.join(operationDir, "conflict-review.tsv");
+  const stagedTree = git(operationWorktree, "write-tree");
+  writeFileSync(
+    reviewPath,
+    readFileSync(reviewPath, "utf8")
+      .replace("resolution-tree\tTODO\tTODO", `resolution-tree\t${stagedTree}\t${explanation}`)
+      .replaceAll("\tTODO", `\t${explanation}`),
   );
 }
 
@@ -468,7 +495,61 @@ test("syncs the latest upstream main before writing lifecycle ready state", () =
   });
 });
 
-test("keeps completed refs when the optional ready state cannot be written", () => {
+test("checks standalone and run-bound overlay review coordinates before creating lifecycle worktrees", () => {
+  withFixture({}, (fixture) => {
+    writeFileSync(
+      path.join(fixture.controlRoot, "dwyanewang/rw-main-branches.txt"),
+      `feature/one # Personal branch # reviewed-main:${fixture.initialMain} # reviewed-head:${fixture.featureOneHead}\n`,
+    );
+    git(fixture.controlRoot, "add", "dwyanewang/rw-main-branches.txt");
+    git(fixture.controlRoot, "commit", "-m", "chore: add reviewed overlay");
+    const upstreamHead = advanceUpstreamWithoutFetching(fixture, "review-gate-upstream");
+    const targetBefore = git(fixture.controlRoot, "rev-parse", "rw-main");
+    const rejected = runManage(fixture, "promote", [
+      "--feature",
+      "feature-one",
+      "--branch",
+      "feature/one",
+    ]);
+    assert.equal(rejected.status, 1, `${rejected.stdout}\n${rejected.stderr}`);
+    assert.match(rejected.stderr, /has not been reviewed against frozen main/);
+    assert.equal(git(fixture.controlRoot, "rev-parse", "main"), upstreamHead);
+    assert.equal(git(fixture.controlRoot, "rev-parse", "rw-main"), targetBefore);
+    assert.deepEqual(readdirSync(path.join(fixture.fixtureRoot, ".paseo-rw-base-operations")), []);
+  });
+
+  withFixture({}, (fixture) => {
+    writeFileSync(
+      path.join(fixture.controlRoot, "dwyanewang/rw-main-branches.txt"),
+      `feature/one # Personal branch # reviewed-main:${fixture.initialMain} # reviewed-head:${fixture.featureOneHead}\n`,
+    );
+    git(fixture.controlRoot, "add", "dwyanewang/rw-main-branches.txt");
+    git(fixture.controlRoot, "commit", "-m", "chore: add reviewed overlay");
+    const featureRoot = path.join(fixture.fixtureRoot, "feature-one");
+    writeFileSync(path.join(featureRoot, "later.txt"), "unreviewed source change\n");
+    git(featureRoot, "add", "later.txt");
+    git(featureRoot, "commit", "-m", "feat: advance overlay after review");
+    git(featureRoot, "push", "origin", "feature/one");
+    const runId = "lifecycle-review-gate";
+    createRunSnapshot(fixture, runId);
+    const rejected = runManage(fixture, "promote", [
+      "--run-id",
+      runId,
+      "--state-file",
+      fixture.lifecycleState,
+      "--feature",
+      "feature-one",
+      "--branch",
+      "feature/one",
+    ]);
+    assert.equal(rejected.status, 1, `${rejected.stdout}\n${rejected.stderr}`);
+    assert.match(rejected.stderr, /feature\/one head has not completed semantic review/);
+    assert.deepEqual(readdirSync(path.join(fixture.fixtureRoot, ".paseo-rw-base-operations")), []);
+    assert.equal(existsSync(fixture.lifecycleState), false);
+  });
+}, 30_000);
+
+test("keeps published parent and child operations when ready state writing fails, then resumes", () => {
   withFixture({}, (fixture) => {
     const result = runManage(
       fixture,
@@ -483,9 +564,19 @@ test("keeps completed refs when the optional ready state cannot be written", () 
       ],
       { PASEO_TEST_FAIL_STATE_BASENAME: path.basename(fixture.lifecycleState) },
     );
-    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
-    assert.match(result.stderr, /could not write the optional ready state/);
+    assert.equal(result.status, 1, `${result.stdout}\n${result.stderr}`);
+    assert.match(result.stderr, /could not write ready state/);
     assert.equal(existsSync(fixture.lifecycleState), false);
+    const parentRequest = result.stdout.match(/^PASEO_RW_BASE_OPERATION=(.+)$/m)?.[1];
+    const childRequest = result.stdout.match(/^PASEO_RW_MAIN_OPERATION=(.+)$/m)?.[1];
+    assert.notEqual(parentRequest, undefined, result.stdout);
+    assert.notEqual(childRequest, undefined, result.stdout);
+    assert.equal(existsSync(parentRequest), true);
+    assert.equal(existsSync(childRequest), true);
+    assert.equal(
+      readFileSync(path.join(fixture.buildRoot, ".dev/rw-main-operation"), "utf8").trim(),
+      childRequest,
+    );
     assert.equal(readFileSync(path.join(fixture.buildRoot, "feature-one.txt"), "utf8"), "one\n");
     assert.equal(
       git(fixture.controlRoot, "rev-parse", "rw-base"),
@@ -495,8 +586,24 @@ test("keeps completed refs when the optional ready state cannot be written", () 
       git(fixture.controlRoot, "rev-parse", "rw-main"),
       git(fixture.controlRoot, "rev-parse", "origin/rw-main"),
     );
+
+    const resumed = runManage(fixture, "continue", [
+      "--state-file",
+      fixture.lifecycleState,
+      "--operation",
+      parentRequest,
+    ]);
+    assert.equal(resumed.status, 0, `${resumed.stdout}\n${resumed.stderr}`);
+    assert.equal(existsSync(fixture.lifecycleState), true);
+    assert.equal(existsSync(parentRequest), false);
+    assert.match(
+      readFileSync(path.join(path.dirname(childRequest), "result"), "utf8"),
+      /^completed /,
+    );
+    assert.equal(existsSync(path.join(path.dirname(childRequest), "worktree")), false);
+    assert.equal(existsSync(path.join(fixture.buildRoot, ".dev/rw-main-operation")), false);
   });
-});
+}, 30_000);
 
 test("reports direct rw-base commits and blocks lifecycle inference", () => {
   withFixture({}, (fixture) => {
@@ -525,7 +632,7 @@ test("reports direct rw-base commits and blocks lifecycle inference", () => {
     assert.match(maintained.stderr, /unmanaged rw-base first-parent commits/);
     assert.match(maintained.stderr, new RegExp(directCommit));
   });
-}, 15_000);
+}, 30_000);
 
 test("adopts a reviewed direct rw-base commit during feature maintenance", () => {
   withFixture({}, (fixture) => {
@@ -625,6 +732,74 @@ test("maintains an active feature and rejects duplicate promotion", () => {
   });
 });
 
+test("requires frozen-main evidence for a maintenance feature conflict", () => {
+  withFixture({}, (fixture) => {
+    promoteBoth(fixture);
+    const maintenanceRoot = path.join(fixture.fixtureRoot, "maintenance-conflict");
+    git(fixture.controlRoot, "branch", "maintenance/conflict", "rw-base");
+    git(fixture.controlRoot, "worktree", "add", maintenanceRoot, "maintenance/conflict");
+    writeFileSync(path.join(maintenanceRoot, "shared.txt"), "maintenance behavior\n");
+    git(maintenanceRoot, "add", "shared.txt");
+    git(maintenanceRoot, "commit", "-m", "fix: maintain shared behavior");
+    git(maintenanceRoot, "push", "-u", "origin", "maintenance/conflict");
+
+    const updaterRoot = path.join(fixture.fixtureRoot, "upstream-maintenance-conflict");
+    git(fixture.fixtureRoot, "clone", fixture.upstreamRoot, updaterRoot);
+    git(updaterRoot, "config", "user.name", "Upstream User");
+    git(updaterRoot, "config", "user.email", "upstream@example.com");
+    writeFileSync(path.join(updaterRoot, "shared.txt"), "upstream behavior\n");
+    git(updaterRoot, "add", "shared.txt");
+    git(updaterRoot, "commit", "-m", "refactor: change shared upstream behavior");
+    const upstreamCommit = git(updaterRoot, "rev-parse", "HEAD");
+    git(updaterRoot, "push", "origin", "main");
+    git(fixture.controlRoot, "fetch", "upstream");
+    git(fixture.controlRoot, "branch", "-f", "main", "upstream/main");
+    git(fixture.controlRoot, "push", "origin", "main:main");
+    git(fixture.controlRoot, "fetch", "origin");
+
+    const result = runManage(fixture, "maintain", [
+      "--feature",
+      "feature-one",
+      "--branch",
+      "maintenance/conflict",
+    ]);
+    assert.equal(result.status, 5, `${result.stdout}\n${result.stderr}`);
+    const requestPath = result.stdout.match(/^PASEO_RW_BASE_OPERATION=(.+)$/m)?.[1];
+    assert.notEqual(requestPath, undefined, result.stdout);
+    const operationDir = path.dirname(requestPath);
+    const operationWorktree = path.join(operationDir, "worktree");
+    const reviewPath = path.join(operationDir, "conflict-review.tsv");
+    const initialReview = readFileSync(reviewPath, "utf8");
+    assert.match(initialReview, new RegExp(`upstream\\tshared\\.txt\\t${upstreamCommit}\\tTODO`));
+
+    writeFileSync(
+      path.join(operationWorktree, "shared.txt"),
+      "upstream behavior\nmaintenance behavior\n",
+    );
+    git(operationWorktree, "add", "shared.txt");
+    completeConflictReview(requestPath, operationWorktree, "preserved upstream and maintenance");
+    const completeReview = readFileSync(reviewPath, "utf8");
+    writeFileSync(
+      reviewPath,
+      completeReview
+        .split("\n")
+        .filter((line) => !line.startsWith("upstream\t"))
+        .join("\n"),
+    );
+    const missingEvidence = runManage(fixture, "continue", ["--operation", requestPath]);
+    assert.equal(missingEvidence.status, 1);
+    assert.match(missingEvidence.stderr, /conflict review is missing required evidence/);
+    writeFileSync(reviewPath, completeReview);
+
+    const continued = runManage(fixture, "continue", ["--operation", requestPath]);
+    assert.equal(continued.status, 0, `${continued.stdout}\n${continued.stderr}`);
+    assert.equal(
+      readFileSync(path.join(fixture.buildRoot, "shared.txt"), "utf8"),
+      "upstream behavior\nmaintenance behavior\n",
+    );
+  });
+}, 30_000);
+
 test("merges a newer main into rw-base without reviewing persistent features", () => {
   withFixture({}, (fixture) => {
     promoteBoth(fixture);
@@ -686,12 +861,15 @@ test("rejects an add/add patch resolution that drops one parent's targets", () =
     );
     assert.match(patchTargets, /node_modules\/example\/android\/build\.gradle/);
     assert.match(patchTargets, /node_modules\/example\/src\/web\.ts/);
+    const conflictReview = readFileSync(path.join(operationDir, "conflict-review.tsv"), "utf8");
+    assert.match(conflictReview, /upstream\tpatches\/example\+1\.0\.0\.patch\t[0-9a-f]{40}\tTODO/);
 
     writeFileSync(
       path.join(operationWorktree, "patches/example+1.0.0.patch"),
       git(fixture.controlRoot, "show", "main:patches/example+1.0.0.patch") + "\n",
     );
     git(operationWorktree, "add", "patches/example+1.0.0.patch");
+    completeConflictReview(requestPath, operationWorktree);
 
     const continued = runManage(fixture, "continue", ["--operation", requestPath]);
     assert.equal(continued.status, 1);
@@ -699,7 +877,7 @@ test("rejects an add/add patch resolution that drops one parent's targets", () =
     assert.match(continued.stderr, /node_modules\/example\/android\/build\.gradle/);
     assert.equal(existsSync(requestPath), true);
   });
-}, 15_000);
+}, 30_000);
 
 test("auto-stages and accepts the semantic union of disjoint add/add patch targets", () => {
   withFixture({ featureOneAddsPatch: true }, (fixture) => {
@@ -709,6 +887,20 @@ test("auto-stages and accepts the semantic union of disjoint add/add patch targe
     const stagedPatch = git(operationWorktree, "show", ":patches/example+1.0.0.patch");
     assert.match(stagedPatch, /node_modules\/example\/android\/build\.gradle/);
     assert.match(stagedPatch, /node_modules\/example\/src\/web\.ts/);
+    completeConflictReview(requestPath, operationWorktree);
+    const reviewPath = path.join(path.dirname(requestPath), "conflict-review.tsv");
+    const completeReview = readFileSync(reviewPath, "utf8");
+    writeFileSync(
+      reviewPath,
+      completeReview
+        .split("\n")
+        .filter((line) => !line.startsWith("upstream\t"))
+        .join("\n"),
+    );
+    const missingUpstreamEvidence = runManage(fixture, "continue", ["--operation", requestPath]);
+    assert.equal(missingUpstreamEvidence.status, 1);
+    assert.match(missingUpstreamEvidence.stderr, /conflict review is missing required evidence/);
+    writeFileSync(reviewPath, completeReview);
 
     const continued = runManage(fixture, "continue", ["--operation", requestPath]);
     assert.equal(continued.status, 0, `${continued.stdout}\n${continued.stderr}`);
@@ -719,7 +911,7 @@ test("auto-stages and accepts the semantic union of disjoint add/add patch targe
     assert.match(finalPatch, /node_modules\/example\/android\/build\.gradle/);
     assert.match(finalPatch, /node_modules\/example\/src\/web\.ts/);
   });
-}, 15_000);
+}, 30_000);
 
 test("refreshes upstream before continue and rejects a moved frozen main", () => {
   withFixture({ featureOneAddsPatch: true }, (fixture) => {
@@ -772,6 +964,11 @@ test("run-bound continue allows remote main to advance while preserving every fr
     const operationWorktree = path.join(path.dirname(requestPath), "worktree");
     writeFileSync(path.join(operationWorktree, "shared.txt"), "feature two\n");
     git(operationWorktree, "add", "shared.txt");
+    completeConflictReview(
+      requestPath,
+      operationWorktree,
+      "preserved frozen main and retained feature",
+    );
 
     const continued = runManage(fixture, "continue", ["--operation", requestPath]);
     assert.equal(continued.status, 0, `${continued.stdout}\n${continued.stderr}`);
@@ -796,14 +993,15 @@ test("rejects choosing one parent when add/add patches change different hunks of
       git(fixture.controlRoot, "show", "main:patches/example+1.0.0.patch") + "\n",
     );
     git(operationWorktree, "add", "patches/example+1.0.0.patch");
+    completeConflictReview(requestPath, operationWorktree);
 
     const continued = runManage(fixture, "continue", ["--operation", requestPath]);
     assert.equal(continued.status, 1);
-    assert.match(continued.stderr, /drops patch change from ours target/);
+    assert.match(continued.stderr, /drops patch change from stage 2 target/);
     assert.match(continued.stderr, /ndkVersion = old/);
     assert.equal(existsSync(requestPath), true);
   });
-}, 15_000);
+}, 30_000);
 
 test("retires one feature by rebuilding from main and retained integrations", () => {
   withFixture({}, (fixture) => {
@@ -875,6 +1073,7 @@ test("continues a retirement after the retained-feature conflict is resolved", (
     writeFileSync(path.join(updaterRoot, "shared.txt"), "upstream\n");
     git(updaterRoot, "add", "shared.txt");
     git(updaterRoot, "commit", "-m", "refactor: replace shared behavior");
+    const upstreamCommit = git(updaterRoot, "rev-parse", "HEAD");
     git(updaterRoot, "push", "origin", "main");
     git(fixture.controlRoot, "fetch", "upstream");
     git(fixture.controlRoot, "branch", "-f", "main", "upstream/main");
@@ -897,9 +1096,29 @@ test("continues a retirement after the retained-feature conflict is resolved", (
       new RegExp(`operation_state_file=${fixture.lifecycleState}`),
     );
     assert.equal(existsSync(fixture.lifecycleState), false);
+    const operationDir = path.dirname(requestPath);
     const operationWorktree = path.join(path.dirname(requestPath), "worktree");
+    const reviewPath = path.join(operationDir, "conflict-review.tsv");
+    assert.match(
+      readFileSync(reviewPath, "utf8"),
+      new RegExp(`upstream\\tshared\\.txt\\t${upstreamCommit}\\tTODO`),
+    );
     writeFileSync(path.join(operationWorktree, "shared.txt"), "feature two\n");
     git(operationWorktree, "add", "shared.txt");
+    completeConflictReview(requestPath, operationWorktree, "preserved retained feature behavior");
+
+    const completeReview = readFileSync(reviewPath, "utf8");
+    writeFileSync(
+      reviewPath,
+      completeReview
+        .split("\n")
+        .filter((line) => !line.startsWith("upstream\t"))
+        .join("\n"),
+    );
+    const missingEvidence = runManage(fixture, "continue", ["--operation", requestPath]);
+    assert.equal(missingEvidence.status, 1);
+    assert.match(missingEvidence.stderr, /conflict review is missing required evidence/);
+    writeFileSync(reviewPath, completeReview);
 
     const continued = runManage(fixture, "continue", ["--operation", requestPath]);
     assert.equal(continued.status, 0, `${continued.stdout}\n${continued.stderr}`);
@@ -917,3 +1136,122 @@ test("continues a retirement after the retained-feature conflict is resolved", (
     assert.match(status.stdout, /feature-two\tactive/);
   });
 });
+
+test("preserves parent and child operations across an rw-main overlay conflict and completes both", () => {
+  withFixture({}, (fixture) => {
+    git(fixture.controlRoot, "switch", "main");
+    git(fixture.controlRoot, "switch", "-c", "overlay/conflict");
+    writeFileSync(path.join(fixture.controlRoot, "feature-one.txt"), "overlay replacement\n");
+    git(fixture.controlRoot, "add", "feature-one.txt");
+    git(fixture.controlRoot, "commit", "-m", "feat: conflicting overlay");
+    const overlayHead = git(fixture.controlRoot, "rev-parse", "HEAD");
+    git(fixture.controlRoot, "switch", "chore/build-paseo");
+    const mainHead = git(fixture.controlRoot, "rev-parse", "main");
+    writeFileSync(
+      path.join(fixture.controlRoot, "dwyanewang/rw-main-branches.txt"),
+      `overlay/conflict # Personal branch # reviewed-main:${mainHead} # reviewed-head:${overlayHead}\n`,
+    );
+    git(fixture.controlRoot, "add", "dwyanewang/rw-main-branches.txt");
+    git(fixture.controlRoot, "commit", "-m", "chore: add reviewed conflicting overlay");
+
+    const started = runManage(fixture, "promote", [
+      "--state-file",
+      fixture.lifecycleState,
+      "--feature",
+      "feature-one",
+      "--branch",
+      "feature/one",
+    ]);
+    assert.equal(started.status, 6, `${started.stdout}\n${started.stderr}`);
+    const parentRequest = started.stdout.match(/^PASEO_RW_BASE_OPERATION=(.+)$/m)?.[1];
+    assert.notEqual(parentRequest, undefined, started.stdout);
+    const childIndex = path.join(fixture.buildRoot, ".dev/rw-main-operation");
+    assert.equal(existsSync(childIndex), true);
+    const childRequest = readFileSync(childIndex, "utf8").trim();
+    const parentAbort = runManage(fixture, "abort", ["--operation", parentRequest]);
+    assert.equal(parentAbort.status, 1);
+    assert.match(parentAbort.stderr, /abort the child first/);
+    assert.equal(readFileSync(childIndex, "utf8").trim(), childRequest);
+    assert.equal(existsSync(parentRequest), true);
+    const childWorktree = path.join(path.dirname(childRequest), "worktree");
+    writeFileSync(path.join(childWorktree, "feature-one.txt"), "one\noverlay replacement\n");
+    git(childWorktree, "add", "feature-one.txt");
+    completeConflictReview(
+      childRequest,
+      childWorktree,
+      "preserved base feature and overlay behavior",
+    );
+
+    const continued = runManage(fixture, "continue", ["--operation", parentRequest]);
+    assert.equal(continued.status, 0, `${continued.stdout}\n${continued.stderr}`);
+    assert.equal(existsSync(parentRequest), false);
+    assert.equal(existsSync(childIndex), false);
+    assert.match(readFileSync(fixture.lifecycleState, "utf8"), /paseo_preflight_status=ready/);
+    assert.equal(
+      readFileSync(path.join(fixture.buildRoot, "feature-one.txt"), "utf8"),
+      "one\noverlay replacement\n",
+    );
+  });
+}, 45_000);
+
+test("requires aborting an active rw-main child before its lifecycle parent", () => {
+  withFixture({}, (fixture) => {
+    git(fixture.controlRoot, "switch", "main");
+    git(fixture.controlRoot, "switch", "-c", "overlay/abort-conflict");
+    writeFileSync(path.join(fixture.controlRoot, "feature-one.txt"), "abort overlay\n");
+    git(fixture.controlRoot, "add", "feature-one.txt");
+    git(fixture.controlRoot, "commit", "-m", "feat: abortable conflicting overlay");
+    const overlayHead = git(fixture.controlRoot, "rev-parse", "HEAD");
+    git(fixture.controlRoot, "switch", "chore/build-paseo");
+    const mainHead = git(fixture.controlRoot, "rev-parse", "main");
+    writeFileSync(
+      path.join(fixture.controlRoot, "dwyanewang/rw-main-branches.txt"),
+      `overlay/abort-conflict # Personal branch # reviewed-main:${mainHead} # reviewed-head:${overlayHead}\n`,
+    );
+    git(fixture.controlRoot, "add", "dwyanewang/rw-main-branches.txt");
+    git(fixture.controlRoot, "commit", "-m", "chore: add abortable overlay");
+    const targetBefore = git(fixture.controlRoot, "rev-parse", "rw-main");
+
+    const started = runManage(fixture, "promote", [
+      "--state-file",
+      fixture.lifecycleState,
+      "--feature",
+      "feature-one",
+      "--branch",
+      "feature/one",
+    ]);
+    assert.equal(started.status, 6, `${started.stdout}\n${started.stderr}`);
+    const parentRequest = started.stdout.match(/^PASEO_RW_BASE_OPERATION=(.+)$/m)?.[1];
+    assert.notEqual(parentRequest, undefined, started.stdout);
+    const childIndex = path.join(fixture.buildRoot, ".dev/rw-main-operation");
+    const childRequest = readFileSync(childIndex, "utf8").trim();
+
+    const parentFirst = runManage(fixture, "abort", ["--operation", parentRequest]);
+    assert.equal(parentFirst.status, 1);
+    assert.match(parentFirst.stderr, /abort the child first/);
+    const childAbort = run(
+      fixture.controlRoot,
+      "bash",
+      [
+        path.join(fixture.controlRoot, "dwyanewang/rebuild-rw-main.sh"),
+        "--build-root",
+        fixture.buildRoot,
+        "--abort-operation",
+        childRequest,
+      ],
+      fixture.env,
+    );
+    assert.equal(childAbort.status, 0, `${childAbort.stdout}\n${childAbort.stderr}`);
+    assert.equal(existsSync(childIndex), false);
+    assert.match(
+      readFileSync(path.join(path.dirname(childRequest), "result"), "utf8"),
+      /^aborted /,
+    );
+
+    const parentAbort = runManage(fixture, "abort", ["--operation", parentRequest]);
+    assert.equal(parentAbort.status, 0, `${parentAbort.stdout}\n${parentAbort.stderr}`);
+    assert.equal(existsSync(parentRequest), false);
+    assert.equal(git(fixture.controlRoot, "rev-parse", "rw-main"), targetBefore);
+    assert.equal(existsSync(fixture.lifecycleState), false);
+  });
+}, 45_000);

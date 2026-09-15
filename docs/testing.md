@@ -165,6 +165,10 @@ Codex MultiAgentV2 real tests use local Codex authentication rather than the Ope
 - Server: `packages/server/src/test-utils/vitest-setup.ts` loads `.env.test`, sets `PASEO_SUPERVISED=0`, and disables Git/SSH prompts. Add new global env shims here, not in individual tests.
 - App: `packages/app/vitest.setup.ts` provides `expo`/`__DEV__` shims and stubs a few native-only modules (`react-native-unistyles`, `react-native-svg`, `expo-linking`, `@xterm/addon-ligatures`). Stubbing here is for modules that have no meaningful Node behavior — not a license to mock app code.
 
+Scripts that select individual tests across workspaces must run them from the package directory when it has a Vitest config; app unit invocations also need `--project unit`. Passing package paths to Vitest from the repository root does not load those package setup files. Build the required workspace outputs before testing a combined candidate so cross-package imports use its current declarations and JavaScript. Selection must exclude browser, E2E, real-provider, and local-resource tests unless that category was explicitly requested.
+
+The `.test.` name alone does not identify a Vitest unit test. Files under `packages/cli/tests/` use the CLI script runner, and files importing `node:test` need the Node test runner. App unit discovery follows the candidate's package configuration: `src/**/*.{test,spec}.{ts,tsx}` plus any explicit includes, such as `native-release-version.test.ts` in versions that declare it. Automated candidate selection must respect those boundaries and record unsupported files as coverage gaps instead of repeatedly invoking the wrong runner. Do not infer a product candidate's include rules solely from a separate control checkout.
+
 ## Running tests locally
 
 Test suites in this repo are heavy. Running them in bulk freezes the machine, especially with multiple agents in parallel.

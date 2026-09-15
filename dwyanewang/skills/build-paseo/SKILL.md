@@ -45,10 +45,14 @@ bash "$paseo_chore_root/dwyanewang/prepare-rw-main-for-build.sh" \
 
 - 退出码 `3`：读取输出的 `PASEO_REVIEW_REQUEST_FILE` 并把值保存为 `paseo_review_request_file`。只有一个简单待审分支时由主代理审查；有至少两个独立待审分支时，按 request 中冻结的精确 SHA 区间启动最多 3 个只读 reviewer subagent 并行审查，禁止它们改文件、移动 refs 或运行测试。每项固定返回分支名、main/head 区间、`keep|remove|partial`、提交/路径证据和所需动作。主代理核对待审集合和全部坐标，并由 AI 自行完成接受决策；不向用户请求人工确认。
 - rebase 后优先使用报告中的 `git range-diff`：若旧 feature commits 均能与新 commits 对应，且变化仅限冲突解决带来的必要调整，执行增量语义审查；否则执行完整区间审查。AI 必须继续查看冲突解决 diff、路径和验证结果，不能仅凭 patch 等价自动接受。
+- 同一 request 中某分支已完成最终 `keep|remove` 审查、但另一分支要回源时，在其他分支 head 改变之前，把该分支的非空证据文件通过 prepare 的 `--record-review-result REQUEST BRANCH DECISION EVIDENCE` 记录；旧 request 已失效则先生成新 request。同 run 后续 request 会按 branch 行、PR 映射和规则哈希精确复用；`remove` 仍须最终显式传 `--remove-branch`。该缓存不免除依赖替代、冲突、组合验证或 readiness。
 - `partial` 则回源功能分支修整、定向验证并推送。`uncertain` 只作为 AI 内部中间态：继续扩大证据范围；仍无法证明上游完整吸收时默认 `keep`，不得自动 `remove`。必须等所有 reviewer 的最终结论返回且集合、坐标核对一致，才能传 `--accept-review-request "$paseo_review_request_file"` 接受；中途的 keep 不算最终结论。接受轮原样重传 request 轮的新增和 PR 重映射参数，再加必要的 `--remove-branch`，并使用同一 `--run-id --no-fetch`；不要退回 main-only 接受方式。
-- 完整同步的前置命令会在语义审查 request 输出前运行一次只读 mergeability 预检：在临时 detached worktree 中按真实顺序模拟 `rw-base + main + overlays` 的合并。冲突会立即报告具体 overlay 和文件并停止，先回源分支 rebase/修复；预检不移动 `rw-base`/`rw-main`、不改清单、不安装依赖，也不运行构建。
+- 完整同步的前置命令会在语义审查 request 输出前运行一次只读 mergeability 预检：在临时 detached worktree 中按真实顺序模拟 `rw-base + main + overlays` 的合并。支持的文本/`.patch` 冲突只诊断具体阶段和文件，继续原 exit 3/4；未支持冲突仍停止。预检不解决冲突、不学习 rerere、不移动 `rw-base`/`rw-main`、不改清单、不安装依赖，也不运行构建。
 - 正式 readiness 不是对 `rw-base` 和每条 overlay 分别校验。脚本先顺序合并全部层；stamp miss 时先构建 server 共用依赖与 app audio 依赖，立即运行 app typecheck，成功后才构建 server/CLI，最后仍执行完整 format/typecheck/lint。同一请求内若重试产生不同 commit 但完全相同的 Git tree，且固定工具链、实际 Node/npm、依赖输入和完整 dist 摘要仍匹配可信 readiness stamp，则复用该结果；任一项变化都完整重跑。
 - 退出码 `4`：清单已更新但尚未 ready。集中提交本轮清单变更，不为每项 PR/分支单独提交；校验按下方 hook 规则执行，推送 `chore/build-paseo` 后，保留 `--run-id --no-fetch`、不带增删/重映射/接受参数重跑。
+- 退出码 `6`：清单提交后的 rebuild 在隔离 rw-main operation 中遇到支持的 sync/main/overlay 文本冲突。保存 `PASEO_RW_MAIN_OPERATION` 与 worktree；只修改冲突路径并 `git add`，运行 `git write-tree`，把 tree SHA 填入 `conflict-review.tsv` 的 `resolution-tree` 行，并为所有生成行填写非空证据说明，然后原样重跑同一 `--run-id --no-fetch` prepare。不要手工 commit/reset/rebase。可用 rebuild 的 `--operation-status` 查看；仅尚未进入发布阶段的现场可用 `--abort-operation` 放弃，`publishing`/`awaiting-ready` 必须恢复完成。多个冲突逐次暂停，已完成前缀不重做；clean merge 在调用 Git merge 前保存冻结双父/说明，随后补记经双父重建核对的 tree，因此首次 tree 记录前或 commit 后首次完成记录前中断均可恢复；已包含在合法前缀中的 overlay 记为 no-op，不造空提交。rerere 匹配只恢复内容，仍须审查和暂存。重复冲突会给出不阻断的源维护建议，不会自动 rebase。
+- 冲突/依赖候选测试在 readiness 完成后运行：精确同名直接回归及平台变体，加上变化区间内的同名相关测试；排除 e2e/browser/real/local 并记录覆盖缺口。按 workspace 的 Vitest 配置执行，app 指定 `--project unit`，每批最多 8 个。适用集合超过 32 个时，在当前 operation 的 `capability-test-selection.tsv` 中对每行填写 `run|skip` 和依据，直接回归必须保留；清单绑定候选 tree 和完整集合。原样重试即可，逐项审查后可运行超过 32 个必要测试，无需 abort 或回源。测试使候选变脏时不得记录 PASS 或发布。
+- `.test.` 文件名不代表可交给 Vitest：导入或 require `node:test` 的文件记为 `node-test-runner` 覆盖缺口，CLI `tests/` 的脚本测试及不支持的路径/扩展名同样排除。app 已知 unit 范围包括 `src/` 下 ts/tsx 和显式包含的 `native-release-version.test.ts`。发布恢复中的能力测试失败保留发布进度，不能改用 abort；修复环境后仍按原请求续跑。
 - 其他非零退出：停止并诊断。readiness gate 未成功，不得启动任一产物构建。
 
 前置脚本、长期功能管理与正式产物脚本使用同一把非阻塞锁。ready state 同时冻结控制面 HEAD、`main`、`rw-base` 和 `rw-main`，正式脚本会在删除旧产物前再次核对。
@@ -56,8 +60,8 @@ bash "$paseo_chore_root/dwyanewang/prepare-rw-main-for-build.sh" \
 ## 长期功能
 
 - 用户明确要求把功能固化到基线时，完整读取 `打包流程.md` 第 1.3 节并使用 `manage-rw-base.sh promote|maintain|retire|status`；不要把它重新加入临时叠加清单。先检查 `status` 的 `UNMANAGED` 行；存在时 lifecycle 会拒绝自动推断，不能再次 promote。若已证明某个历史直提提交被当前受管功能完整接管，则在修复该功能的同一次 `maintain` 中显式传 `--adopt-commit <SHA>`；它会写入追加式 trailer 并让后续 status 不再报该项。禁止为清掉 `UNMANAGED` 而重写或删除已推送的 `rw-base` 历史。
-- 打包请求内的 `promote|maintain|retire` 必须同时传原 `--run-id "$paseo_run_id"` 和 `--state-file "$paseo_preflight_state"`。它读取现有请求快照，不 fetch、不移动或 push main；tracking refs 可以继续前进，只要冻结 main 仍是其祖先。冲突 `continue` 不重复传 run ID，也不隐式 fetch；operation request 已冻结 run/control/main/base/source 坐标。成功 ready state 保留请求身份与计时，直接进入产物链，不再额外 prepare。state 写入失败后沿用同一 run 的 `--no-fetch` prepare 恢复。只有脱离打包请求的 standalone lifecycle 才保持“先同步最新 main”的旧语义。
-- 退出码 `5` 表示生命周期操作保留了冲突 worktree。保存输出的 `PASEO_RW_BASE_OPERATION`；解决并 `git add` 后用 `continue --operation`，或用 `abort --operation` 放弃。不得手工移动 `rw-base`/`rw-main`。
+- 打包请求内的 `promote|maintain|retire` 必须同时传原 `--run-id "$paseo_run_id"` 和 `--state-file "$paseo_preflight_state"`。它读取现有请求快照，不 fetch、不移动或 push main；tracking refs 可以继续前进，只要冻结 main 仍是其祖先。冲突或 ready state 写入失败后的 `continue` 都不重复传 run ID，也不隐式 fetch；operation request 已冻结 run/control/main/base/source 坐标。成功 ready state 保留请求身份与计时，直接进入产物链，不再额外 prepare。父 lifecycle 调用的 rw-main operation 会保留到 state 写入成功并由父流程内部确认；不要人工调用 `--confirm-operation`。只有脱离打包请求的 standalone lifecycle 才保持“先同步最新 main”的旧语义。
+- 退出码 `5` 表示生命周期操作保留了冲突 worktree。保存输出的 `PASEO_RW_BASE_OPERATION`；解决并 `git add`，完成 `conflict-review.tsv` 的双父和 upstream 必填证据后用 `continue --operation`，或用 `abort --operation` 放弃。sync、feature、replay 均检查各自冻结源输入尚未包含的 main 历史。不得手工移动 `rw-base`/`rw-main`。
 
 ## 正式产物链与端选择
 

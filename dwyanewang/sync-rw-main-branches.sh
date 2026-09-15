@@ -21,6 +21,8 @@ belong in rw-base and are managed by manage-rw-base.sh.
   --accept-main-review SHA  Confirm pending reviews at this exact main SHA.
   --accept-branch-head BRANCH SHA
                             Freeze one reviewed branch at this exact current head.
+  --record-review-result REQUEST BRANCH DECISION EVIDENCE
+                            Cache one reviewed keep/remove conclusion for this run.
   --check-mergeability      Simulate rw-base + overlays before reporting or
                             accepting review; do not move product refs.
   --dry-run                 Print the proposed manifest diff without changing it.
@@ -34,6 +36,10 @@ dry_run=0
 check_mergeability=0
 accept_main_review=
 accept_review_request=
+record_review_request=
+record_review_branch=
+record_review_decision=
+record_review_evidence=
 frozen_main=
 declare -A updated_prs=()
 declare -a addition_kinds=()
@@ -132,6 +138,15 @@ while (($# > 0)); do
       accept_review_request=$2
       shift 2
       ;;
+    --record-review-result)
+      (($# >= 5)) || { printf '%s\n' 'Missing REQUEST, BRANCH, DECISION, or EVIDENCE.' >&2; exit 2; }
+      [[ -z "$record_review_request" && ("$4" == keep || "$4" == remove) ]] || exit 2
+      record_review_request=$2
+      record_review_branch=$3
+      record_review_decision=$4
+      record_review_evidence=$5
+      shift 5
+      ;;
     --dry-run)
       dry_run=1
       shift
@@ -172,6 +187,10 @@ fail() {
 }
 
 source "$script_dir/build-paseo-state.sh"
+conflict_evidence_helper=${PASEO_CONFLICT_EVIDENCE_HELPER:-"$script_dir/rw-conflict-evidence.sh"}
+[[ -f "$conflict_evidence_helper" ]] || fail "missing conflict evidence helper: $conflict_evidence_helper"
+# shellcheck disable=SC1090
+source "$conflict_evidence_helper"
 if [[ -n "$frozen_main" ]]; then
   paseo_assert_frozen_main "$repo_root" "$frozen_main" || fail 'frozen main validation failed'
 fi
@@ -283,11 +302,33 @@ parse_review_metadata() {
   fi
 }
 
+replace_review_metadata() {
+  local line=$1 main_sha=$2 head_sha=$3
+  line=$(sed -E \
+    -e "s/(#[[:space:]]*reviewed-main:)[0-9a-f]{40}/\\1$main_sha/" \
+    -e "s/(#[[:space:]]*reviewed-head:)[0-9a-f]{40}/\\1$head_sha/" <<<"$line")
+  printf '%s' "$line"
+}
+
+replace_pr_metadata() {
+  local line=$1 number=$2
+  if [[ "$line" =~ \#[[:space:]]*PR[[:space:]]*\#[1-9][0-9]* ]]; then
+    sed -E "s/(#[[:space:]]*PR[[:space:]]*#)[1-9][0-9]*/\\1$number/" <<<"$line"
+  else
+    printf '%s' "${line/ # reviewed-main:/ # PR #$number # reviewed-main:}"
+  fi
+}
+
 [[ -f "$manifest_path" ]] || fail "missing manifest: $manifest_path"
 git show-ref --verify --quiet "refs/heads/$base_branch" || fail "missing local branch: $base_branch"
 base_head=$(git rev-parse "$base_branch")
 persistent_base_head=$(git rev-parse --verify "refs/heads/$persistent_base_branch" 2>/dev/null || true)
 
+if [[ -n "$record_review_request" ]]; then
+  [[ -z "$accept_review_request$accept_main_review" && ${#expected_branch_heads[@]} -eq 0 ]] ||
+    fail '--record-review-result cannot be combined with acceptance coordinates'
+  accept_review_request=$record_review_request
+fi
 if [[ -n "$accept_review_request" ]]; then
   [[ -z "$accept_main_review" && ${#expected_branch_heads[@]} -eq 0 ]] ||
     fail "--accept-review-request cannot be combined with explicit review coordinates"
@@ -328,10 +369,6 @@ verify_accepted_ref_tips() {
 }
 
 verify_accepted_ref_tips
-
-if ((${#removal_branches[@]} > 0)) && [[ -z "$accept_main_review" ]]; then
-  fail "--remove-branch requires --accept-main-review $base_head"
-fi
 
 current_branch=$(git symbolic-ref --quiet --short HEAD) || fail "detached HEAD is not supported"
 if ((!dry_run)); then
@@ -473,12 +510,40 @@ declare -A branch_pr_titles=()
 declare -A branch_pr_urls=()
 declare -A branch_reviewed_mains=()
 declare -A branch_reviewed_heads=()
+declare -A branch_dependencies=()
 declare -a ordered_branches=()
 declare -A newly_added_branches=()
 declare -A manifest_pr_branches=()
 declare -A seen_manifest_prs=()
 declare -A dropped_line_indexes=()
 declare -A automatically_removed_branches=()
+review_cache_dir=${PASEO_REVIEW_CACHE_DIR:-$(git rev-parse --git-path paseo-review-cache)}
+review_rules_text='absorbed-by-main:v3;full-semantic-review;uncertain-keeps;dependency-and-integration-independent'
+review_rules_hash=$(printf '%s' "$review_rules_text" | git hash-object --stdin)
+
+review_cache_key() {
+  local branch_name=$1 pr_identity
+  pr_identity=${branch_prs[$branch_name]:-none}
+  printf 'branch\t%s\t%s\t%s\t%s\t%s\npr\t%s\nrules\t%s\n' \
+    "$branch_name" "${review_main_starts[$branch_name]}" "$base_head" \
+    "${branch_reviewed_heads[$branch_name]}" "${current_branch_heads[$branch_name]}" \
+    "$pr_identity" "$review_rules_hash" | git hash-object --stdin
+}
+
+cached_review_decision() {
+  local branch_name=$1 key cache_file evidence_file decision evidence_hash extra actual_hash
+  key=$(review_cache_key "$branch_name")
+  cache_file="$review_cache_dir/$key.env"
+  evidence_file="$review_cache_dir/$key.evidence"
+  [[ -f "$cache_file" ]] || return 1
+  read -r decision evidence_hash extra <"$cache_file" || return 1
+  [[ ("$decision" == keep || "$decision" == remove) && "$evidence_hash" =~ ^[0-9a-f]{40}$ && -z "$extra" ]] ||
+    return 1
+  [[ -f "$evidence_file" && -s "$evidence_file" ]] || return 1
+  actual_hash=$(git hash-object -- "$evidence_file") || return 1
+  [[ "$actual_hash" == "$evidence_hash" ]] || return 1
+  printf '%s' "$decision"
+}
 
 while IFS= read -r line || [[ -n "$line" ]]; do
   entry=${line%%#*}
@@ -497,6 +562,11 @@ while IFS= read -r line || [[ -n "$line" ]]; do
     fail "reviewed-main $parsed_reviewed_main for $entry is not an ancestor of $base_branch"
   branch_reviewed_mains[$entry]=$parsed_reviewed_main
   branch_reviewed_heads[$entry]=$parsed_reviewed_head
+  entry_dependencies=
+  if [[ "$line" =~ \#[[:space:]]*depends-on:([^#[:space:]]+) ]]; then
+    entry_dependencies=${BASH_REMATCH[1]}
+  fi
+  branch_dependencies[$entry]=$entry_dependencies
 
   entry_pr=
   if [[ "$line" =~ \#[[:space:]]*PR[[:space:]]*\#([1-9][0-9]*)([[:space:]]|$) ]]; then
@@ -509,7 +579,7 @@ while IFS= read -r line || [[ -n "$line" ]]; do
     validate_source_branch "$entry"
     printf 'Updating %s: PR #%s -> #%s.\n' "$entry" "${entry_pr:-none}" "${updated_prs[$entry]}"
     entry_pr=${updated_prs[$entry]}
-    line="$entry # PR #$entry_pr # reviewed-main:$parsed_reviewed_main # reviewed-head:$parsed_reviewed_head"
+    line=$(replace_pr_metadata "$line" "$entry_pr")
   fi
   if [[ -n "$entry_pr" ]]; then
     [[ -z "${seen_manifest_prs[$entry_pr]+present}" ]] ||
@@ -585,7 +655,7 @@ for index in "${!addition_kinds[@]}"; do
       [[ -z "$existing_pr" ]] ||
         fail "$pr_head_branch is already mapped to PR #$existing_pr"
       line_index=${branch_indexes[$pr_head_branch]}
-      output_lines[$line_index]="$pr_head_branch # PR #$value # reviewed-main:${branch_reviewed_mains[$pr_head_branch]} # reviewed-head:${branch_reviewed_heads[$pr_head_branch]}"
+      output_lines[$line_index]=$(replace_pr_metadata "${output_lines[$line_index]}" "$value")
       branch_prs[$pr_head_branch]=$value
       branch_pr_states[$pr_head_branch]=$pr_state
       branch_pr_titles[$pr_head_branch]=$pr_title
@@ -627,10 +697,53 @@ for index in "${!addition_kinds[@]}"; do
   printf 'Adding temporary personal overlay %s.\n' "$value"
 done
 
+declare -A retained_branch_set=() forced_dependency_reviews=()
+for branch_name in "${ordered_branches[@]}"; do
+  line_index=${branch_indexes[$branch_name]}
+  [[ -z "${dropped_line_indexes[$line_index]+present}" ]] && retained_branch_set[$branch_name]=1
+done
+
+for branch_name in "${ordered_branches[@]}"; do
+  line_index=${branch_indexes[$branch_name]}
+  [[ -z "${dropped_line_indexes[$line_index]+present}" ]] || continue
+  IFS=',' read -r -a declared_dependencies <<<"${branch_dependencies[$branch_name]:-}"
+  for dependency in "${declared_dependencies[@]}"; do
+    dependency=$(trim "$dependency")
+    [[ -n "$dependency" ]] || continue
+    [[ "$dependency" != "$branch_name" ]] || fail "$branch_name cannot depend on itself"
+    if [[ -n "${requested_removals[$dependency]+present}" || -n "${automatically_removed_branches[$dependency]+present}" ]]; then
+      forced_dependency_reviews[$branch_name]=1
+      continue
+    fi
+    [[ -n "${retained_branch_set[$dependency]+present}" ]] ||
+      fail "$branch_name depends on missing manifest branch $dependency"
+    ((branch_indexes[$dependency] < branch_indexes[$branch_name])) ||
+      fail "$dependency must appear before dependent branch $branch_name"
+  done
+done
+
+dependency_reaches() {
+  local current=$1 wanted=$2 seen=${3:-,} dependency
+  [[ "$seen" != *",$current,"* ]] || return 1
+  seen+="$current,"
+  IFS=',' read -r -a reach_dependencies <<<"${branch_dependencies[$current]:-}"
+  for dependency in "${reach_dependencies[@]}"; do
+    dependency=$(trim "$dependency")
+    [[ -n "$dependency" ]] || continue
+    [[ "$dependency" == "$wanted" ]] && return 0
+    dependency_reaches "$dependency" "$wanted" "$seen" && return 0
+  done
+  return 1
+}
+for branch_name in "${!retained_branch_set[@]}"; do
+  dependency_reaches "$branch_name" "$branch_name" && fail "dependency cycle includes $branch_name"
+done
+
 declare -a review_branches=()
 declare -a pending_review_branches=()
 declare -A current_branch_heads=()
 declare -A review_main_starts=()
+declare -A reused_review_decisions=()
 for branch_name in "${!branch_indexes[@]}"; do
   line_index=${branch_indexes[$branch_name]}
   current_branch_heads[$branch_name]=$(git rev-parse "$branch_name")
@@ -639,6 +752,8 @@ for branch_name in "${!branch_indexes[@]}"; do
       fail 'overlay is outside the main snapshot'
   fi
   if [[ -n "${newly_added_branches[$branch_name]+present}" ]] ||
+    [[ -n "${forced_dependency_reviews[$branch_name]+present}" ]] ||
+    [[ -n "${requested_removals[$branch_name]+present}" ]] ||
     [[ "${branch_reviewed_mains[$branch_name]}" != "$base_head" ]] ||
     [[ "${branch_reviewed_heads[$branch_name]}" != "${current_branch_heads[$branch_name]}" ]]; then
     branch_base=$(git merge-base "$base_branch" "$branch_name")
@@ -647,8 +762,15 @@ for branch_name in "${!branch_indexes[@]}"; do
       review_main_starts[$branch_name]=$branch_base
     fi
     pending_review_branches+=("$branch_name")
-    if [[ -z "${dropped_line_indexes[$line_index]+present}" ]]; then
-      review_branches+=("$branch_name")
+    if [[ -z "${dropped_line_indexes[$line_index]+present}" ||
+      -n "${requested_removals[$branch_name]+present}" ]]; then
+      if [[ -z "${forced_dependency_reviews[$branch_name]+present}" ]] &&
+        cached_decision=$(cached_review_decision "$branch_name"); then
+        reused_review_decisions[$branch_name]=$cached_decision
+        paseo_build_stage "manifest:review-reuse branch=$branch_name decision=$cached_decision"
+      else
+        review_branches+=("$branch_name")
+      fi
     fi
   fi
 done
@@ -674,7 +796,43 @@ verify_frozen_inputs() {
   done
 }
 
+if [[ -n "$record_review_request" ]]; then
+  [[ -n "${current_branch_heads[$record_review_branch]+present}" ]] ||
+    fail "review result branch is not pending: $record_review_branch"
+  [[ -n "${request_branch_main_starts[$record_review_branch]+present}" ]] ||
+    fail "review request does not contain branch: $record_review_branch"
+  [[ "${request_branch_main_starts[$record_review_branch]}" == "${review_main_starts[$record_review_branch]}" ]] ||
+    fail "main review range changed for $record_review_branch"
+  [[ "${request_branch_head_starts[$record_review_branch]}" == "${branch_reviewed_heads[$record_review_branch]}" ]] ||
+    fail "branch review range changed for $record_review_branch"
+  [[ -f "$record_review_evidence" && -s "$record_review_evidence" ]] ||
+    fail 'review evidence must be a non-empty file'
+  verify_frozen_inputs
+  key=$(review_cache_key "$record_review_branch")
+  evidence_hash=$(git hash-object -- "$record_review_evidence")
+  mkdir -p -- "$review_cache_dir"
+  evidence_temp=$(mktemp "$review_cache_dir/.evidence.XXXXXX")
+  cp -- "$record_review_evidence" "$evidence_temp"
+  chmod 400 "$evidence_temp"
+  mv -- "$evidence_temp" "$review_cache_dir/$key.evidence"
+  cache_temp=$(mktemp "$review_cache_dir/.review.XXXXXX")
+  printf '%s %s\n' "$record_review_decision" "$evidence_hash" >"$cache_temp"
+  chmod 600 "$cache_temp"
+  mv -- "$cache_temp" "$review_cache_dir/$key.env"
+  paseo_build_stage "manifest:review-record branch=$record_review_branch decision=$record_review_decision"
+  printf 'Recorded reusable review result for %s (%s).\n' "$record_review_branch" "$record_review_decision"
+  exit 0
+fi
+
 if [[ -n "$accept_main_review" ]]; then
+  for branch_name in "${!reused_review_decisions[@]}"; do
+    if [[ "${reused_review_decisions[$branch_name]}" == remove ]]; then
+      [[ -n "${requested_removals[$branch_name]+present}" ]] ||
+        fail "cached remove conclusion for $branch_name requires --remove-branch"
+    elif [[ -n "${requested_removals[$branch_name]+present}" ]]; then
+      fail "cached keep conclusion for $branch_name cannot be accepted as a removal"
+    fi
+  done
   declare -A required_expected_heads=()
   for branch_name in "${pending_review_branches[@]}" "${removal_branches[@]}"; do
     [[ -n "$branch_name" ]] || continue
@@ -717,6 +875,19 @@ check_candidate_mergeability() (
   }
   trap cleanup_mergeability EXIT
 
+  supported_text_conflict() {
+    local record metadata path mode blob stage extra count=0
+    while IFS= read -r -d '' record; do
+      metadata=${record%%$'\t'*}
+      path=${record#*$'\t'}
+      read -r mode blob stage extra <<<"$metadata"
+      [[ -z "${extra:-}" && "$mode" != 160000 ]] || return 1
+      if [[ "$path" != *.patch ]] && ! paseo_blob_is_supported_text "$candidate_root" "$blob"; then return 1; fi
+      ((count += 1))
+    done < <(git -C "$candidate_root" ls-files -u -z)
+    ((count > 0))
+  }
+
   merge_candidate() {
     GIT_AUTHOR_NAME=build-paseo-mergeability \
       GIT_AUTHOR_EMAIL=build-paseo-mergeability@localhost \
@@ -749,6 +920,10 @@ check_candidate_mergeability() (
         if [[ -n "$conflict_paths" ]]; then
           printf '  Conflicting files:\n%s\n' "$conflict_paths" >&2
         fi
+        if supported_text_conflict; then
+          printf '%s\n' 'Supported text conflict diagnosed; semantic review continues and rebuild sync will provide the resolution operation.' >&2
+          exit 0
+        fi
         exit 1
       fi
     fi
@@ -766,7 +941,11 @@ check_candidate_mergeability() (
       if [[ -n "$conflict_paths" ]]; then
         printf '  Conflicting files:\n%s\n' "$conflict_paths" >&2
       fi
-      printf 'Rebase or otherwise repair %s before semantic review continues.\n' "$branch_name" >&2
+      if supported_text_conflict; then
+        printf 'Supported text conflict diagnosed for %s; semantic review continues and rebuild will provide the resolution operation.\n' "$branch_name" >&2
+        exit 0
+      fi
+      printf 'Unsupported conflict in %s; repair the source before semantic review continues.\n' "$branch_name" >&2
       exit 1
     fi
   done
@@ -791,7 +970,7 @@ write_review_request() {
     {
       printf 'paseo-rw-main-review-request\t1\n'
       printf 'main\t%s\n' "$base_head"
-      for branch_name in "${review_branches[@]}"; do
+      for branch_name in "${pending_review_branches[@]}"; do
         printf 'branch\t%s\t%s\t%s\t%s\t%s\n' \
           "$branch_name" "${review_main_starts[$branch_name]}" "$base_head" \
           "${branch_reviewed_heads[$branch_name]}" "${current_branch_heads[$branch_name]}"
@@ -904,22 +1083,48 @@ print_review_report() {
   printf 'After review, accept only the frozen request printed below, plus any --remove-branch decisions.\n'
 }
 
-if ((${#review_branches[@]} > 0)) && [[ -z "$accept_main_review" ]]; then
+if ((${#pending_review_branches[@]} > 0)) && [[ -z "$accept_main_review" ]]; then
   review_request_path=$(write_review_request)
-  print_review_report
+  if ((${#review_branches[@]} > 0)); then
+    print_review_report
+  else
+    printf '\nAll pending branch conclusions were reused; accept the complete frozen request to update the manifest.\n'
+  fi
   verify_frozen_inputs
   printf 'PASEO_REVIEW_REQUEST_FILE=%s\n' "$review_request_path"
   printf 'Accept the frozen coordinates with --accept-review-request %q.\n' "$review_request_path"
   exit 3
 fi
 
+for branch_name in "${!reused_review_decisions[@]}"; do
+  printf 'Reusing reviewed %s conclusion for %s in this run.\n' \
+    "${reused_review_decisions[$branch_name]}" "$branch_name"
+done
+
 if [[ -n "$accept_main_review" ]]; then
   for branch_name in "${!branch_indexes[@]}"; do
     line_index=${branch_indexes[$branch_name]}
     [[ -z "${dropped_line_indexes[$line_index]+present}" ]] || continue
-    line_without_review=${output_lines[$line_index]%%# reviewed-main:*}
-    line_without_review=$(trim "$line_without_review")
-    output_lines[$line_index]="$line_without_review # reviewed-main:$base_head # reviewed-head:${current_branch_heads[$branch_name]}"
+    output_lines[$line_index]=$(replace_review_metadata \
+      "${output_lines[$line_index]}" "$base_head" "${current_branch_heads[$branch_name]}")
+    if [[ -n "${forced_dependency_reviews[$branch_name]+present}" ]]; then
+      IFS=',' read -r -a old_dependencies <<<"${branch_dependencies[$branch_name]}"
+      kept_dependencies=()
+      for dependency in "${old_dependencies[@]}"; do
+        dependency=$(trim "$dependency")
+        [[ -n "${requested_removals[$dependency]+present}" || -n "${automatically_removed_branches[$dependency]+present}" ]] && continue
+        [[ -n "$dependency" ]] && kept_dependencies+=("$dependency")
+      done
+      if ((${#kept_dependencies[@]} > 0)); then
+        joined_dependencies=$(IFS=,; printf '%s' "${kept_dependencies[*]}")
+        output_lines[$line_index]=$(sed -E \
+          "s/(#[[:space:]]*depends-on:)[^#[:space:]]+/\\1$joined_dependencies/" \
+          <<<"${output_lines[$line_index]}")
+      else
+        output_lines[$line_index]=$(sed -E 's/[[:space:]]*#[[:space:]]*depends-on:[^#[:space:]]+//' \
+          <<<"${output_lines[$line_index]}")
+      fi
+    fi
   done
 fi
 

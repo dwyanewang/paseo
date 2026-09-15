@@ -26,6 +26,8 @@ the atomic rw-base/rw-main readiness gate.
   --accept-main-review SHA  Forward an accepted main review coordinate.
   --accept-branch-head BRANCH SHA
                             Forward an accepted exact branch head coordinate.
+  --record-review-result REQUEST BRANCH DECISION EVIDENCE
+                            Record one same-run semantic-review result.
   --help                    Show this help.
 
 Exit status 3 means semantic review is required. Exit status 4 means the
@@ -111,6 +113,11 @@ while (($# > 0)); do
       }
       sync_args+=("$1" "$2" "$3")
       shift 3
+      ;;
+    --record-review-result)
+      (($# >= 5)) || { printf '%s\n' 'Missing review result arguments.' >&2; exit 2; }
+      sync_args+=("$1" "$2" "$3" "$4" "$5")
+      shift 5
       ;;
     --help | -h)
       usage
@@ -216,6 +223,14 @@ build_lock_file="$build_root/.dev/build-paseo-artifacts.lock"
 exec {build_lock_fd}>"$build_lock_file"
 flock -n "$build_lock_fd" ||
   fail "another build-paseo workflow already owns the build root: $build_root"
+resume_rw_main_operation=0
+rw_main_operation_index="$build_root/.dev/rw-main-operation"
+if [[ -f "$rw_main_operation_index" ]]; then
+  ((no_fetch)) || fail 'an rw-main operation is active; retry the original run with --no-fetch'
+  ((!refresh_main && ${#sync_args[@]} == 0)) ||
+    fail 'an rw-main operation is active; abort it before refreshing main or changing the manifest request'
+  resume_rw_main_operation=1
+fi
 if [[ -n "$state_file" ]]; then
   mkdir -p -- "$(dirname -- "$state_file")"
   rm -f -- "$state_file"
@@ -225,6 +240,7 @@ run_dir="$build_root/.dev/build-paseo-runs/$run_id"
 [[ ! -L "$run_dir" ]] || fail "run directory is a symlink: $run_dir"
 mkdir -p -- "$run_dir"
 export PASEO_BUILD_REQUEST_STAGE_LOG="$run_dir/preflight-stages.log"
+export PASEO_REVIEW_CACHE_DIR="$run_dir/review-cache"
 export PASEO_BUILD_ATTEMPT="$(date +%Y%m%d-%H%M%S)-$$"
 attempt_log="$run_dir/preflight-$PASEO_BUILD_ATTEMPT.log"
 exec > >(exec {build_lock_fd}>&-; tee -a "$attempt_log") \
@@ -325,17 +341,21 @@ printf 'PASEO_MAIN_BEFORE=%s\nPASEO_MAIN_AFTER=%s\nPASEO_MAIN_SYNC_SECONDS=%s\n'
   "$main_before" "$main_after" "$(( $(date +%s) - main_sync_started ))"
 
 manifest_sync_started=$(date +%s)
-sync_status=0
-(cd "$control_root" && paseo_build_timed manifest:sync bash dwyanewang/sync-rw-main-branches.sh \
-  --frozen-main "$frozen_main" --check-mergeability "${sync_args[@]}") ||
-  sync_status=$?
-printf 'PASEO_MANIFEST_SYNC_SECONDS=%s\n' "$(( $(date +%s) - manifest_sync_started ))"
-if ((sync_status == 3)); then
-  printf '%s\n' 'PASEO_PREFLIGHT_STATUS=review-required'
-  exit 3
-elif ((sync_status != 0)); then
-  exit "$sync_status"
+if ((resume_rw_main_operation)); then
+  printf '%s\n' 'Resuming the preserved rw-main integration operation; manifest sync is already frozen.'
+else
+  sync_status=0
+  (cd "$control_root" && paseo_build_timed manifest:sync bash dwyanewang/sync-rw-main-branches.sh \
+    --frozen-main "$frozen_main" --check-mergeability "${sync_args[@]}") ||
+    sync_status=$?
+  if ((sync_status == 3)); then
+    printf '%s\n' 'PASEO_PREFLIGHT_STATUS=review-required'
+    exit 3
+  elif ((sync_status != 0)); then
+    exit "$sync_status"
+  fi
 fi
+printf 'PASEO_MANIFEST_SYNC_SECONDS=%s\n' "$(( $(date +%s) - manifest_sync_started ))"
 
 if ! git -C "$control_root" diff --quiet -- "$manifest_path"; then
   printf '%s\n' 'PASEO_PREFLIGHT_STATUS=manifest-changed'
@@ -347,11 +367,15 @@ build_starting_branch=$(git -C "$build_root" branch --show-current)
 rw_base_before=$(git -C "$build_root" rev-parse --verify "$base_branch" 2>/dev/null || true)
 rw_main_before=$(git -C "$build_root" rev-parse --verify "$target_branch" 2>/dev/null || true)
 rebuild_started=$(date +%s)
-rebuild_args=(--build-root "$build_root" --frozen-main "$frozen_main")
+rebuild_args=(--build-root "$build_root" --frozen-main "$frozen_main" --run-id "$run_id" --lock-fd "$build_lock_fd")
 if ((push_target)); then
   rebuild_args+=(--push)
 fi
 paseo_build_timed readiness bash "$control_root/dwyanewang/rebuild-rw-main.sh" "${rebuild_args[@]}"
+rw_main_operation_request=
+if [[ -f "$build_root/.dev/rw-main-operation" ]]; then
+  rw_main_operation_request=$(<"$build_root/.dev/rw-main-operation")
+fi
 rw_base_after=$(git -C "$build_root" rev-parse "$base_branch")
 rw_main_after=$(git -C "$build_root" rev-parse "$target_branch")
 if [[ "$rw_base_before" == "$rw_base_after" ]]; then
@@ -402,6 +426,11 @@ printf 'PASEO_DEPENDENCIES_REINSTALLED=%s\n' "$dependencies_reinstalled"
 printf 'PASEO_REBUILD_SECONDS=%s\n' "$rebuild_seconds"
 printf 'PASEO_PREFLIGHT_TOTAL_SECONDS=%s\n' "$total_seconds"
 
+if [[ "${PASEO_TEST_INTERRUPT_BEFORE_READY_STATE:-0}" == 1 ]]; then
+  printf '%s\n' 'Injected interruption after rw-main publication and before ready state write.' >&2
+  exit 95
+fi
+
 if [[ -n "$state_file" ]]; then
   paseo_atomic_write_state_file "$state_file" \
     build_starting_branch "$build_starting_branch" \
@@ -421,5 +450,10 @@ if [[ -n "$state_file" ]]; then
     paseo_preflight_total_seconds "$total_seconds" \
     paseo_preflight_status ready
   printf 'PASEO_PREFLIGHT_STATE_FILE=%s\n' "$state_file"
+fi
+if [[ -n "$rw_main_operation_request" ]]; then
+  bash "$control_root/dwyanewang/rebuild-rw-main.sh" \
+    --build-root "$build_root" --lock-fd "$build_lock_fd" \
+    --confirm-operation "$rw_main_operation_request"
 fi
 printf '%s\n' 'PASEO_PREFLIGHT_STATUS=ready'

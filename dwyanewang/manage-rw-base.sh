@@ -186,9 +186,13 @@ fail() {
 }
 
 build_state_helper=${PASEO_BUILD_STATE_HELPER:-"$control_root/dwyanewang/build-paseo-state.sh"}
+conflict_evidence_helper=${PASEO_CONFLICT_EVIDENCE_HELPER:-"$control_root/dwyanewang/rw-conflict-evidence.sh"}
 [[ -f "$build_state_helper" ]] || fail "missing build state helper: $build_state_helper"
+[[ -f "$conflict_evidence_helper" ]] || fail "missing conflict evidence helper: $conflict_evidence_helper"
 # shellcheck disable=SC1090
 source "$build_state_helper"
+# shellcheck disable=SC1090
+source "$conflict_evidence_helper"
 
 state_file=
 if [[ -n "$state_file_arg" ]]; then
@@ -506,6 +510,13 @@ lock_file="$build_root/.dev/build-paseo-artifacts.lock"
 exec {lock_fd}>"$lock_file"
 flock -n "$lock_fd" || fail "another build-paseo workflow owns $build_root"
 
+configured_rerere=$(git -C "$control_root" config --local --get rerere.enabled || true)
+if [[ -z "$configured_rerere" ]]; then
+  git -C "$control_root" config --local rerere.enabled false
+elif [[ "$configured_rerere" == true ]]; then
+  printf '%s\n' 'Repository rerere.enabled=true is user-configured; preserving it while lifecycle merges use command-scoped isolation.' >&2
+fi
+
 operation_parent="$(dirname -- "$build_root")/.paseo-rw-base-operations"
 mkdir -p -- "$operation_parent"
 
@@ -605,7 +616,7 @@ load_request() {
 }
 
 verify_frozen_request() {
-  local current_base current_source_head current_remote_head index
+  local current_base current_source_head current_remote_head expected_base index saved_operation_phase
   [[ "$(git -C "$control_root" rev-parse HEAD)" == "$operation_control" ]] ||
     fail "control HEAD moved since the operation was created"
   [[ "$(git -C "$control_root" rev-parse "$upstream_branch")" == "$operation_main" ]] ||
@@ -643,8 +654,21 @@ verify_frozen_request() {
       fail "origin/main moved since the operation was created"
   fi
   current_base=$(git -C "$control_root" rev-parse --verify "$base_branch" 2>/dev/null || true)
-  [[ "$current_base" == "$operation_base_before" ]] ||
-    fail "rw-base moved since the operation was created"
+  saved_operation_phase=
+  if [[ -f "$operation_dir/progress.env" ]]; then
+    # shellcheck disable=SC1090
+    source "$operation_dir/progress.env"
+    saved_operation_phase=$operation_phase
+  fi
+  if [[ "$saved_operation_phase" == ready ]]; then
+    expected_base=$(git -C "$operation_worktree" rev-parse HEAD 2>/dev/null || true)
+    [[ "$current_base" == "$operation_base_before" ||
+      ( -n "$expected_base" && "$current_base" == "$expected_base" ) ]] ||
+      fail "rw-base moved to an unexpected value after publication"
+  else
+    [[ "$current_base" == "$operation_base_before" ]] ||
+      fail "rw-base moved since the operation was created"
+  fi
   for ((index = 0; index < ${#operation_branches[@]}; index++)); do
     current_source_head=$(git -C "$control_root" rev-parse "${operation_branches[$index]}")
     [[ "$current_source_head" == "${operation_heads[$index]}" ]] ||
@@ -750,33 +774,12 @@ write_shell_array() {
 
 patch_targets_from_blob() {
   local blob=$1
-  git -C "$operation_worktree" cat-file blob "$blob" |
-    sed -n 's|^diff --git a/.* b/||p' |
-    LC_ALL=C sort -u
-}
-
-patch_changes_from_blob_target() {
-  local blob=$1 target=$2
-  git -C "$operation_worktree" cat-file blob "$blob" |
-    awk -v wanted="$target" '
-      /^diff --git / {
-        suffix = " b/" wanted
-        in_target = length($0) >= length(suffix) && \
-          substr($0, length($0) - length(suffix) + 1) == suffix
-        in_hunk = 0
-        next
-      }
-      in_target && /^@@/ {
-        in_hunk = 1
-        next
-      }
-      in_target && in_hunk && !/^\+\+\+ / && !/^--- / && /^[+-]/ { print }
-    '
+  paseo_patch_targets_from_blob "$operation_worktree" "$blob"
 }
 
 snapshot_conflict() {
-  local phase=$1 ours theirs base record metadata path mode blob stage status
-  local index target record_terminator temp
+  local phase=$1 step_index=$2 ours theirs base auto_tree record metadata path mode blob stage status
+  local index target record_terminator temp upstream_start
   local -a paths=() statuses=()
   local -a stage1_modes=() stage1_blobs=()
   local -a stage2_modes=() stage2_blobs=()
@@ -793,6 +796,8 @@ snapshot_conflict() {
     base=$(git -C "$operation_worktree" merge-base "$ours" "$theirs" | head -n 1)
     [[ -n "$base" ]] || base=none
   fi
+  auto_tree=$(git -C "$operation_worktree" rev-parse 'AUTO_MERGE^{tree}' 2>/dev/null) ||
+    fail "cannot capture AUTO_MERGE for the $phase conflict"
 
   temp=$(mktemp "$operation_dir/conflict-ls-files-u.txt.tmp.XXXXXX")
   git -C "$operation_worktree" ls-files -u >"$temp"
@@ -848,6 +853,7 @@ snapshot_conflict() {
     printf 'conflict_ours=%q\n' "$ours"
     printf 'conflict_theirs=%q\n' "$theirs"
     printf 'conflict_base=%q\n' "$base"
+    printf 'conflict_auto_tree=%q\n' "$auto_tree"
     write_shell_array conflict_paths "${paths[@]}"
     write_shell_array conflict_statuses "${statuses[@]}"
     write_shell_array conflict_stage1_modes "${stage1_modes[@]}"
@@ -883,6 +889,26 @@ snapshot_conflict() {
   } >"$temp"
   chmod 600 "$temp"
   mv -- "$temp" "$operation_dir/conflict-patch-targets.env"
+  {
+    printf '# Replace the tree TODO with `git write-tree` after staging, and every explanation TODO with reviewed evidence. Keep every generated row.\n'
+    printf 'resolution-tree\tTODO\tTODO\n'
+    case "$phase" in
+      sync) upstream_start=$operation_base_before ;;
+      feature) upstream_start=${operation_heads[$step_index]} ;;
+      replay) upstream_start=${operation_replay_commits[$step_index]} ;;
+      *) fail "unsupported conflict phase: $phase" ;;
+    esac
+    for path in "${paths[@]}"; do
+      printf 'parents\t%s\t%s\t%s\tTODO\n' "$path" "$ours" "$theirs"
+      while IFS= read -r commit; do
+        [[ -n "$commit" ]] && printf 'upstream\t%s\t%s\tTODO\n' "$path" "$commit"
+      done < <(paseo_conflict_upstream_commits \
+        "$operation_worktree" "$upstream_start" "$operation_main" "$path")
+    done
+  } >"$operation_dir/conflict-review.tsv"
+  awk -F '\t' '!/^#/ && $1 != "resolution-tree" { print $1 "\t" $2 "\t" $3 }' \
+    "$operation_dir/conflict-review.tsv" >"$operation_dir/conflict-review-required.tsv"
+  git -C "$operation_worktree" -c rerere.enabled=true -c rerere.autoupdate=false rerere || true
   printf 'Conflict snapshot saved in %s.\n' "$operation_dir"
 }
 
@@ -956,60 +982,53 @@ validate_conflict_resolution() {
   [[ "$current_theirs" == "$conflict_theirs" ]] ||
     fail 'the other conflict parent moved since the conflict snapshot was recorded'
 
-  local index path staged_blob resolved_blob side_blob target side change
-  local -a ours_targets=() theirs_targets=() required_targets resolved_targets
-  local -a required_changes=() resolved_changes=()
-  local -A resolved_target_set=() resolved_change_set=()
-  for index in "${!conflict_paths[@]}"; do
-    path=${conflict_paths[$index]}
-    [[ "${conflict_statuses[$index]}" == AA && "$path" == *.patch ]] || continue
-    for side in 2 3; do
-      if [[ "$side" == 2 ]]; then
-        staged_blob=${conflict_stage2_blobs[$index]}
-      else
-        staged_blob=${conflict_stage3_blobs[$index]}
-      fi
-      mapfile -t required_targets < <(patch_targets_from_blob "$staged_blob")
-      ((${#required_targets[@]} > 0)) ||
-        fail "cannot identify diff --git targets in conflict stage $side for $path"
-      if [[ "$side" == 2 ]]; then
-        ours_targets=("${required_targets[@]}")
-      else
-        theirs_targets=("${required_targets[@]}")
-      fi
+  [[ -z "$(git -C "$operation_worktree" diff --name-only)" ]] ||
+    fail 'the conflict resolution contains unstaged changes'
+  [[ -z "$(git -C "$operation_worktree" ls-files --others --exclude-standard)" ]] ||
+    fail 'the conflict resolution contains untracked files'
+  local staged_tree changed_path allowed_path
+  staged_tree=$(git -C "$operation_worktree" write-tree)
+  while IFS= read -r changed_path; do
+    [[ -n "$changed_path" ]] || continue
+    allowed_path=0
+    for path in "${conflict_paths[@]}"; do
+      [[ "$changed_path" == "$path" ]] && allowed_path=1
     done
-    resolved_blob=$(git -C "$operation_worktree" rev-parse --verify ":$path" 2>/dev/null) ||
-      fail "resolved conflict is not staged: $path"
-    mapfile -t resolved_targets < <(patch_targets_from_blob "$resolved_blob")
-    resolved_target_set=()
-    for target in "${resolved_targets[@]}"; do resolved_target_set["$target"]=1; done
-    for side in ours theirs; do
-      if [[ "$side" == ours ]]; then
-        required_targets=("${ours_targets[@]}")
-      else
-        required_targets=("${theirs_targets[@]}")
-      fi
-      for target in "${required_targets[@]}"; do
-        if [[ -z "${resolved_target_set[$target]+present}" ]]; then
-          fail "conflict resolution for $path drops patch target from $side: $target"
-        fi
-        if [[ "$side" == ours ]]; then
-          side_blob=${conflict_stage2_blobs[$index]}
-        else
-          side_blob=${conflict_stage3_blobs[$index]}
-        fi
-        mapfile -t required_changes < <(patch_changes_from_blob_target "$side_blob" "$target")
-        mapfile -t resolved_changes < <(patch_changes_from_blob_target "$resolved_blob" "$target")
-        resolved_change_set=()
-        for change in "${resolved_changes[@]}"; do resolved_change_set["$change"]=1; done
-        for change in "${required_changes[@]}"; do
-          if [[ -z "${resolved_change_set[$change]+present}" ]]; then
-            fail "conflict resolution for $path drops patch change from $side target $target: $change"
-          fi
-        done
-      done
-    done
-  done
+    ((allowed_path)) || fail "conflict resolution modified non-conflict path: $changed_path"
+  done < <(git -C "$operation_worktree" diff-tree --no-commit-id --name-only -r \
+    "$conflict_auto_tree" "$staged_tree")
+
+  local review_file="$operation_dir/conflict-review.tsv" recorded_tree required_review
+  [[ -f "$review_file" ]] || fail 'conflict review record is missing'
+  awk -F '\t' '
+    /^#/ { next }
+    $1 == "resolution-tree" {
+      if (NF != 3 || $2 !~ /^[0-9a-f]{40}$/) exit 1
+      explanation = $3
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", explanation)
+      if (explanation == "" || explanation == "TODO") exit 1
+      tree_rows++
+      next
+    }
+    NF < 4 { exit 1 }
+    {
+      explanation = $NF
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", explanation)
+      if (explanation == "" || explanation == "TODO") exit 1
+    }
+    END { if (tree_rows != 1) exit 1 }
+  ' "$review_file" || fail 'every conflict review row requires a non-empty explanation'
+  recorded_tree=$(awk -F '\t' '$1 == "resolution-tree" { print $2 }' "$review_file")
+  [[ "$recorded_tree" == "$staged_tree" ]] ||
+    fail "conflict review was recorded for staged tree $recorded_tree, current tree is $staged_tree"
+  while IFS= read -r required_review; do
+    grep -Fq "$required_review"$'\t' "$review_file" ||
+      fail "conflict review is missing required evidence: $required_review"
+  done <"$operation_dir/conflict-review-required.tsv"
+  paseo_validate_add_add_patch_resolution \
+    "$operation_worktree" "$operation_dir/conflict-ls-files-u.txt" "$staged_tree" ||
+    fail 'add/add patch conflict resolution does not preserve both parents'
+  git -C "$operation_worktree" -c rerere.enabled=true -c rerere.autoupdate=false rerere
 }
 
 if [[ "$command_name" == abort ]]; then
@@ -1017,6 +1036,14 @@ if [[ "$command_name" == abort ]]; then
   [[ -z "$run_id_arg" ]] || fail "abort does not accept --run-id"
   ((${#requested_adoption_refs[@]} == 0)) || fail "abort does not accept --adopt-commit"
   [[ -n "$operation_arg" ]] || fail "abort requires --operation REQUEST"
+  rw_main_child_index="$build_root/.dev/rw-main-operation"
+  if [[ -f "$rw_main_child_index" ]]; then
+    rw_main_child_request=$(<"$rw_main_child_index")
+    if [[ -f "$rw_main_child_request" ]] &&
+      grep -Fq "operation_parent_request=$(printf '%q' "$(realpath -e -- "$operation_arg")")" "$rw_main_child_request"; then
+      fail "rw-main child operation is still active: $rw_main_child_request; abort the child first"
+    fi
+  fi
   cleanup_operation "$operation_arg"
   printf '%s\n' 'Aborted rw-base operation.'
   exit 0
@@ -1070,8 +1097,9 @@ replay_retained_features() {
   for ((index = start_index; index < operation_replay_count; index++)); do
     commit=${operation_replay_commits[$index]}
     write_progress "$operation_dir" replay "$index"
-    if ! git -C "$operation_worktree" cherry-pick -m 1 "$commit"; then
-      snapshot_conflict replay
+    if ! git -C "$operation_worktree" -c core.hooksPath=/dev/null \
+      -c rerere.enabled=false -c rerere.autoupdate=false cherry-pick -m 1 "$commit"; then
+      snapshot_conflict replay "$index"
       auto_stage_disjoint_patch_unions
       printf 'PASEO_RW_BASE_OPERATION=%s\n' "$operation_request"
       printf 'Resolve the cherry-pick in %s, then run continue.\n' "$operation_worktree"
@@ -1089,9 +1117,10 @@ merge_requested_features() {
     operation_message "$operation_action" "${operation_features[$index]}" \
       "${operation_branches[$index]}" "${operation_heads[$index]}" >"$message_file"
     before_merge=$(git -C "$operation_worktree" rev-parse HEAD)
-    if ! GIT_MERGE_AUTOEDIT=no git -C "$operation_worktree" merge --no-ff --no-edit \
+    if ! GIT_MERGE_AUTOEDIT=no git -C "$operation_worktree" -c core.hooksPath=/dev/null \
+      -c rerere.enabled=false -c rerere.autoupdate=false merge --no-verify --no-ff --no-edit \
       -F "$message_file" "${operation_heads[$index]}"; then
-      snapshot_conflict feature
+      snapshot_conflict feature "$index"
       auto_stage_disjoint_patch_unions
       printf 'PASEO_RW_BASE_OPERATION=%s\n' "$operation_request"
       printf 'Resolve the merge in %s, then run continue.\n' "$operation_worktree"
@@ -1113,19 +1142,37 @@ dependency_inputs_changed() {
 }
 
 finalize_operation() {
-  local rebuild_args=(--build-root "$build_root" --base-candidate "$operation_branch_name")
+  local rebuild_args=(--build-root "$build_root" --base-candidate "$operation_branch_name" \
+    --parent-operation "$operation_request" --lock-fd "$lock_fd")
   local build_starting_branch rw_main_before rw_base_after rw_main_after main_after control_after
-  local rw_base_rebuilt rw_main_rebuilt dependencies_reinstalled total_seconds
+  local rw_base_rebuilt rw_main_rebuilt dependencies_reinstalled total_seconds rebuild_status
+  local rw_main_child_request child_target_before
   build_starting_branch=$(git -C "$build_root" branch --show-current)
   rw_main_before=$(git -C "$control_root" rev-parse --verify "$target_branch" 2>/dev/null || true)
   if [[ "$operation_mode" == run-bound ]]; then
     rebuild_args+=(--frozen-main "$operation_main")
   fi
   if ((push_target)); then rebuild_args+=(--push); fi
-  if ! bash "$control_root/dwyanewang/rebuild-rw-main.sh" "${rebuild_args[@]}"; then
+  rebuild_status=0
+  bash "$control_root/dwyanewang/rebuild-rw-main.sh" "${rebuild_args[@]}" || rebuild_status=$?
+  if ((rebuild_status != 0)); then
     printf 'PASEO_RW_BASE_OPERATION=%s\n' "$operation_request"
-    printf '%s\n' 'Candidate validation failed; fix the source or abort this operation.'
-    exit 1
+    if ((rebuild_status == 6)); then
+      printf '%s\n' 'rw-main integration paused; continue this lifecycle operation after resolving the child operation.'
+    else
+      printf '%s\n' 'Candidate validation failed; fix the source or abort this operation.'
+    fi
+    exit "$rebuild_status"
+  fi
+  rw_main_child_request=
+  if [[ -f "$build_root/.dev/rw-main-operation" ]]; then
+    rw_main_child_request=$(<"$build_root/.dev/rw-main-operation")
+  fi
+  if [[ -n "$rw_main_child_request" ]]; then
+    child_target_before=$(bash -c \
+      'set -euo pipefail; source "$1"; printf "%s" "$operation_target_before"' \
+      _ "$rw_main_child_request") || fail 'could not read the rw-main child publication baseline'
+    rw_main_before=$child_target_before
   fi
   rw_base_after=$(git -C "$control_root" rev-parse --verify "$base_branch")
   rw_main_after=$(git -C "$control_root" rev-parse --verify "$target_branch")
@@ -1139,7 +1186,6 @@ finalize_operation() {
     dependencies_reinstalled=1
   fi
   total_seconds=$(( $(date +%s) - started_at ))
-  cleanup_operation "$operation_request"
   if [[ -n "$state_file" ]]; then
     if paseo_atomic_write_state_file "$state_file" \
       build_starting_branch "$build_starting_branch" \
@@ -1161,11 +1207,19 @@ finalize_operation() {
       printf 'PASEO_PREFLIGHT_STATE_FILE=%s\n' "$state_file"
     else
       rm -f -- "$state_file" || true
-      printf '%s\n' \
-        'manage-rw-base: could not write the optional ready state; run prepare-rw-main-for-build before artifact generation.' \
-        >&2
+      printf 'PASEO_RW_BASE_OPERATION=%s\n' "$operation_request"
+      if [[ -n "$rw_main_child_request" ]]; then
+        printf 'PASEO_RW_MAIN_OPERATION=%s\n' "$rw_main_child_request"
+      fi
+      fail 'could not write ready state; lifecycle and rw-main operations were retained for retry'
     fi
   fi
+  if [[ -n "$rw_main_child_request" ]]; then
+    bash "$control_root/dwyanewang/rebuild-rw-main.sh" \
+      --build-root "$build_root" --lock-fd "$lock_fd" \
+      --confirm-operation "$rw_main_child_request"
+  fi
+  cleanup_operation "$operation_request"
   paseo_build_stage "lifecycle:complete action=$operation_action main=$operation_main"
   printf '%s\n' 'rw-base lifecycle operation completed.'
 }
@@ -1195,7 +1249,7 @@ if [[ "$command_name" == continue ]]; then
       [[ -z "$(git -C "$operation_worktree" diff --name-only --diff-filter=U)" ]] ||
         fail "the sync merge still has unresolved files"
       validate_conflict_resolution
-      git -C "$operation_worktree" commit --no-edit
+      git -C "$operation_worktree" -c core.hooksPath=/dev/null commit --no-verify --no-edit
       if [[ "$operation_action" == retire ]]; then
         replay_retained_features 0
       else
@@ -1206,14 +1260,14 @@ if [[ "$command_name" == continue ]]; then
       [[ -z "$(git -C "$operation_worktree" diff --name-only --diff-filter=U)" ]] ||
         fail "the feature merge still has unresolved files"
       validate_conflict_resolution
-      git -C "$operation_worktree" commit --no-edit
+      git -C "$operation_worktree" -c core.hooksPath=/dev/null commit --no-verify --no-edit
       merge_requested_features "$((operation_index + 1))"
       ;;
     replay)
       [[ -z "$(git -C "$operation_worktree" diff --name-only --diff-filter=U)" ]] ||
         fail "the retained-feature replay still has unresolved files"
       validate_conflict_resolution
-      git -C "$operation_worktree" cherry-pick --continue
+      git -C "$operation_worktree" -c core.hooksPath=/dev/null cherry-pick --continue
       replay_retained_features "$((operation_index + 1))"
       ;;
     ready) ;;
@@ -1244,6 +1298,34 @@ else
     fi
   done
 fi
+
+verify_overlay_review_coordinates() {
+  local manifest="$control_root/dwyanewang/rw-main-branches.txt" line branch reviewed_main reviewed_head head
+  [[ -f "$manifest" ]] || fail "missing overlay manifest: $manifest"
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    branch=${line%%#*}
+    branch=${branch#"${branch%%[![:space:]]*}"}
+    branch=${branch%"${branch##*[![:space:]]}"}
+    [[ -n "$branch" ]] || continue
+    if [[ "$line" =~ \#[[:space:]]*reviewed-main:([0-9a-f]{40})([[:space:]]|$) ]]; then
+      reviewed_main=${BASH_REMATCH[1]}
+    else
+      fail "overlay review metadata is missing for $branch"
+    fi
+    if [[ "$line" =~ \#[[:space:]]*reviewed-head:([0-9a-f]{40})([[:space:]]|$) ]]; then
+      reviewed_head=${BASH_REMATCH[1]}
+    else
+      fail "overlay head review metadata is missing for $branch"
+    fi
+    head=$(git -C "$control_root" rev-parse --verify "refs/heads/$branch" 2>/dev/null) ||
+      fail "overlay branch is missing: $branch"
+    [[ "$reviewed_main" == "$main_head" ]] ||
+      fail "$branch has not been reviewed against frozen main $main_head"
+    [[ "$reviewed_head" == "$head" ]] || fail "$branch head has not completed semantic review"
+  done <"$manifest"
+}
+
+verify_overlay_review_coordinates
 paseo_build_stage "lifecycle:$command_name:start mode=$operation_mode main=$main_head"
 base_before=$(git -C "$control_root" rev-parse --verify "$base_branch" 2>/dev/null || true)
 control_head=$(git -C "$control_root" rev-parse HEAD)
@@ -1300,8 +1382,9 @@ case "$command_name" in
       "$operation_worktree" "$start_ref"
     if ! git -C "$control_root" merge-base --is-ancestor "$main_head" "$operation_branch_name"; then
       write_progress "$operation_dir" sync 0
-      if ! GIT_MERGE_AUTOEDIT=no git -C "$operation_worktree" merge --no-ff --no-edit "$main_head"; then
-        snapshot_conflict sync
+      if ! GIT_MERGE_AUTOEDIT=no git -C "$operation_worktree" -c core.hooksPath=/dev/null \
+        -c rerere.enabled=false -c rerere.autoupdate=false merge --no-verify --no-ff --no-edit "$main_head"; then
+        snapshot_conflict sync 0
         auto_stage_disjoint_patch_unions
         printf 'PASEO_RW_BASE_OPERATION=%s\n' "$operation_request"
         printf 'Resolve the main merge in %s, then run continue.\n' "$operation_worktree"

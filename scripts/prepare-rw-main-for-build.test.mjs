@@ -15,7 +15,9 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { test } from "vitest";
+import { test, vi } from "vitest";
+
+vi.setConfig({ testTimeout: 30_000 });
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -145,6 +147,7 @@ function createFixture({ advanceUpstream = false, rebuildRwMain = false } = {}) 
     "prepare-patched-dependencies.mjs",
     "refresh-expo-router-types.mjs",
     "rebuild-rw-main.sh",
+    "rw-conflict-evidence.sh",
     "sync-rw-main-branches.sh",
   ]) {
     copyFileSync(
@@ -383,6 +386,157 @@ test("refuses preflight while the shared build lock is held and preserves the ol
     }
   });
 });
+
+test("resumes after remote publication without rebuilding or pushing the candidate again", () => {
+  withFixture({ rebuildRwMain: true }, (fixture) => {
+    fixture.env.PASEO_TEST_INTERRUPT_AFTER_PUSH = "1";
+    const interrupted = runPreflight(fixture, "--run-id", "publish-recovery");
+    assert.equal(interrupted.status, 92, `${interrupted.stdout}\n${interrupted.stderr}`);
+    assert.match(interrupted.stderr, /after remote publication/);
+    const remoteTarget = git(
+      fixture.controlRoot,
+      "ls-remote",
+      "--heads",
+      "origin",
+      "rw-main",
+    ).split(/\s+/)[0];
+    assert.notEqual(remoteTarget, git(fixture.controlRoot, "rev-parse", "rw-main"));
+    assert.equal(existsSync(fixture.stateFile), false);
+    assert.equal(existsSync(path.join(fixture.buildRoot, ".dev/rw-main-operation")), true);
+
+    delete fixture.env.PASEO_TEST_INTERRUPT_AFTER_PUSH;
+    writeFileSync(fixture.commandLog, "");
+    const resumed = runPreflight(fixture, "--run-id", "publish-recovery", "--no-fetch");
+    assert.equal(resumed.status, 0, `${resumed.stdout}\n${resumed.stderr}`);
+    assert.match(resumed.stdout, /Remote publication already completed/);
+    assert.equal(git(fixture.controlRoot, "rev-parse", "rw-main"), remoteTarget);
+    assert.equal(existsSync(path.join(fixture.buildRoot, ".dev/rw-main-operation")), false);
+    assert.match(readFileSync(fixture.stateFile, "utf8"), /paseo_preflight_status=ready/);
+    assert.doesNotMatch(readFileSync(fixture.commandLog, "utf8"), /run build:server/);
+  });
+}, 30_000);
+
+test("detects remote publication completed before its progress record and does not push twice", () => {
+  withFixture({ rebuildRwMain: true }, (fixture) => {
+    fixture.env.PASEO_TEST_INTERRUPT_AFTER_REMOTE_REFS_BEFORE_PROGRESS = "1";
+    const interrupted = runPreflight(fixture, "--run-id", "remote-ref-recovery");
+    assert.equal(interrupted.status, 96, `${interrupted.stdout}\n${interrupted.stderr}`);
+    const publishedTarget = git(
+      fixture.controlRoot,
+      "ls-remote",
+      "--heads",
+      "origin",
+      "rw-main",
+    ).split(/\s+/)[0];
+    const publishedBase = git(
+      fixture.controlRoot,
+      "ls-remote",
+      "--heads",
+      "origin",
+      "rw-base",
+    ).split(/\s+/)[0];
+    assert.notEqual(publishedTarget, git(fixture.controlRoot, "rev-parse", "rw-main"));
+    const operationIndex = path.join(fixture.buildRoot, ".dev/rw-main-operation");
+    const operationRequest = readFileSync(operationIndex, "utf8").trim();
+    const operationDir = path.dirname(operationRequest);
+    const abortPublished = run(
+      fixture.controlRoot,
+      "bash",
+      [
+        "dwyanewang/rebuild-rw-main.sh",
+        "--build-root",
+        fixture.buildRoot,
+        "--abort-operation",
+        operationRequest,
+      ],
+      fixture.env,
+    );
+    assert.equal(abortPublished.status, 1, `${abortPublished.stdout}\n${abortPublished.stderr}`);
+    assert.match(abortPublished.stderr, /publication may have started; resume finalization/);
+    assert.equal(readFileSync(operationIndex, "utf8").trim(), operationRequest);
+    assert.equal(existsSync(path.join(operationDir, "worktree")), true);
+    assert.equal(existsSync(path.join(operationDir, "result")), false);
+
+    git(fixture.controlRoot, "update-ref", "refs/heads/rw-base", publishedBase);
+    const abortPartialLocal = run(
+      fixture.controlRoot,
+      "bash",
+      [
+        "dwyanewang/rebuild-rw-main.sh",
+        "--build-root",
+        fixture.buildRoot,
+        "--abort-operation",
+        operationRequest,
+      ],
+      fixture.env,
+    );
+    assert.equal(
+      abortPartialLocal.status,
+      1,
+      `${abortPartialLocal.stdout}\n${abortPartialLocal.stderr}`,
+    );
+    assert.match(abortPartialLocal.stderr, /publication may have started; resume finalization/);
+    assert.equal(readFileSync(operationIndex, "utf8").trim(), operationRequest);
+    assert.equal(git(fixture.controlRoot, "rev-parse", "rw-base"), publishedBase);
+    assert.notEqual(git(fixture.controlRoot, "rev-parse", "rw-main"), publishedTarget);
+    delete fixture.env.PASEO_TEST_INTERRUPT_AFTER_REMOTE_REFS_BEFORE_PROGRESS;
+
+    const resumed = runPreflight(fixture, "--run-id", "remote-ref-recovery", "--no-fetch");
+    assert.equal(resumed.status, 0, `${resumed.stdout}\n${resumed.stderr}`);
+    assert.match(resumed.stdout, /Remote publication already completed/);
+    assert.equal(git(fixture.controlRoot, "rev-parse", "rw-base"), publishedBase);
+    assert.equal(git(fixture.controlRoot, "rev-parse", "rw-main"), publishedTarget);
+    assert.equal(existsSync(operationIndex), false);
+  });
+}, 30_000);
+
+test("resumes after local refs move before publication progress is written", () => {
+  withFixture({ rebuildRwMain: true }, (fixture) => {
+    fixture.env.PASEO_TEST_INTERRUPT_AFTER_LOCAL_REFS = "1";
+    const interrupted = runPreflight(fixture, "--run-id", "local-ref-recovery");
+    assert.equal(interrupted.status, 94, `${interrupted.stdout}\n${interrupted.stderr}`);
+    assert.match(interrupted.stderr, /after local refs/);
+    const publishedTarget = git(fixture.controlRoot, "rev-parse", "rw-main");
+    assert.equal(git(fixture.buildRoot, "rev-parse", "HEAD"), publishedTarget);
+    assert.equal(existsSync(fixture.stateFile), false);
+    assert.equal(existsSync(path.join(fixture.buildRoot, ".dev/rw-main-operation")), true);
+
+    delete fixture.env.PASEO_TEST_INTERRUPT_AFTER_LOCAL_REFS;
+    writeFileSync(fixture.commandLog, "");
+    const resumed = runPreflight(fixture, "--run-id", "local-ref-recovery", "--no-fetch");
+    assert.equal(resumed.status, 0, `${resumed.stdout}\n${resumed.stderr}`);
+    assert.equal(git(fixture.controlRoot, "rev-parse", "rw-main"), publishedTarget);
+    assert.equal(existsSync(path.join(fixture.buildRoot, ".dev/rw-main-operation")), false);
+    assert.match(readFileSync(fixture.stateFile, "utf8"), /paseo_preflight_status=ready/);
+    assert.doesNotMatch(readFileSync(fixture.commandLog, "utf8"), /run build:server/);
+  });
+}, 30_000);
+
+test("retains a published operation until the caller persists ready state", () => {
+  withFixture({ rebuildRwMain: true }, (fixture) => {
+    fixture.env.PASEO_TEST_INTERRUPT_BEFORE_READY_STATE = "1";
+    const interrupted = runPreflight(fixture, "--run-id", "ready-state-recovery");
+    assert.equal(interrupted.status, 95, `${interrupted.stdout}\n${interrupted.stderr}`);
+    assert.match(interrupted.stderr, /before ready state write/);
+    const operationIndex = path.join(fixture.buildRoot, ".dev/rw-main-operation");
+    assert.equal(existsSync(operationIndex), true);
+    const operationRequest = readFileSync(operationIndex, "utf8").trim();
+    assert.equal(existsSync(path.join(path.dirname(operationRequest), "worktree")), true);
+    assert.equal(existsSync(fixture.stateFile), false);
+
+    delete fixture.env.PASEO_TEST_INTERRUPT_BEFORE_READY_STATE;
+    const resumed = runPreflight(fixture, "--run-id", "ready-state-recovery", "--no-fetch");
+    assert.equal(resumed.status, 0, `${resumed.stdout}\n${resumed.stderr}`);
+    assert.match(readFileSync(fixture.stateFile, "utf8"), /paseo_preflight_status=ready/);
+    assert.equal(existsSync(operationIndex), false);
+    assert.equal(
+      readFileSync(path.join(path.dirname(operationRequest), "result"), "utf8").startsWith(
+        "completed ",
+      ),
+      true,
+    );
+  });
+}, 30_000);
 
 test("missing run-id fails before syncing, creating a request, or deleting ready state", () => {
   withFixture({ advanceUpstream: true }, (fixture) => {
