@@ -20,7 +20,6 @@ export interface PendingWorkspaceDraftSubmission {
   provider: AgentProvider;
   clientMessageId: string;
   labels?: Record<string, string>;
-  agentLaunchJournalKey?: string;
   timestamp: number;
   modeId?: string;
   model?: string;
