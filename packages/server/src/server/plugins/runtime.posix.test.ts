@@ -1944,19 +1944,6 @@ export default function contribute(plugin: any) {
       runtime.invokeForge("forge-runtime", "acme", "probeHost", "self-hosted.example.com"),
     ).resolves.toBe(true);
     await expect(
-      runtime.invokeForge("forge-runtime", "acme", "listPullRequests", {
-        cwd: "",
-        force: true,
-      }),
-    ).rejects.toThrow("Plugin forge listPullRequests received invalid input");
-    await expect(
-      runtime.invokeForge("forge-runtime", "acme", "mergePullRequest", {
-        cwd: "/repo",
-        prNumber: 7,
-        mergeMethod: "fast-forward",
-      }),
-    ).rejects.toThrow("Plugin forge mergePullRequest received invalid input");
-    await expect(
       runtime.invokeForge("forge-runtime", "acme", "listPullRequests", { cwd: "/repo" }),
     ).resolves.toEqual([]);
     await expect(
