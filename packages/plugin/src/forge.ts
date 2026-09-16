@@ -179,6 +179,8 @@ export interface PullRequestCheckoutTarget {
   headRepositorySshUrl: string | null;
   headRepositoryUrl: string | null;
   isCrossRepository: boolean;
+  /** Synthetic pull refs must not track a remote branch; omission means a branch. */
+  headRefKind?: "branch" | "pull-ref";
 }
 
 export interface IssueSummary {
