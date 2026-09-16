@@ -104,11 +104,22 @@ export interface PluginForgeClientView {
   brandColor?: { light: string; dark: string } | null;
 }
 
+export interface PluginForgeSetupSurface {
+  /** A settings screen this same plugin registered with `addSettingsScreen`. */
+  screenId: string;
+}
+
 export interface PluginForgeClientProviderContribution {
   definition: PluginForgeDefinition;
   facts?: PluginForgeFactsContribution;
   urlGrammar?: PluginForgeUrlGrammar;
   view?: PluginForgeClientView;
+  /**
+   * Where the user finishes setup when `definition.signIn` is null. Without it
+   * Paseo can only say "set up <brand> on this host", which tells a user of a
+   * token-authenticated forge nothing about where to put the token.
+   */
+  setup?: PluginForgeSetupSurface;
 }
 
 export function defineForgeFacts<TFacts extends PluginForgeSpecificEnvelope>(
