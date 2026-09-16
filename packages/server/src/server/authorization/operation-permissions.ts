@@ -18,6 +18,7 @@ const INBOUND_PERMISSION = {
   "agent.skills.reconcile.request": "daemon.manage",
   "agent.skills.save_selection.request": "daemon.manage",
   "agent.skills.uninstall.request": "daemon.manage",
+  "agent.timeline.search.request": "workspace.read",
   "agent.timeline.list_prompts.request": "workspace.read",
   "agent.timeline.append.request": "workspace.write",
   "browser.host.register.request": ["workspace.write"],
@@ -62,6 +63,8 @@ const INBOUND_PERMISSION = {
   client_heartbeat: "workspace.read",
   close_items_request: "workspace.manage",
   create_agent_request: ["workspace.write", "hub.execute"],
+  "agent.create.request": ["workspace.write", "hub.execute"],
+  "creation.subscribe.request": "workspace.read",
   create_paseo_worktree_request: "workspace.manage",
   create_terminal_request: "workspace.write",
   "daemon.config.reload.request": "daemon.manage",
@@ -209,6 +212,10 @@ const INBOUND_PERMISSION = {
 } as const satisfies Record<InboundOperation, PermissionRequirement>;
 
 const OUTBOUND_PERMISSION = {
+  "agent.create.response": ["workspace.write", "hub.execute"],
+  "agent.create.update": ["workspace.write", "hub.execute"],
+  "workspace.create.update": "workspace.manage",
+  "creation.subscribe.response": "workspace.read",
   activity_log: "workspace.read",
   "agent.config.apply.response": ["workspace.write", "hub.execute"],
   "agent.detach.response": "workspace.write",
@@ -222,6 +229,7 @@ const OUTBOUND_PERMISSION = {
   "agent.skills.reconcile.response": "daemon.manage",
   "agent.skills.save_selection.response": "daemon.manage",
   "agent.skills.uninstall.response": "daemon.manage",
+  "agent.timeline.search.response": "workspace.read",
   "agent.timeline.list_prompts.response": "workspace.read",
   "agent.timeline.append.response": "workspace.write",
   "agent.timeline.replacement": ["workspace.read", "hub.execute"],
