@@ -46,7 +46,7 @@ const RequiredForgeServiceMethods = PLUGIN_FORGE_SERVICE_METHODS.filter(
   (method) => !OptionalForgeServiceMethods.has(method),
 );
 
-const ForgeProviderDescriptorSchema = z
+export const ForgeProviderDescriptorSchema = z
   .object({
     definition: ForgeDefinitionSchema,
     methods: z.array(ForgeServiceMethodSchema),
