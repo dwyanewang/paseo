@@ -1,22 +1,26 @@
 import { z } from "zod";
-import { parseGitRemoteLocation, type GitRemoteLocation } from "../shared/git-remote";
-import { findExecutable } from "./process";
 import {
   createCachedCliPathResolver,
   createForgeCliRunner,
+  createForgePageGuard,
   defaultResolveRemoteUrl,
-  ForgeAuthenticationError,
-  ForgeCliMissingError,
-  ForgeCommandError,
+  findExecutable,
   parseCliJsonOutput,
-  type ForgeCommandFailureParams,
-} from "./forge-cli";
+  parseGitRemoteLocation,
+  redactCommandArgs,
+  type GitRemoteLocation,
+} from "@getpaseo/plugin/server/forge-toolkit";
 import {
   compareTimelineItems,
   computeChecksStatus,
   createUnavailableSearchResult,
+  ForgeAuthenticationError,
+  ForgeCliMissingError,
+  ForgeCommandError,
+  formatCheckDuration,
   normalizeForgeSearchKinds,
   parseOptionalTime,
+  type ForgeCommandFailureParams,
 } from "@getpaseo/plugin/server";
 import type {
   CheckDetails,
@@ -68,35 +72,12 @@ const CODEUP_MAX_CONTINUATIONS_WITHOUT_TOTAL = 100;
 const REDACTED_ALIYUN_ARGUMENT = "<redacted>";
 const SENSITIVE_ALIYUN_FLAGS = new Set(["--body", "--search"]);
 
-function assertCodeupPageProgress(input: {
-  itemCount: number;
-  pageSize: number;
-  pageKeys: readonly string[];
-  seenFullPageFingerprints: Set<string>;
-}): void {
-  if (input.itemCount < input.pageSize) return;
-  const fingerprint = JSON.stringify(input.pageKeys);
-  if (input.seenFullPageFingerprints.has(fingerprint)) {
-    throw new Error("Codeup pagination repeated a full page without making progress");
-  }
-  input.seenFullPageFingerprints.add(fingerprint);
-}
-
-function hasNextCodeupPage(input: {
-  itemCount: number;
-  pageSize: number;
-  page: number;
-  visited: number;
-  total: number | undefined;
-}): boolean {
-  if (input.itemCount < input.pageSize) return false;
-  if (input.total !== undefined) return input.visited < input.total;
-  if (input.page > CODEUP_MAX_CONTINUATIONS_WITHOUT_TOTAL) {
-    throw new Error(
-      `Codeup pagination exceeded ${CODEUP_MAX_CONTINUATIONS_WITHOUT_TOTAL} continuations without total`,
-    );
-  }
-  return true;
+function createCodeupPageGuard() {
+  return createForgePageGuard({
+    brand: "Codeup",
+    pageSize: CODEUP_PAGE_SIZE,
+    maxContinuationsWithoutTotal: CODEUP_MAX_CONTINUATIONS_WITHOUT_TOTAL,
+  });
 }
 
 export class AliyunCliMissingError extends ForgeCliMissingError {
@@ -124,22 +105,10 @@ export class AliyunCommandError extends ForgeCommandError {
 }
 
 export function redactAliyunArgs(args: readonly string[]): string[] {
-  const redacted: string[] = [];
-  for (let index = 0; index < args.length; index += 1) {
-    const argument = args[index] ?? "";
-    const equalsIndex = argument.indexOf("=");
-    const flag = equalsIndex >= 0 ? argument.slice(0, equalsIndex) : argument;
-    if (!SENSITIVE_ALIYUN_FLAGS.has(flag)) {
-      redacted.push(argument);
-      continue;
-    }
-    redacted.push(equalsIndex >= 0 ? `${flag}=${REDACTED_ALIYUN_ARGUMENT}` : flag);
-    if (equalsIndex < 0 && index + 1 < args.length) {
-      redacted.push(REDACTED_ALIYUN_ARGUMENT);
-      index += 1;
-    }
-  }
-  return redacted;
+  return redactCommandArgs(args, {
+    sensitiveFlags: SENSITIVE_ALIYUN_FLAGS,
+    placeholder: REDACTED_ALIYUN_ARGUMENT,
+  });
 }
 
 export interface CodeupCommandRunnerOptions {
@@ -629,21 +598,8 @@ function mapCommitStatus(status: string): PullRequestCheck["status"] {
   }
 }
 
-function formatDuration(
-  startedAt?: string | null,
-  completedAt?: string | null,
-): string | undefined {
-  const start = parseOptionalTime(startedAt);
-  const end = parseOptionalTime(completedAt);
-  if (start <= 0 || end <= start) return undefined;
-  const seconds = Math.floor((end - start) / 1_000);
-  const minutes = Math.floor(seconds / 60);
-  const remaining = seconds % 60;
-  return minutes > 0 ? `${minutes}m ${remaining}s` : `${remaining}s`;
-}
-
 function toPullRequestCheck(check: CodeupCheckRun): PullRequestCheck {
-  const duration = formatDuration(check.startedAt, check.completedAt);
+  const duration = formatCheckDuration(check.startedAt, check.completedAt);
   return {
     name: check.name,
     status: mapCheckRunStatus(check),
@@ -969,23 +925,20 @@ export function createCodeupService(options: CreateCodeupServiceOptions = {}): F
     const context = await getRepositoryContext(input.cwd);
     const requestedLimit = Math.max(1, input.limit ?? 20);
     const items: CodeupMergeRequestListItem[] = [];
-    const seenFullPageFingerprints = new Set<string>();
+    const pageGuard = createCodeupPageGuard();
     let page = 1;
     while (items.length < requestedLimit) {
       const pageSize = CODEUP_PAGE_SIZE;
       const response = await listMergeRequestPage({ ...input, page, pageSize }, context);
       const pageItems = response.items;
-      assertCodeupPageProgress({
+      pageGuard.assertProgress({
         itemCount: pageItems.length,
-        pageSize,
         pageKeys: pageItems.map((item) => String(item.localId)),
-        seenFullPageFingerprints,
       });
       items.push(...pageItems);
       if (items.length >= requestedLimit) break;
-      const hasNextPage = hasNextCodeupPage({
+      const hasNextPage = pageGuard.hasNextPage({
         itemCount: pageItems.length,
-        pageSize,
         page,
         visited: items.length,
         total: response.total,
@@ -1045,7 +998,7 @@ export function createCodeupService(options: CreateCodeupServiceOptions = {}): F
     sha: string,
   ): Promise<CodeupCheckRun[]> {
     const items: CodeupCheckRun[] = [];
-    const seenFullPageFingerprints = new Set<string>();
+    const pageGuard = createCodeupPageGuard();
     let page = 1;
     while (true) {
       const response = await runApiJson(
@@ -1061,16 +1014,13 @@ export function createCodeupService(options: CreateCodeupServiceOptions = {}): F
         CodeupListCheckRunsResponseSchema,
       );
       const pageItems = response.result ?? [];
-      assertCodeupPageProgress({
+      pageGuard.assertProgress({
         itemCount: pageItems.length,
-        pageSize: CODEUP_PAGE_SIZE,
         pageKeys: pageItems.map((item) => String(item.id)),
-        seenFullPageFingerprints,
       });
       items.push(...pageItems);
-      const hasNextPage = hasNextCodeupPage({
+      const hasNextPage = pageGuard.hasNextPage({
         itemCount: pageItems.length,
-        pageSize: CODEUP_PAGE_SIZE,
         page,
         visited: items.length,
         total: response.total,
@@ -1087,7 +1037,7 @@ export function createCodeupService(options: CreateCodeupServiceOptions = {}): F
     sha: string,
   ): Promise<CodeupCommitStatus[]> {
     const items: CodeupCommitStatus[] = [];
-    const seenFullPageFingerprints = new Set<string>();
+    const pageGuard = createCodeupPageGuard();
     let page = 1;
     while (true) {
       const response = await runApiJson(
@@ -1103,20 +1053,17 @@ export function createCodeupService(options: CreateCodeupServiceOptions = {}): F
         CodeupListCommitStatusesResponseSchema,
       );
       const pageItems = response.result ?? [];
-      assertCodeupPageProgress({
+      pageGuard.assertProgress({
         itemCount: pageItems.length,
-        pageSize: CODEUP_PAGE_SIZE,
         pageKeys: pageItems.map((item) =>
           item.id === undefined
             ? JSON.stringify([item.context, item.state, item.targetUrl])
             : String(item.id),
         ),
-        seenFullPageFingerprints,
       });
       items.push(...pageItems);
-      const hasNextPage = hasNextCodeupPage({
+      const hasNextPage = pageGuard.hasNextPage({
         itemCount: pageItems.length,
-        pageSize: CODEUP_PAGE_SIZE,
         page,
         visited: items.length,
         total: response.total,
@@ -1162,7 +1109,7 @@ export function createCodeupService(options: CreateCodeupServiceOptions = {}): F
     headRepositoryOwner?: string;
   }): Promise<{ detail: CodeupMergeRequestDetail; sha: string | null } | null> {
     const context = await getRepositoryContext(input.cwd);
-    const seenFullPageFingerprints = new Set<string>();
+    const pageGuard = createCodeupPageGuard();
     let page = 1;
     let visited = 0;
     while (true) {
@@ -1170,11 +1117,9 @@ export function createCodeupService(options: CreateCodeupServiceOptions = {}): F
         { cwd: input.cwd, state: "all", page, pageSize: CODEUP_PAGE_SIZE },
         context,
       );
-      assertCodeupPageProgress({
+      pageGuard.assertProgress({
         itemCount: response.items.length,
-        pageSize: CODEUP_PAGE_SIZE,
         pageKeys: response.items.map((item) => String(item.localId)),
-        seenFullPageFingerprints,
       });
       for (const candidate of response.items) {
         if (
@@ -1202,9 +1147,8 @@ export function createCodeupService(options: CreateCodeupServiceOptions = {}): F
         }
       }
       visited += response.items.length;
-      const hasNextPage = hasNextCodeupPage({
+      const hasNextPage = pageGuard.hasNextPage({
         itemCount: response.items.length,
-        pageSize: CODEUP_PAGE_SIZE,
         page,
         visited,
         total: response.total,

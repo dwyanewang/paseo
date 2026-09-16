@@ -9,6 +9,7 @@ import * as pluginSharedRuntime from "@getpaseo/plugin";
 import * as pluginServerRuntime from "@getpaseo/plugin/server";
 import * as pluginProviderRuntime from "@getpaseo/plugin/server/provider";
 import * as pluginAcpRuntime from "@getpaseo/plugin/server/acp";
+import * as pluginForgeToolkitRuntime from "@getpaseo/plugin/server/forge-toolkit";
 import type { SettingsDefinition, PluginRpcContract } from "@getpaseo/plugin";
 import {
   PLUGIN_FORGE_SERVICE_METHODS,
@@ -313,6 +314,7 @@ function runtimeRequire(name: string): unknown {
   if (name === "@getpaseo/plugin/server") return pluginServerRuntime;
   if (name === "@getpaseo/plugin/server/provider") return pluginProviderRuntime;
   if (name === "@getpaseo/plugin/server/acp") return pluginAcpRuntime;
+  if (name === "@getpaseo/plugin/server/forge-toolkit") return pluginForgeToolkitRuntime;
   if (name === "@getpaseo/plugin/client/host")
     throw new Error(`${name} is private to the app host`);
   return nodeRequire(name);

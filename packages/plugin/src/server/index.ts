@@ -25,6 +25,7 @@ export {
   computeChecksStatus,
   createUnavailableSearchResult,
   defineForgeServerProvider,
+  formatCheckDuration,
   normalizeForgeSearchKinds,
   parseOptionalTime,
   type CheckAnnotation,

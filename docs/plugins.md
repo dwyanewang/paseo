@@ -486,7 +486,9 @@ the daemon preserves setup and auth failure states across the subprocess boundar
 `isAuthenticated()` throws those classified errors, set `authProbeCanThrow: true`; otherwise return
 `false` on authentication failure. Return explicit `checkoutRefs` for cross-repository heads. Set
 `supportsCrossRepoCheckoutWithoutRefs: true` only when the forge exposes a universal fetch ref that
-does not need those entries.
+does not need those entries. Take the CLI plumbing from
+`@getpaseo/plugin/server/forge-toolkit` rather than writing it again — see
+[the plugin toolkit](forge-providers.md#the-plugin-toolkit).
 
 The client provider contributes the shared definition plus optional facts parsing, merge-capability
 derivation, source URL grammar, a declarative SVG path, and brand colors. Client contributions are

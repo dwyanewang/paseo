@@ -257,7 +257,8 @@ Use `openSettings`, `openSurface`, and `openPanel` for your own registered contr
 ### Server runtime
 
 Paseo provides `@getpaseo/plugin`, `@getpaseo/plugin/server`,
-`@getpaseo/plugin/server/provider`, `@getpaseo/plugin/server/acp`, and `zod` to server code. Backend
+`@getpaseo/plugin/server/provider`, `@getpaseo/plugin/server/acp`,
+`@getpaseo/plugin/server/forge-toolkit`, and `zod` to server code. Backend
 contributions run in a daemon subprocess with Node access to the host machine. Keep filesystem,
 process, credential, and other machine-local work under `server/`. A plugin without
 `index.server.ts` starts no subprocess.
@@ -1871,6 +1872,30 @@ The complete interface is required; reject an unsupported command with a clear e
 `false` on authentication failure. Return explicit `checkoutRefs` for cross-repository heads. Set
 `supportsCrossRepoCheckoutWithoutRefs: true` only when the Forge exposes a universal fetch ref that
 does not need those entries.
+
+A CLI-backed provider builds that service on `@getpaseo/plugin/server/forge-toolkit`, which is
+vendor-neutral:
+
+```ts
+import {
+  createCachedCliPathResolver,
+  createForgeCliRunner,
+  createForgePageGuard,
+  findExecutable,
+  parseCliJsonOutput,
+  parseGitRemoteLocation,
+  redactCommandArgs,
+} from "@getpaseo/plugin/server/forge-toolkit";
+```
+
+`createForgeCliRunner` returns `run` and `normalizeError`. Spawn through `run`, then pass anything
+it throws to `normalizeError`, which maps `ENOENT`, authentication text, timeouts, and non-zero
+exits onto the classified errors above so auth state stays correct across the subprocess boundary. `findExecutable` and `createCachedCliPathResolver` resolve the binary once per process.
+`parseCliJsonOutput` validates `--json` output through a Zod schema. `redactCommandArgs` strips
+flag values that carry user text before a failure is reported. `parseGitRemoteLocation` reads the
+transport, host, port, and path out of a remote URL. `createForgePageGuard` stops a page walk that
+repeats a page or runs without a reported total. Supply the binary name and command shapes; the
+toolkit holds no vendor strings.
 
 The client provider stays under `client/` and contains no Node imports. Put its Zod facts schema and
 provider definition under `shared/`:
