@@ -50,7 +50,8 @@ A Forge plugin registers two contributions from separate runtime entries:
 1. `addForgeServerProvider()` supplies the definition, a
    `PluginForgeServerService`, and an optional authenticated `probeHost`.
 2. `addForgeClientProvider()` supplies the same definition plus optional facts,
-   URL grammar, declarative SVG path, and brand colors.
+   URL grammar, declarative SVG path, brand colors, and a `setup` screen for a
+   forge whose `signIn` is null.
 
 Keep the definition under `shared/` so the two runtimes cannot drift. Register
 the server provider from `index.server.ts` and the client provider from
