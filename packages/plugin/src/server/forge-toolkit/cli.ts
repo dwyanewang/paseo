@@ -1,18 +1,6 @@
 import { z } from "zod";
-import {
-  ForgeAuthenticationError,
-  ForgeCliMissingError,
-  ForgeCommandError,
-  type ForgeCommandFailureParams,
-} from "@getpaseo/plugin/server";
-import { execCommand, runGitCommand } from "./process";
-
-export {
-  ForgeAuthenticationError,
-  ForgeCliMissingError,
-  ForgeCommandError,
-  type ForgeCommandFailureParams,
-};
+import type { ForgeCommandFailureParams } from "../../forge.js";
+import { execCommand, runGitCommand } from "./process.js";
 
 interface CommandFailureLike {
   code?: string | number | null;
@@ -21,22 +9,22 @@ interface CommandFailureLike {
   message?: string;
 }
 
-interface CliCommandErrorShape extends Error {
+export interface CliCommandErrorShape extends Error {
   stderr: string;
 }
 
-interface ForgeCliRunnerOptions {
+export interface ForgeCliRunnerOptions {
   cwd: string;
   binaryPath?: string;
   envOverlay?: Record<string, string>;
 }
 
-interface ForgeCliRunnerResult {
+export interface ForgeCliRunnerResult {
   stdout: string;
   stderr: string;
 }
 
-interface CreateForgeCliRunnerOptions {
+export interface CreateForgeCliRunnerOptions {
   binary: string;
   envOverlay: Record<string, string>;
   timeoutMs: number;
@@ -181,4 +169,32 @@ function toCommandFailureLike(error: unknown): CommandFailureLike {
         : undefined,
     message: typeof record.message === "string" ? record.message : undefined,
   };
+}
+
+/**
+ * Redacts sensitive flag values before a failed command is surfaced to the host.
+ * Handles both `--flag=value` and `--flag value` spellings.
+ */
+export function redactCommandArgs(
+  args: readonly string[],
+  options: { sensitiveFlags: Iterable<string>; placeholder?: string },
+): string[] {
+  const sensitive = new Set(options.sensitiveFlags);
+  const placeholder = options.placeholder ?? "<redacted>";
+  const redacted: string[] = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index] ?? "";
+    const equalsIndex = argument.indexOf("=");
+    const flag = equalsIndex >= 0 ? argument.slice(0, equalsIndex) : argument;
+    if (!sensitive.has(flag)) {
+      redacted.push(argument);
+      continue;
+    }
+    redacted.push(equalsIndex >= 0 ? `${flag}=${placeholder}` : flag);
+    if (equalsIndex < 0 && index + 1 < args.length) {
+      redacted.push(placeholder);
+      index += 1;
+    }
+  }
+  return redacted;
 }

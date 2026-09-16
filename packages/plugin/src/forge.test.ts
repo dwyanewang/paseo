@@ -5,6 +5,7 @@ import {
   defineForgeFacts,
   defineForgeServerProvider,
   ForgeAuthenticationError,
+  formatCheckDuration,
   ForgeCliMissingError,
   ForgeCommandError,
   type PluginForgeServerService,
@@ -172,5 +173,19 @@ describe("Forge plugin definitions", () => {
     for (const key of ["brand", "binary", "args", "cwd", "stderr"]) {
       expect(Object.keys(commandError)).not.toContain(key);
     }
+  });
+});
+
+describe("formatCheckDuration", () => {
+  it("formats sub-minute and multi-minute spans", () => {
+    expect(formatCheckDuration("2026-01-01T00:00:00Z", "2026-01-01T00:00:42Z")).toBe("42s");
+    expect(formatCheckDuration("2026-01-01T00:00:00Z", "2026-01-01T00:03:07Z")).toBe("3m 7s");
+  });
+
+  it("returns undefined for a missing, unparsable, or non-advancing span", () => {
+    expect(formatCheckDuration(null, "2026-01-01T00:00:42Z")).toBeUndefined();
+    expect(formatCheckDuration("2026-01-01T00:00:00Z", null)).toBeUndefined();
+    expect(formatCheckDuration("not a date", "2026-01-01T00:00:42Z")).toBeUndefined();
+    expect(formatCheckDuration("2026-01-01T00:00:42Z", "2026-01-01T00:00:42Z")).toBeUndefined();
   });
 });
