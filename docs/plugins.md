@@ -604,8 +604,10 @@ id is derivable from the plugin, so any connected client can fetch that document
 reach every phone attached to the daemon, and it is cached there.
 
 `server.secrets` stores values that never leave the daemon host: `get`, `has`, `keys`, `set`,
-`delete`, keyed by `^[a-z0-9][a-z0-9._-]*$`. It writes `secrets.json` beside the settings documents
-with owner-only permissions and publishes no RPC handler at all.
+`delete`, keyed by `^[a-z0-9][a-z0-9._-]*$`. It writes `_secrets.json` beside the settings documents
+with owner-only permissions and publishes no RPC handler at all. The leading underscore matters: a
+settings id must start with a letter, so a plugin's `secrets` settings document, which any client can
+overwrite or reset, can never share that file.
 
 Give the user a UI by pairing it with your own RPCs — one that only accepts a value, one that only
 reports whether a value exists:
