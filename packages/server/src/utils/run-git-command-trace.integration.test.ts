@@ -56,7 +56,7 @@ describe("git command trace", () => {
     tempDirectories.push(directory);
     const tracePath = path.join(directory, "git.jsonl");
     const remoteUrl =
-      "https://codeup-user:codeup-secret@forge.example.com/acme/repo.git?X-Amz-Signature=query-secret";
+      "https://forge-user:forge-secret@forge.example.com/acme/repo.git?X-Amz-Signature=query-secret";
     await runGitCommand(["init"], { cwd: directory });
     vi.stubEnv("PASEO_GIT_TRACE_FILE", tracePath);
     startGitCommandMetrics();
@@ -69,8 +69,6 @@ describe("git command trace", () => {
     const trace = await readFile(tracePath, "utf8");
     expect(config).toContain(remoteUrl);
     expect(trace).toContain("https://[REDACTED]@forge.example.com/acme/repo.git?[REDACTED]");
-    expect(JSON.stringify({ metrics, trace })).not.toMatch(
-      /codeup-user|codeup-secret|query-secret/,
-    );
+    expect(JSON.stringify({ metrics, trace })).not.toMatch(/forge-user|forge-secret|query-secret/);
   });
 });

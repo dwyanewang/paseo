@@ -1262,14 +1262,14 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
     test.each([
       {
         originTransport: "HTTPS",
-        preferredPushUrl: "https://codeup.aliyun.com/org/contributor/repo.git",
+        preferredPushUrl: "https://forge.example.com/org/contributor/repo.git",
       },
       {
         originTransport: "SSH",
-        preferredPushUrl: "git@codeup.aliyun.com:org/contributor/repo.git",
+        preferredPushUrl: "git@forge.example.com:org/contributor/repo.git",
       },
     ])(
-      "configures a Codeup $originTransport cross-repository checkout with the matching push transport",
+      "configures an Acme $originTransport cross-repository checkout with the matching push transport",
       async ({ preferredPushUrl }) => {
         const { tempDir, repoDir, headRemoteDir, paseoHome } = createForkGitHubPrRemoteRepo();
         cleanupPaths.push(tempDir);
@@ -1277,7 +1277,7 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
           cwd: repoDir,
           stdio: "pipe",
         });
-        const codeup: ForgeService = {
+        const acme: ForgeService = {
           ...createGitHubServiceStub(),
           defaultCheckoutRefs: undefined,
           buildPrLocalBranchName: undefined,
@@ -1294,8 +1294,8 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
             ],
             headOwnerLogin: "org/contributor/repo",
             preferredPushUrl,
-            headRepositorySshUrl: "git@codeup.aliyun.com:org/contributor/repo.git",
-            headRepositoryUrl: "https://codeup.aliyun.com/org/contributor/repo.git",
+            headRepositorySshUrl: "git@forge.example.com:org/contributor/repo.git",
+            headRepositoryUrl: "https://forge.example.com/org/contributor/repo.git",
             isCrossRepository: true,
           }),
         };
@@ -1303,18 +1303,18 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
         const result = await createCoreWorktree(
           {
             cwd: repoDir,
-            worktreeSlug: "codeup-cross-repo",
+            worktreeSlug: "acme-cross-repo",
             action: "checkout",
-            checkoutSource: { kind: "change_request", forge: "codeup", number: 526 },
+            checkoutSource: { kind: "change_request", forge: "acme", number: 526 },
             paseoHome,
             runSetup: false,
           },
-          createCoreDeps({ forge: { forge: "codeup", service: codeup } }),
+          createCoreDeps({ forge: { forge: "acme", service: acme } }),
         );
 
         expect(result.intent).toMatchObject({
           kind: "checkout-change-request",
-          forge: "codeup",
+          forge: "acme",
           changeRequestNumber: 526,
           pushRemoteUrl: preferredPushUrl,
         });
