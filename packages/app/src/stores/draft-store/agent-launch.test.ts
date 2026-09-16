@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { useDraftStore, type AgentLaunchDraftMetadata } from "@/stores/draft-store";
 import { PersistedDraftStoreSchema } from "./migration";
-import { DRAFT_STORE_VERSION } from "./state";
+import { DRAFT_STORE_VERSION, keepsEmptiedDraftBound } from "./state";
 
 const metadata: AgentLaunchDraftMetadata = {
   draftId: "draft-1",
@@ -42,6 +42,20 @@ describe("draft-store agent launch metadata", () => {
     });
     expect(useDraftStore.getState().getAgentLaunchMetadata("draft-1")).toEqual(metadata);
     expect(useDraftStore.getState().getAgentLaunchMetadata("other")).toBeUndefined();
+  });
+
+  it("keeps only launch drafts bound when their content is emptied", () => {
+    const store = useDraftStore.getState();
+    store.saveDraftInput({ draftKey: "draft:host-1:plain", draft: { text: "x", attachments: [] } });
+    store.setAgentLaunchMetadata({
+      draftKey: DRAFT_KEY,
+      draft: { text: "seed prompt", attachments: [] },
+      metadata,
+    });
+    const drafts = useDraftStore.getState().drafts;
+    expect(keepsEmptiedDraftBound(drafts[DRAFT_KEY])).toBe(true);
+    expect(keepsEmptiedDraftBound(drafts["draft:host-1:plain"])).toBe(false);
+    expect(keepsEmptiedDraftBound(undefined)).toBe(false);
   });
 
   it("keeps a launch draft active and bound when typing empties its text", () => {
