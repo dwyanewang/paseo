@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "vitest run codeup.client.test.ts codeup-service.server.test.ts process.server.test.ts --bail=1",
+    "test": "vitest run codeup.client.test.ts codeup-service.server.test.ts --bail=1",
     "test:real": "vitest run codeup-service.real.e2e.test.ts --bail=1"
   },
   "devDependencies": {

@@ -641,6 +641,7 @@ describe("evaluatePluginClientBundle", () => {
     "@getpaseo/plugin/server",
     "@getpaseo/plugin/server/provider",
     "@getpaseo/plugin/server/acp",
+    "@getpaseo/plugin/server/forge-toolkit",
     "@getpaseo/plugin/client/host",
     "@getpaseo/plugin/react-native",
     "@getpaseo/plugin/ui",
