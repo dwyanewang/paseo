@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 
@@ -12,8 +12,15 @@ import { z } from "zod";
  * attached to the daemon. This store has no RPC surface at all. A plugin that
  * wants a settings screen exposes its own write-only RPC on top and reports
  * status rather than the value.
+ *
+ * Settings documents live in the same directory as `<settings id>.json`. A settings id must start
+ * with a lowercase letter, so the leading underscore keeps a plugin's `secrets` settings document —
+ * which any client can reset or overwrite — from ever landing on this file.
  */
-const SECRETS_FILE = "secrets.json";
+const SECRETS_FILE = "_secrets.json";
+// COMPAT(pluginSecretsFileName): added 2026-09-16 on feat/plugin-host-infrastructure, remove after
+// 2027-03-16 once hosts no longer hold secrets under the legacy name.
+const LEGACY_SECRETS_FILE = "secrets.json";
 const SecretsFileSchema = z.record(z.string(), z.string());
 const KEY_PATTERN = /^[a-z0-9][a-z0-9._-]*$/u;
 
@@ -27,6 +34,7 @@ export class PluginSecretStore {
   private readonly file: string;
   private readonly directory: string;
   private queue: Promise<unknown> = Promise.resolve();
+  private migration: Promise<void> | null = null;
 
   constructor(directory: string) {
     this.directory = directory;
@@ -68,6 +76,7 @@ export class PluginSecretStore {
   }
 
   private async read(): Promise<Record<string, string>> {
+    await this.migrateLegacyFile();
     let raw: string;
     try {
       raw = await readFile(this.file, "utf8");
@@ -96,6 +105,35 @@ export class PluginSecretStore {
     })();
     this.queue = next.catch(() => undefined);
     return next;
+  }
+
+  // COMPAT(pluginSecretsFileName): moves a legacy `secrets.json` once. Only a flat string map is
+  // ours; a settings document stored under that name keeps its `{ version, values }` envelope and
+  // stays where it is.
+  private migrateLegacyFile(): Promise<void> {
+    this.migration ??= (async () => {
+      try {
+        await access(this.file);
+        return;
+      } catch {
+        // No current file yet; a legacy one may hold this plugin's secrets.
+      }
+      const legacy = path.join(this.directory, LEGACY_SECRETS_FILE);
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(await readFile(legacy, "utf8"));
+      } catch {
+        return;
+      }
+      const entries = SecretsFileSchema.safeParse(parsed);
+      if (!entries.success) return;
+      await this.persist(entries.data);
+      await rm(legacy, { force: true });
+    })().catch((error: unknown) => {
+      this.migration = null;
+      throw error;
+    });
+    return this.migration;
   }
 
   private async persist(entries: Record<string, string>): Promise<void> {

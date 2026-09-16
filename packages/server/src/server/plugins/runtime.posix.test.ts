@@ -1657,7 +1657,7 @@ export default function contribute(server: PluginServerContext) {
     // The store deliberately publishes no handler, so a client cannot ask for it.
     await expect(runtime.invoke("secret-keeper", "secrets.get", {})).rejects.toThrow();
 
-    const file = path.join(settingsDirectory, "secret-keeper", "secrets.json");
+    const file = path.join(settingsDirectory, "secret-keeper", "_secrets.json");
     expect((await stat(file)).mode & 0o777).toBe(0o600);
 
     await runtime.stopAll();
