@@ -45,10 +45,45 @@ export interface PluginForgeFactsContribution {
   deriveMergeCapability?: (facts: unknown) => PluginForgeMergeCapability;
 }
 
+/**
+ * Line and range anchor appended to a source URL, as templates rather than a
+ * closed list of known styles: a forge Paseo has never seen still has to be able
+ * to say how it spells one.
+ *
+ * `{start}` and `{end}` are substituted. `range` falls back to `single` when the
+ * forge has no range syntax.
+ */
+export interface PluginForgeLineAnchor {
+  single: string;
+  range?: string;
+}
+
+/** `#L12` and `#L12-L20`, used by GitHub, Gitea, Forgejo, and Codeberg. */
+export const GITHUB_LINE_ANCHOR: PluginForgeLineAnchor = {
+  single: "#L{start}",
+  range: "#L{start}-L{end}",
+};
+
+/** `#L12` and `#L12-20`. */
+export const GITLAB_LINE_ANCHOR: PluginForgeLineAnchor = {
+  single: "#L{start}",
+  range: "#L{start}-{end}",
+};
+
+export function renderForgeLineAnchor(
+  anchor: PluginForgeLineAnchor,
+  start: number,
+  end?: number,
+): string {
+  const template =
+    end !== undefined && end > start ? (anchor.range ?? anchor.single) : anchor.single;
+  return template.replaceAll("{start}", String(start)).replaceAll("{end}", String(end ?? start));
+}
+
 export interface PluginForgeUrlGrammar {
   treeInfix: string;
   blobInfix: string;
-  lineAnchorStyle: "github" | "gitlab";
+  lineAnchor: PluginForgeLineAnchor;
   changeRequestChecksSuffix?: string;
   referencePaths?: readonly PluginForgeReferencePath[];
 }
