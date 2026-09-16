@@ -39,6 +39,8 @@ export {
   type ForgeAuthState,
   type ForgeCommandFailureParams,
   type ForgeReadOptions,
+  type ForgeSearchKind,
+  type ForgeSearchRequestKind,
   type ForgeService,
   type ForgeSpecificStatusFacts,
   type GetCheckDetailsOptions,
