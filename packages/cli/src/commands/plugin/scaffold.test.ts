@@ -338,8 +338,6 @@ import type {
 import type { PluginForgeClientView as InvalidClientView } from "@getpaseo/plugin/server";
 // @ts-expect-error Server Forge service types are exported from the server module.
 import type { PluginForgeServerService as InvalidServerService } from "@getpaseo/plugin";
-// @ts-expect-error Legacy search-kind aliases are internal compatibility details.
-import type { ForgeSearchRequestKind } from "@getpaseo/plugin/server";
 
 export type ForgeModuleBoundarySmoke = [
   PluginForgeClientProviderContribution,

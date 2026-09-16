@@ -1,5 +1,6 @@
 import { useState, useCallback, useMemo, type ReactElement, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import { TreeRail } from "@/components/tree-rail";
 import { TreeRailToggle } from "@/components/tree-rail-toggle";
 import { DiffStat } from "@/components/diff-stat";
@@ -59,10 +60,11 @@ import { BranchSwitcher } from "@/components/branch-switcher";
 import { useGitActions } from "@/git/use-actions";
 import { GIT_ACTION_ICONS } from "@/git/action-icons";
 import { createPluginNavigation } from "@/plugins/navigation";
-import { getForgePresentation } from "@/git/forge";
+import { getForgePresentation, type Forge } from "@/git/forge";
 import {
   buildForgeSetupGuidance,
   computeForgeSetupAction,
+  type ForgeSetupAction,
   type ForgeSetupGuidance,
 } from "@/git/forge-setup";
 import { type ClientForgeHostSnapshot, useClientForgeHost } from "@/git/client-forge-registry";
@@ -1194,6 +1196,40 @@ function parseForgeHost(url: string | null | undefined): string | null {
   return url ? (parseGitRemoteLocation(url)?.host ?? null) : null;
 }
 
+// The setup callout names the next step for the workspace's forge; a plugin forge can also point
+// at its own settings screen.
+function useForgeSetupGuidance(input: {
+  action: ForgeSetupAction;
+  forge: Forge;
+  remoteUrl: string | null | undefined;
+  clientForgeHost: ClientForgeHostSnapshot;
+  serverId: string;
+  workspaceId: string | null | undefined;
+  t: TFunction;
+}): { guidance: ForgeSetupGuidance | null; openSetup: () => void } {
+  const { action, forge, remoteUrl, clientForgeHost, serverId, workspaceId, t } = input;
+  const guidance = useMemo(
+    () =>
+      buildForgeSetupGuidance({
+        action,
+        forge,
+        host: parseForgeHost(remoteUrl),
+        clientForgeHost,
+        t,
+      }),
+    [action, clientForgeHost, forge, remoteUrl, t],
+  );
+  const setupTarget = guidance?.setup ?? null;
+  const openSetup = useCallback(() => {
+    if (!setupTarget) return;
+    createPluginNavigation({ serverId, workspaceId: workspaceId ?? null }).openSettings(
+      setupTarget.pluginId,
+      setupTarget.screenId,
+    );
+  }, [setupTarget, serverId, workspaceId]);
+  return { guidance, openSetup };
+}
+
 function ForgeSetupCallout({
   guidance,
   onOpenSetup,
@@ -1567,25 +1603,15 @@ export function ChangesSurface({
     forgeProvidersSupported,
     authState,
   });
-  const forgeSetupGuidance = useMemo(
-    () =>
-      buildForgeSetupGuidance({
-        action: forgeSetupAction,
-        forge,
-        host: parseForgeHost(status?.remoteUrl),
-        clientForgeHost,
-        t,
-      }),
-    [clientForgeHost, forgeSetupAction, forge, status?.remoteUrl, t],
-  );
-  const forgeSetupTarget = forgeSetupGuidance?.setup ?? null;
-  const handleOpenForgeSetup = useCallback(() => {
-    if (!forgeSetupTarget) return;
-    createPluginNavigation({ serverId, workspaceId: workspaceId ?? null }).openSettings(
-      forgeSetupTarget.pluginId,
-      forgeSetupTarget.screenId,
-    );
-  }, [forgeSetupTarget, serverId, workspaceId]);
+  const { guidance: forgeSetupGuidance, openSetup: handleOpenForgeSetup } = useForgeSetupGuidance({
+    action: forgeSetupAction,
+    forge,
+    remoteUrl: status?.remoteUrl,
+    clientForgeHost,
+    serverId,
+    workspaceId,
+    t,
+  });
   const handleToggleDesktopTree = useCallback(() => {
     updateState({ ...instanceState, treeVisible: !desktopTreeVisible });
   }, [desktopTreeVisible, instanceState, updateState]);
