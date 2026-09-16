@@ -1042,6 +1042,7 @@ export const ja: TranslationResources = {
         installCli: "{{brand}} の機能を使うには {{cli}} CLI をインストールしてください。",
         signIn: "{{brand}} の機能を使うには {{command}} を実行してください。",
         generic: "このホストで {{brand}} をセットアップすると、その機能を使えます。",
+        openSettings: "セットアップを完了するには {{brand}} の設定を開いてください。",
       },
     },
   },
