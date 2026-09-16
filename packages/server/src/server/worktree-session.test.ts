@@ -1958,6 +1958,7 @@ describe("handleCreatePaseoWorktreeRequest", () => {
           requestCwd: repoDir,
           worktree: {
             branchName: "response-after-create",
+            comparisonBaseRef: "refs/heads/main",
             worktreePath: registeredWorktreePath,
           },
           shouldBootstrap: true,

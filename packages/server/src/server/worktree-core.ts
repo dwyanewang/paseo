@@ -5,7 +5,7 @@ import {
   createWorktree,
   slugify,
   validateBranchSlug,
-  type WorktreeConfig,
+  type CreatedWorktree,
 } from "../utils/worktree.js";
 import {
   resolveWorktreeCreationIntent,
@@ -47,7 +47,7 @@ export interface CheckoutBranchCopy {
 }
 
 export interface CreateWorktreeCoreResult {
-  worktree: WorktreeConfig;
+  worktree: CreatedWorktree;
   intent: WorktreeCreationIntent;
   repoRoot: string;
   created: boolean;
@@ -159,7 +159,7 @@ async function createWorktreeCoreWithPriority(
 // checkouts can substitute: branch-off lands on a new branch by design.
 function resolveCheckoutBranchCopy(
   intent: WorktreeCreationIntent,
-  worktree: WorktreeConfig,
+  worktree: CreatedWorktree,
 ): CheckoutBranchCopy | null {
   if (intent.kind !== "checkout-branch" || intent.branchName === worktree.branchName) {
     return null;
