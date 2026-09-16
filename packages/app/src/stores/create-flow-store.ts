@@ -11,7 +11,6 @@ export interface PendingCreateAttempt {
   agentId: string | null;
   clientMessageId: string;
   labels?: Record<string, string>;
-  agentLaunchJournalKey?: string;
   text: string;
   timestamp: number;
   lifecycle: CreateFlowLifecycleState;
