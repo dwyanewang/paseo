@@ -1905,13 +1905,13 @@ export default function contribute(plugin: any) {
         truncated: false,
         error: null,
       }),
-      getCheckDetails: async () => ({
-        checkRunId: 1,
-        name: "checks",
-        annotations: [],
-        failedJobs: [],
-        truncated: false,
-      }),
+      getCheckDetails() {
+        // A REST-backed adapter words its failure as a request, not a command.
+        throw new ForgeCommandError(
+          { brand: "Acme", binary: "acme.test", kind: "request" },
+          { args: ["GET", "/checks"], cwd: "/repo", exitCode: 404, stderr: "not found" },
+        );
+      },
       searchIssuesAndPrs: async () => ({
         items: [],
         featuresEnabled: true,
@@ -2013,6 +2013,18 @@ export default function contribute(plugin: any) {
     for (const key of ["args", "cwd", "stderr"]) {
       expect(Object.keys(commandError as Error)).not.toContain(key);
     }
+
+    // The host rebuilds plugin errors with its own class, whose message always
+    // reads as a CLI failure. A REST adapter's wording has to survive that.
+    const requestError = await runtime
+      .invokeForge("forge-runtime", "acme", "getCheckDetails", { cwd: "/repo" })
+      .catch((error: unknown) => error);
+    expect(requestError).toBeInstanceOf(ForgeCommandError);
+    expect(requestError).toMatchObject({
+      message: "Acme request failed: acme.test",
+      exitCode: 404,
+      stderr: "not found",
+    });
 
     await runtime.stopAll();
   }, 10_000);
