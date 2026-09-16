@@ -11,7 +11,7 @@
  * still maps to GitHub so old daemons (which never send a forge) render exactly
  * as before.
  */
-import type { ForgeDefinition } from "@getpaseo/protocol/forge-manifest";
+import type { ForgeDefinition, ForgeSetupSurface } from "@getpaseo/protocol/forge-manifest";
 import { normalizeHost, parseGitRemoteLocation } from "@getpaseo/protocol/git-remote";
 import type { ForgeAuthState } from "@getpaseo/protocol/messages";
 import {
@@ -90,6 +90,8 @@ export interface ForgePresentation {
   issueNumberPrefix: string;
   /** Auth CLI binary for the install hint, or null for a forge with no Paseo-driven sign-in. */
   signInCli: string | null;
+  /** Settings screen that completes setup when there is no CLI to sign into. */
+  setup: ForgeSetupSurface | null;
   /**
    * i18next context selecting the change-request vocabulary family for any key
    * that carries an `_mr` variant: `t(key, { context: changeRequestContext })`
@@ -135,6 +137,7 @@ export function getForgePresentation(
     numberPrefix: definition.changeRequestNumberPrefix,
     issueNumberPrefix: definition.issueNumberPrefix,
     signInCli: definition.signIn?.cli ?? null,
+    setup: definition.setup ?? null,
     changeRequestContext: isMergeRequest ? "mr" : undefined,
     buildBlobUrl: hasWebUrls ? (input) => buildForgeBlobUrl(definition.id, input, host) : null,
     buildBranchTreeUrl: hasWebUrls
