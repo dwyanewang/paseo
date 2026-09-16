@@ -543,6 +543,23 @@ export function createUnavailableSearchResult(
   };
 }
 
+/**
+ * Formats `PullRequestCheck.duration`. Every provider goes through this so a
+ * check row reads the same whichever forge produced it.
+ */
+export function formatCheckDuration(
+  startedAt?: string | null,
+  completedAt?: string | null,
+): string | undefined {
+  const start = parseOptionalTime(startedAt);
+  const end = parseOptionalTime(completedAt);
+  if (start <= 0 || end <= start) return undefined;
+  const seconds = Math.floor((end - start) / 1_000);
+  const minutes = Math.floor(seconds / 60);
+  const remaining = seconds % 60;
+  return minutes > 0 ? `${minutes}m ${remaining}s` : `${remaining}s`;
+}
+
 export function parseOptionalTime(value: string | null | undefined): number {
   if (!value) return 0;
   const parsed = Date.parse(value);
