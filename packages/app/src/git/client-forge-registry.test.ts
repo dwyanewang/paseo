@@ -14,14 +14,14 @@ function provider(
 ): PluginForgeClientProviderContribution {
   return {
     definition: {
-      id: "codeup",
+      id: "acme",
       displayName,
       changeRequestAbbrev: "MR",
       changeRequestNoun: "merge request",
       changeRequestNumberPrefix: "!",
       issueNumberPrefix: "#",
       signIn: { cli: "aliyun", command: "aliyun configure" },
-      cloudHosts: ["codeup.aliyun.com"],
+      cloudHosts: ["forge.example.com"],
     },
     view: {
       icon: { kind: "svg-path", viewBox: [0, 0, 24, 24], path: "M0 0h24v24H0z" },
@@ -34,12 +34,12 @@ function provider(
 describe("ClientForgeRegistry", () => {
   it("isolates plugin providers by host", () => {
     const registry = new ClientForgeRegistry();
-    registry.replaceHost("host-a", [{ pluginId: "codeup-plugin", contribution: provider("A") }]);
+    registry.replaceHost("host-a", [{ pluginId: "acme-plugin", contribution: provider("A") }]);
 
-    expect(
-      getClientForgeDefinition(registry.getHostSnapshot("host-a"), "codeup")?.displayName,
-    ).toBe("A");
-    expect(getClientForgeDefinition(registry.getHostSnapshot("host-b"), "codeup")).toBeNull();
+    expect(getClientForgeDefinition(registry.getHostSnapshot("host-a"), "acme")?.displayName).toBe(
+      "A",
+    );
+    expect(getClientForgeDefinition(registry.getHostSnapshot("host-b"), "acme")).toBeNull();
     expect(
       getClientForgeDefinition(registry.getHostSnapshot("host-b"), "github")?.displayName,
     ).toBe("GitHub");
@@ -47,22 +47,22 @@ describe("ClientForgeRegistry", () => {
 
   it("atomically replaces and removes one host without changing another", () => {
     const registry = new ClientForgeRegistry();
-    registry.replaceHost("host-a", [{ pluginId: "codeup-plugin", contribution: provider("A1") }]);
-    registry.replaceHost("host-b", [{ pluginId: "codeup-plugin", contribution: provider("B") }]);
+    registry.replaceHost("host-a", [{ pluginId: "acme-plugin", contribution: provider("A1") }]);
+    registry.replaceHost("host-b", [{ pluginId: "acme-plugin", contribution: provider("B") }]);
 
-    registry.replaceHost("host-a", [{ pluginId: "codeup-plugin", contribution: provider("A2") }]);
-    expect(
-      getClientForgeDefinition(registry.getHostSnapshot("host-a"), "codeup")?.displayName,
-    ).toBe("A2");
-    expect(
-      getClientForgeDefinition(registry.getHostSnapshot("host-b"), "codeup")?.displayName,
-    ).toBe("B");
+    registry.replaceHost("host-a", [{ pluginId: "acme-plugin", contribution: provider("A2") }]);
+    expect(getClientForgeDefinition(registry.getHostSnapshot("host-a"), "acme")?.displayName).toBe(
+      "A2",
+    );
+    expect(getClientForgeDefinition(registry.getHostSnapshot("host-b"), "acme")?.displayName).toBe(
+      "B",
+    );
 
     registry.removeHost("host-a");
-    expect(getClientForgeDefinition(registry.getHostSnapshot("host-a"), "codeup")).toBeNull();
-    expect(
-      getClientForgeDefinition(registry.getHostSnapshot("host-b"), "codeup")?.displayName,
-    ).toBe("B");
+    expect(getClientForgeDefinition(registry.getHostSnapshot("host-a"), "acme")).toBeNull();
+    expect(getClientForgeDefinition(registry.getHostSnapshot("host-b"), "acme")?.displayName).toBe(
+      "B",
+    );
   });
 
   it("rejects built-in ids instead of overriding them", () => {
@@ -88,8 +88,8 @@ describe("ClientForgeRegistry", () => {
     const registry = new ClientForgeRegistry();
     let transformCalls = 0;
     const facts = defineForgeFacts({
-      family: "codeup" as const,
-      schema: z.object({ forge: z.literal("codeup"), ready: z.boolean() }).transform((value) => {
+      family: "acme" as const,
+      schema: z.object({ forge: z.literal("acme"), ready: z.boolean() }).transform((value) => {
         transformCalls += 1;
         return value;
       }),
@@ -104,19 +104,19 @@ describe("ClientForgeRegistry", () => {
       }),
     });
     registry.replaceHost("host-a", [
-      { pluginId: "codeup-plugin", contribution: provider("Codeup", { facts }) },
+      { pluginId: "acme-plugin", contribution: provider("Acme", { facts }) },
     ]);
     const host = registry.getHostSnapshot("host-a");
 
-    expect(parseHostForgeFacts(host, { forge: "codeup", ready: true })).toEqual({
-      forge: "codeup",
+    expect(parseHostForgeFacts(host, { forge: "acme", ready: true })).toEqual({
+      forge: "acme",
       ready: true,
     });
-    expect(deriveHostMergeCapability(host, { forge: "codeup", ready: true })).toMatchObject({
+    expect(deriveHostMergeCapability(host, { forge: "acme", ready: true })).toMatchObject({
       directMergeReady: true,
       allowedMethods: ["merge"],
     });
     expect(transformCalls).toBe(2);
-    expect(deriveHostMergeCapability(host, { forge: "codeup", ready: "yes" })).toBeNull();
+    expect(deriveHostMergeCapability(host, { forge: "acme", ready: "yes" })).toBeNull();
   });
 });

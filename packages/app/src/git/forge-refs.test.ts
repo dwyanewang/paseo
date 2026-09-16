@@ -63,17 +63,17 @@ describe("parseForgeRef", () => {
     const registry = new ClientForgeRegistry();
     registry.replaceHost("host", [
       {
-        pluginId: "codeup-plugin",
+        pluginId: "acme-plugin",
         contribution: {
           definition: {
-            id: "codeup",
-            displayName: "Codeup",
+            id: "acme",
+            displayName: "Acme",
             changeRequestAbbrev: "MR",
             changeRequestNoun: "merge request",
             changeRequestNumberPrefix: "!",
             issueNumberPrefix: "#",
             signIn: null,
-            cloudHosts: ["codeup.aliyun.com"],
+            cloudHosts: ["forge.example.com"],
           },
           urlGrammar: {
             treeInfix: "/tree/",
@@ -87,8 +87,8 @@ describe("parseForgeRef", () => {
 
     expect(
       parseForgeRef(
-        "https://codeup.aliyun.com/acme/project/merge_requests/42",
-        "git@codeup.aliyun.com:acme/project.git",
+        "https://forge.example.com/acme/project/merge_requests/42",
+        "git@forge.example.com:acme/project.git",
         registry.getHostSnapshot("host"),
       ),
     ).toEqual({ kind: "change_request", number: 42 });

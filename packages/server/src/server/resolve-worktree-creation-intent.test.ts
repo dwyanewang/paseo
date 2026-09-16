@@ -213,22 +213,22 @@ describe("resolveWorktreeCreationIntent", () => {
 
   test("uses an adapter-selected push URL before the generic SSH preference", async () => {
     const deps = createResolverHarness({
-      forge: "codeup",
+      forge: "acme",
       forgeService: {
         getPullRequestCheckoutTarget: async () => ({
           number: 7,
           baseRefName: "main",
-          headRefName: "feature/codeup",
+          headRefName: "feature/acme",
           checkoutRefs: [
             {
-              remoteUrl: "https://codeup.aliyun.com/org/contributor/repo.git",
-              remoteRef: "refs/heads/feature/codeup",
+              remoteUrl: "https://forge.example.com/org/contributor/repo.git",
+              remoteRef: "refs/heads/feature/acme",
             },
           ],
           headOwnerLogin: "org/contributor/repo",
-          preferredPushUrl: "https://codeup.aliyun.com/org/contributor/repo.git",
-          headRepositorySshUrl: "git@codeup.aliyun.com:org/contributor/repo.git",
-          headRepositoryUrl: "https://codeup.aliyun.com/org/contributor/repo.git",
+          preferredPushUrl: "https://forge.example.com/org/contributor/repo.git",
+          headRepositorySshUrl: "git@forge.example.com:org/contributor/repo.git",
+          headRepositoryUrl: "https://forge.example.com/org/contributor/repo.git",
           isCrossRepository: true,
         }),
       },
@@ -238,16 +238,16 @@ describe("resolveWorktreeCreationIntent", () => {
       resolveWorktreeCreationIntent(
         {
           action: "checkout",
-          checkoutSource: { kind: "change_request", forge: "codeup", number: 7 },
+          checkoutSource: { kind: "change_request", forge: "acme", number: 7 },
         },
         repoRoot,
         deps,
       ),
     ).resolves.toMatchObject({
       kind: "checkout-change-request",
-      forge: "codeup",
+      forge: "acme",
       changeRequestNumber: 7,
-      pushRemoteUrl: "https://codeup.aliyun.com/org/contributor/repo.git",
+      pushRemoteUrl: "https://forge.example.com/org/contributor/repo.git",
     });
   });
 

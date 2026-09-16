@@ -7,7 +7,7 @@ presentation and runtime interpretation.
 Choose one integration path:
 
 - Use a local plugin for a private, vendor-specific, or independently shipped
-  Forge. The Codeup example uses this path.
+  Forge. This is the default: it needs no change here.
 - Use built-in modules when Paseo ships and maintains the Forge, or when it needs
   client pane contributions that the plugin contract does not expose.
 
@@ -84,10 +84,10 @@ arguments. The pagination guards are there because a forge that ignores the page
 cursor or moves its total will otherwise loop forever.
 
 The toolkit carries no host, endpoint, or flag names. A plugin supplies the
-binary, the strings that mean "not signed in", and the command shapes. Codeup
-drives it through the `aliyun` CLI; Gitee's official `gitee` CLI fits the same
-path, with `gitee auth login` for the PAT, `--json` output, and a raw `api`
-subcommand for anything the named commands do not cover.
+binary, the strings that mean "not signed in", and the command shapes. That
+covers both CLI shapes seen in practice: a `gh`-shaped CLI with semantic
+subcommands, and a CLI that exposes one generic API verb the plugin passes an
+action and parameters to.
 
 ## Protocol
 
@@ -264,8 +264,6 @@ To add `acme` as a local plugin:
    lifecycle, and change-request checkout.
 7. Run `npm run typecheck`, install the directory, and verify native status,
    search, create/merge, checks, timeline, setup, and checkout against that host.
-
-See `plugin-examples/codeup` for the complete layout.
 
 Run `npm run typecheck` after each implementation slice. If protocol or client
 declarations are stale, run `npm run build:client`; if server/CLI declarations
