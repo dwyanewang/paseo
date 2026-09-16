@@ -1956,8 +1956,6 @@ the global plugin switch unregister the adapter, stop status polling, clear reso
 remove its client presentation. Cross-repository checkout refs can set `remoteUrl` when the head is
 not fetchable through an existing Git remote.
 
-See the repository's `plugin-examples/codeup` directory for a complete provider.
-
 ## Debug backend output
 
 Backend contributions can write to stdout and stderr with normal Node logging:

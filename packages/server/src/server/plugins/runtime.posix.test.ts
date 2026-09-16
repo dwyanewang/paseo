@@ -2072,8 +2072,8 @@ export default function contribute(plugin: any) {
       `export default function contribute(plugin: any) {
   plugin.addForgeServerProvider({
     definition: {
-      id: "Codeup",
-      displayName: "Codeup",
+      id: "Acme",
+      displayName: "Acme",
       changeRequestAbbrev: "MR",
       changeRequestNoun: "merge request",
       changeRequestNumberPrefix: "!",
@@ -2088,7 +2088,7 @@ export default function contribute(plugin: any) {
     const runtime = createTestRuntime();
 
     await expect(runtime.startPlugin("invalid-forge-id", directory)).rejects.toThrow(
-      "Invalid plugin forge provider id: Codeup",
+      "Invalid plugin forge provider id: Acme",
     );
   });
 

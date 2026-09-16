@@ -73,14 +73,14 @@ function forgeBundle(displayName: string): string {
   return `(function() { return { default: function(plugin) {
     plugin.addForgeClientProvider({
       definition: {
-        id: "codeup",
+        id: "acme",
         displayName: ${JSON.stringify(displayName)},
         changeRequestAbbrev: "MR",
         changeRequestNoun: "merge request",
         changeRequestNumberPrefix: "!",
         issueNumberPrefix: "#",
         signIn: null,
-        cloudHosts: ["codeup.aliyun.com"],
+        cloudHosts: ["forge.example.com"],
       },
       view: { icon: { kind: "svg-path", viewBox: [0, 0, 24, 24], path: "M0 0h24v24H0z" } },
     });
@@ -243,54 +243,42 @@ describe("PluginRegistry", () => {
   });
 
   it("keeps Forge contributions host-scoped across reload and remove", () => {
-    pluginRegistry.installCatalog("host-a", [
-      { id: "codeup", clientBundle: forgeBundle("Codeup A") },
-    ]);
-    pluginRegistry.installCatalog("host-b", [
-      { id: "codeup", clientBundle: forgeBundle("Codeup B") },
-    ]);
+    pluginRegistry.installCatalog("host-a", [{ id: "acme", clientBundle: forgeBundle("Acme A") }]);
+    pluginRegistry.installCatalog("host-b", [{ id: "acme", clientBundle: forgeBundle("Acme B") }]);
 
     expect(
-      getClientForgeDefinition(clientForgeRegistry.getHostSnapshot("host-a"), "codeup")
-        ?.displayName,
-    ).toBe("Codeup A");
+      getClientForgeDefinition(clientForgeRegistry.getHostSnapshot("host-a"), "acme")?.displayName,
+    ).toBe("Acme A");
     expect(
-      getClientForgeDefinition(clientForgeRegistry.getHostSnapshot("host-b"), "codeup")
-        ?.displayName,
-    ).toBe("Codeup B");
+      getClientForgeDefinition(clientForgeRegistry.getHostSnapshot("host-b"), "acme")?.displayName,
+    ).toBe("Acme B");
 
-    pluginRegistry.installCatalog("host-a", [
-      { id: "codeup", clientBundle: forgeBundle("Codeup A2") },
-    ]);
+    pluginRegistry.installCatalog("host-a", [{ id: "acme", clientBundle: forgeBundle("Acme A2") }]);
     expect(
-      getClientForgeDefinition(clientForgeRegistry.getHostSnapshot("host-a"), "codeup")
-        ?.displayName,
-    ).toBe("Codeup A2");
+      getClientForgeDefinition(clientForgeRegistry.getHostSnapshot("host-a"), "acme")?.displayName,
+    ).toBe("Acme A2");
 
     pluginRegistry.installCatalog("host-a", []);
     expect(
-      getClientForgeDefinition(clientForgeRegistry.getHostSnapshot("host-a"), "codeup"),
+      getClientForgeDefinition(clientForgeRegistry.getHostSnapshot("host-a"), "acme"),
     ).toBeNull();
     expect(
-      getClientForgeDefinition(clientForgeRegistry.getHostSnapshot("host-b"), "codeup")
-        ?.displayName,
-    ).toBe("Codeup B");
+      getClientForgeDefinition(clientForgeRegistry.getHostSnapshot("host-b"), "acme")?.displayName,
+    ).toBe("Acme B");
   });
 
   it("removes the previous Forge contribution when replacement evaluation fails", () => {
-    pluginRegistry.installCatalog("host-a", [
-      { id: "codeup", clientBundle: forgeBundle("Codeup") },
-    ]);
+    pluginRegistry.installCatalog("host-a", [{ id: "acme", clientBundle: forgeBundle("Acme") }]);
 
     pluginRegistry.installCatalog(
       "host-a",
-      [{ id: "codeup", clientBundle: `(function() { throw new Error("broken bundle"); })` }],
-      { replacePluginId: "codeup" },
+      [{ id: "acme", clientBundle: `(function() { throw new Error("broken bundle"); })` }],
+      { replacePluginId: "acme" },
     );
 
     expect(
-      getClientForgeDefinition(clientForgeRegistry.getHostSnapshot("host-a"), "codeup"),
+      getClientForgeDefinition(clientForgeRegistry.getHostSnapshot("host-a"), "acme"),
     ).toBeNull();
-    expect(pluginRegistry.getEvaluationError("host-a", "codeup")).toContain("broken bundle");
+    expect(pluginRegistry.getEvaluationError("host-a", "acme")).toContain("broken bundle");
   });
 });

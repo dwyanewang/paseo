@@ -437,30 +437,30 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       execFileSync("git", ["clone", forkDir, forkCloneDir]);
       execFileSync("git", ["config", "user.email", "test@test.com"], { cwd: forkCloneDir });
       execFileSync("git", ["config", "user.name", "Test"], { cwd: forkCloneDir });
-      execFileSync("git", ["checkout", "-b", "contributor/codeup"], { cwd: forkCloneDir });
-      writeFileSync(join(forkCloneDir, "file.txt"), "from-codeup-fork\n");
+      execFileSync("git", ["checkout", "-b", "contributor/acme"], { cwd: forkCloneDir });
+      writeFileSync(join(forkCloneDir, "file.txt"), "from-acme-fork\n");
       execFileSync("git", ["add", "file.txt"], { cwd: forkCloneDir });
       execFileSync(
         "git",
         ["-c", "commit.gpgsign=false", "commit", "-m", "cross repository branch"],
         { cwd: forkCloneDir },
       );
-      execFileSync("git", ["push", "origin", "contributor/codeup"], { cwd: forkCloneDir });
+      execFileSync("git", ["push", "origin", "contributor/acme"], { cwd: forkCloneDir });
 
       const result = await createLegacyWorktreeForTest({
         cwd: repoDir,
-        worktreeSlug: "codeup-cross-repo",
+        worktreeSlug: "acme-cross-repo",
         source: {
           kind: "checkout-change-request",
-          forge: "codeup",
+          forge: "acme",
           changeRequestNumber: 7,
-          headRef: "contributor/codeup",
+          headRef: "contributor/acme",
           headRepositoryOwner: "contributor/repo",
           baseRefName: "main",
           checkoutRefs: [
             {
               remoteUrl: forkDir,
-              remoteRef: "refs/heads/contributor/codeup",
+              remoteRef: "refs/heads/contributor/acme",
             },
           ],
           pushRemoteUrl: forkDir,
@@ -469,25 +469,23 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
         paseoHome,
       });
 
-      expect(readFileSync(join(result.worktreePath, "file.txt"), "utf8")).toBe(
-        "from-codeup-fork\n",
-      );
+      expect(readFileSync(join(result.worktreePath, "file.txt"), "utf8")).toBe("from-acme-fork\n");
       expect(
         execFileSync("git", ["branch", "--show-current"], { cwd: result.worktreePath })
           .toString()
           .trim(),
-      ).toBe("contributor/codeup");
+      ).toBe("contributor/acme");
     });
 
     it("does not expose a direct remote URL when fetching a change request fails", async () => {
       const remoteUrl =
-        "http://codeup-user:codeup-secret@127.0.0.1:1/example/repo.git?token=query-secret";
+        "http://forge-user:forge-secret@127.0.0.1:1/example/repo.git?token=query-secret";
       const error = await createLegacyWorktreeForTest({
         cwd: repoDir,
-        worktreeSlug: "codeup-private-remote",
+        worktreeSlug: "acme-private-remote",
         source: {
           kind: "checkout-change-request",
-          forge: "codeup",
+          forge: "acme",
           changeRequestNumber: 8,
           headRef: "contributor/private",
           baseRefName: "main",
@@ -509,7 +507,7 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       expect((error as Error).message).toContain(
         "Unable to fetch change request refs for worktree branch contributor/private: <direct remote> refs/heads/contributor/private",
       );
-      expect((error as Error).message).not.toMatch(/codeup-secret|query-secret/);
+      expect((error as Error).message).not.toMatch(/forge-secret|query-secret/);
     });
 
     it("uses the selected local or origin ref when both exist", async () => {
