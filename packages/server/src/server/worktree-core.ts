@@ -159,7 +159,7 @@ async function createWorktreeCoreWithPriority(
 // checkouts can substitute: branch-off lands on a new branch by design.
 function resolveCheckoutBranchCopy(
   intent: WorktreeCreationIntent,
-  worktree: WorktreeConfig,
+  worktree: CreatedWorktree,
 ): CheckoutBranchCopy | null {
   if (intent.kind !== "checkout-branch" || intent.branchName === worktree.branchName) {
     return null;
