@@ -322,6 +322,60 @@ test("promotes to interactive resume when archived history fails after unarchive
   await runConcurrentUnarchiveScenario(true);
 });
 
+test("serves read-only history when an archive wins the lifecycle lane before a queued resume", async () => {
+  const harness = await createLoaderHarness({
+    readSessionHistory: async () =>
+      completeHistory([
+        {
+          type: "timeline",
+          provider: "codex",
+          item: { type: "assistant_message", text: "History after a queued archive" },
+        },
+      ]),
+  });
+  const agentId = "00000000-0000-4000-8000-000000000311";
+  const agent = await harness.manager.createAgent(
+    { provider: "codex", cwd: harness.root },
+    agentId,
+    { workspaceId: "workspace-active" },
+  );
+  await harness.manager.closeAgent(agent.id);
+  // The loader reads the record before the archive lands, so it still chooses resume.
+  let archived = false;
+  const staleStorage = new Proxy(harness.storage, {
+    get(target, property) {
+      if (property === "get") {
+        return async (id: string) => {
+          const record = await target.get(id);
+          if (!archived) {
+            archived = true;
+            await harness.manager.archiveSnapshot(id, new Date().toISOString());
+          }
+          return record;
+        };
+      }
+      const value: unknown = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+
+  const snapshot = await ensureAgentLoaded(agentId, {
+    agentManager: harness.manager,
+    agentStorage: staleStorage,
+    logger: harness.logger,
+  });
+
+  expect(snapshot.lifecycle).toBe("closed");
+  expect(harness.calls.resumeSessionIds).toEqual([]);
+  expect(harness.calls.history).toHaveLength(1);
+  expect(harness.manager.getAgent(agentId)).toBeNull();
+  expect(harness.manager.getTimeline(agentId)).toContainEqual({
+    type: "assistant_message",
+    text: "History after a queued archive",
+  });
+  expect((await harness.storage.get(agentId))?.archivedAt).toEqual(expect.any(String));
+});
+
 test("does not retain archived history state when the provider read fails", async () => {
   const harness = await createLoaderHarness({
     readSessionHistory: async () => {
