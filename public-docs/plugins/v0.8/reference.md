@@ -1947,7 +1947,10 @@ export const acmeClientProvider = defineForgeClientProvider({
 The optional client fields are:
 
 - `facts`: Zod validation and merge-capability derivation for the open `forgeSpecific` envelope;
-- `urlGrammar`: tree, blob, line-anchor, checks-page, and pasted-reference syntax;
+- `urlGrammar`: tree, blob, line-anchor, checks-page, and pasted-reference syntax. `lineAnchor` is a
+  template pair, `{ single, range }`, with `{start}` and `{end}` substituted — `GITHUB_LINE_ANCHOR`
+  (`#L12-L20`) and `GITLAB_LINE_ANCHOR` (`#L12-20`) ship for the two common shapes, and any other
+  spelling is expressible without a Paseo change. Omit `range` when the forge cannot anchor one;
 - `view`: one validated SVG path and light/dark brand colors.
 
 Provider IDs and facts families match `^[a-z0-9][a-z0-9._-]*$`. The provider ID must not collide
