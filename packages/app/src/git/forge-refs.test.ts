@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { GITHUB_LINE_ANCHOR } from "@getpaseo/plugin";
 import { extractForgeRefs, parseForgeRef } from "./forge-refs";
 import { ClientForgeRegistry } from "./client-forge-registry";
 
@@ -78,7 +79,7 @@ describe("parseForgeRef", () => {
           urlGrammar: {
             treeInfix: "/tree/",
             blobInfix: "/blob/",
-            lineAnchorStyle: "github",
+            lineAnchor: GITHUB_LINE_ANCHOR,
             referencePaths: [{ kind: "change_request", infix: "/merge_requests/" }],
           },
         },
