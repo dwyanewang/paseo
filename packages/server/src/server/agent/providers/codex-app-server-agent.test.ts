@@ -4157,7 +4157,7 @@ describe("Codex app-server provider", () => {
       }),
     };
 
-    const historyLoad = asInternals(session).loadPersistedHistory();
+    const historyLoad = asInternals(session).loadPersistedHistory(session.client);
     try {
       await vi.waitFor(() => {
         expect(peakChildReads).toBe(8);
@@ -4245,7 +4245,9 @@ describe("Codex app-server provider", () => {
       }),
     };
 
-    await expect(asInternals(session).loadPersistedHistory()).resolves.toBeUndefined();
+    await expect(
+      asInternals(session).loadPersistedHistory(session.client),
+    ).resolves.toBeUndefined();
 
     const history: AgentStreamEvent[] = [];
     for await (const event of session.streamHistory()) {

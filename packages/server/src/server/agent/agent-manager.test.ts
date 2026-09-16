@@ -37,7 +37,6 @@ import type {
   AgentProvider,
   AgentPersistenceHandle,
   AgentRunOptions,
-  AgentResumeSessionOptions,
   AgentRunResult,
   AgentSession,
   AgentSessionConfig,
@@ -11331,10 +11330,8 @@ test("concurrent native restores run once before resuming the same agent", async
     override async resumeSession(
       handle: AgentPersistenceHandle,
       config?: Partial<AgentSessionConfig>,
-      _launchContext?: AgentLaunchContext,
-      options?: AgentResumeSessionOptions,
     ): Promise<AgentSession> {
-      operations.push(`resume:${options?.purpose}`);
+      operations.push("resume");
       return super.resumeSession(handle, config);
     }
   })();
@@ -11356,7 +11353,7 @@ test("concurrent native restores run once before resuming the same agent", async
     });
     restoreAllowed.resolve();
     await Promise.all([first, second, load]);
-    expect(operations).toEqual(["restore", "resume:interactive"]);
+    expect(operations).toEqual(["restore", "resume"]);
     expect((await storage.get(agentId))?.archivedAt).toBeNull();
     expect(manager.getAgent(agentId)?.persistence?.sessionId).toBe(created.persistence?.sessionId);
   } finally {

@@ -120,9 +120,11 @@ Once the daemon reports the agent active, its tab follows normal archive propaga
 An empty active list cannot cancel an explicit History selection. Agent-detail loading does
 not own selection or release the explicit open.
 
-Persisted resume, dedicated history reads, native restore, and both live and stored-only archive
-enter the same per-agent lifecycle queue. Resume checks the durable record after entering that
-queue; an agent archived by then only gets a dedicated history read, never an interactive runtime.
+Persisted resume, native restore, and both live and stored-only archive enter the same per-agent
+lifecycle queue. Resume checks the durable record after entering that queue; an agent archived by
+then only gets a dedicated history read, never an interactive runtime. Dedicated history reads hold
+no writer and stay outside the queue, so a slow read never delays Unarchive; the loader re-checks
+the record afterwards and promotes to interactive resume if the agent was unarchived meanwhile.
 Shutdown must finish before the manager releases runtime ownership; a failed close retains the
 runtime for cleanup and blocks replacement through that close operation.
 
