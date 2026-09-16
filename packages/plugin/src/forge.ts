@@ -606,8 +606,18 @@ export class ForgeCommandError extends Error {
   readonly exitCode: number | null;
   readonly stderr: string;
 
-  constructor(label: { brand: string; binary: string }, params: ForgeCommandFailureParams) {
-    super(`${label.brand} CLI command failed: ${label.binary}`);
+  constructor(
+    // `kind` defaults to "cli" so existing CLI-backed adapters keep their
+    // wording; a REST-backed adapter passes "request" and names its API host
+    // through `binary`.
+    label: { brand: string; binary: string; kind?: "cli" | "request" },
+    params: ForgeCommandFailureParams,
+  ) {
+    super(
+      label.kind === "request"
+        ? `${label.brand} request failed: ${label.binary}`
+        : `${label.brand} CLI command failed: ${label.binary}`,
+    );
     this.brand = label.brand;
     this.binary = label.binary;
     this.args = [...params.args];
