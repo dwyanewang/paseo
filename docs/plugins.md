@@ -490,6 +490,11 @@ does not need those entries. Take the CLI plumbing from
 `@getpaseo/plugin/server/forge-toolkit` rather than writing it again — see
 [the plugin toolkit](forge-providers.md#the-plugin-toolkit).
 
+A forge with no CLI sets `signIn: null` and names a `setup` screen instead: the PR pane's setup
+callout then opens that screen rather than telling the user to "set up" the forge with no further
+detail. Paseo fills in the owning plugin, so a provider cannot point setup at another plugin's
+screen.
+
 The client provider contributes the shared definition plus optional facts parsing, merge-capability
 derivation, source URL grammar, a declarative SVG path, and brand colors. Client contributions are
 scoped to the daemon that supplied the plugin catalog. Do not put them in a process-global Forge

@@ -1951,7 +1951,10 @@ The optional client fields are:
   template pair, `{ single, range }`, with `{start}` and `{end}` substituted — `GITHUB_LINE_ANCHOR`
   (`#L12-L20`) and `GITLAB_LINE_ANCHOR` (`#L12-20`) ship for the two common shapes, and any other
   spelling is expressible without a Paseo change. Omit `range` when the forge cannot anchor one;
-- `view`: one validated SVG path and light/dark brand colors.
+- `view`: one validated SVG path and light/dark brand colors;
+- `setup`: `{ screenId }` naming a settings screen this plugin registered. Set it when
+  `definition.signIn` is null — a token-authenticated forge has no CLI to install and no command to
+  run, so the PR pane's setup callout opens that screen instead of showing untargeted guidance.
 
 Provider IDs and facts families match `^[a-z0-9][a-z0-9._-]*$`. The provider ID must not collide
 with a built-in or another plugin provider on that host. `cloudHosts` lists known public hosts. Add

@@ -42,6 +42,7 @@ export {
   type PluginForgeMergeCapability,
   type PluginForgeMergeMethod,
   type PluginForgeReferencePath,
+  type PluginForgeSetupSurface,
   type PluginForgeSignInCommand,
   type PluginForgeSpecificEnvelope,
   type PluginForgeSvgPathIcon,
