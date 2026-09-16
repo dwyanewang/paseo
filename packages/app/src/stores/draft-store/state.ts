@@ -47,6 +47,14 @@ export interface DraftRecord {
   version: number;
 }
 
+/**
+ * Emptying a plugin launch draft is an edit, not a close. It stays active and bound so finalized
+ * draft pruning cannot drop the launch binding; only closing its draft tab discards the launch.
+ */
+export function keepsEmptiedDraftBound(record: DraftRecord | undefined): boolean {
+  return record?.agentLaunch !== undefined;
+}
+
 export function editDraftRecordText(
   record: DraftRecord | undefined,
   text: string,
@@ -54,9 +62,7 @@ export function editDraftRecordText(
 ): DraftRecord {
   if (record?.lifecycle === "active" && record.input.text === text) return record;
   const attachments = record?.lifecycle === "active" ? record.input.attachments : [];
-  // Emptying a plugin launch draft is an edit, not a close: abandoning it would discard the launch
-  // journal (`observeAbandonedLaunchDrafts`), so it keeps its lifecycle and binding.
-  const emptyLifecycle = record?.agentLaunch ? record.lifecycle : "abandoned";
+  const emptyLifecycle = record && keepsEmptiedDraftBound(record) ? record.lifecycle : "abandoned";
   return {
     input: { text, attachments },
     lifecycle: text.length > 0 || attachments.length > 0 ? "active" : emptyLifecycle,
