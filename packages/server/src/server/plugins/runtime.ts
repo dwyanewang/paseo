@@ -565,6 +565,13 @@ export class PluginRuntime {
   private request(
     loaded: LoadedPlugin,
     message: Extract<PluginProcessRequest, { requestId: string }>,
+    // Forge calls share this transport but carry their own deadline, timeout
+    // wording, and result validation.
+    options?: {
+      timeoutMs?: number;
+      timedOutMessage?: string;
+      parseOutput?: (output: unknown) => unknown;
+    },
   ): Promise<unknown> {
     const child = loaded.child;
     const pluginId = loaded.id;
@@ -576,9 +583,18 @@ export class PluginRuntime {
         if (message.type === "hook") {
           void send(child, { type: "hook.cancel", requestId }).catch(() => {});
         }
-        reject(new Error(`Plugin RPC timed out: ${pluginId}.${message.type}`));
-      }, REQUEST_TIMEOUT_MS);
-      loaded.pending.set(requestId, { resolve, reject, timeout });
+        reject(
+          new Error(
+            options?.timedOutMessage ?? `Plugin RPC timed out: ${pluginId}.${message.type}`,
+          ),
+        );
+      }, options?.timeoutMs ?? REQUEST_TIMEOUT_MS);
+      loaded.pending.set(requestId, {
+        resolve,
+        reject,
+        timeout,
+        ...(options?.parseOutput ? { parseOutput: options.parseOutput } : {}),
+      });
       void send(child, message).catch((error) => {
         clearTimeout(timeout);
         loaded.pending.delete(requestId);
@@ -604,32 +620,15 @@ export class PluginRuntime {
     if (method === "probeHost" ? !provider.hasProbeHost : !provider.methods.includes(method)) {
       throw new Error(`Forge provider ${providerId} does not contribute ${method}`);
     }
-    const child = loaded.child;
-    const requestId = randomUUID();
-    const timeoutMs = method === "probeHost" ? FORGE_PROBE_TIMEOUT_MS : FORGE_REQUEST_TIMEOUT_MS;
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        loaded.pending.delete(requestId);
-        reject(new Error(`Plugin forge request timed out: ${pluginId}.${providerId}.${method}`));
-      }, timeoutMs);
-      loaded.pending.set(requestId, {
-        resolve,
-        reject,
-        timeout,
+    return this.request(
+      loaded,
+      { type: "invoke_forge", requestId: randomUUID(), providerId, method, input },
+      {
+        timeoutMs: method === "probeHost" ? FORGE_PROBE_TIMEOUT_MS : FORGE_REQUEST_TIMEOUT_MS,
+        timedOutMessage: `Plugin forge request timed out: ${pluginId}.${providerId}.${method}`,
         parseOutput: (output) => parsePluginForgeResult(method, output),
-      });
-      void send(child, {
-        type: "invoke_forge",
-        requestId,
-        providerId,
-        method,
-        input,
-      }).catch((error) => {
-        clearTimeout(timeout);
-        loaded.pending.delete(requestId);
-        reject(error);
-      });
-    });
+      },
+    );
   }
 
   async stopAll(): Promise<void> {

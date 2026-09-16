@@ -12,6 +12,7 @@ import type {
 } from "@getpaseo/plugin/server/provider";
 import { ProviderEventSchema, ProviderInputSchema } from "@getpaseo/plugin/server/provider";
 import { z } from "zod";
+import { ForgeProviderDescriptorSchema } from "./forge-validation.js";
 
 export interface PluginProviderMetadata {
   hasCatalogCacheKey?: boolean;
@@ -111,34 +112,6 @@ const providerConnectRequestSchema = z
   .object({
     versions: z.array(z.number().int().positive()),
     capabilities: z.array(z.string()),
-  })
-  .strict();
-const forgeDefinitionSchema = z
-  .object({
-    id: z.string().regex(/^[a-z0-9][a-z0-9._-]*$/),
-    displayName: z.string().trim().min(1),
-    changeRequestAbbrev: z.string().trim().min(1),
-    changeRequestNoun: z.string().trim().min(1),
-    changeRequestNumberPrefix: z.string().trim().min(1),
-    issueNumberPrefix: z.string().trim().min(1),
-    signIn: z
-      .object({
-        cli: z.string().trim().min(1),
-        command: z.string().trim().min(1),
-        hostnameFlag: z.string().trim().min(1).optional(),
-      })
-      .strict()
-      .nullable(),
-    cloudHosts: z.array(z.string().trim().min(1)).optional(),
-  })
-  .strict();
-const forgeProviderDescriptorSchema = z
-  .object({
-    definition: forgeDefinitionSchema,
-    methods: z.array(z.enum(PLUGIN_FORGE_SERVICE_METHODS)),
-    authProbeCanThrow: z.boolean(),
-    supportsCrossRepoCheckoutWithoutRefs: z.boolean(),
-    hasProbeHost: z.boolean(),
   })
   .strict();
 const forgeSerializedErrorSchema = z
@@ -249,7 +222,7 @@ export const PluginProcessMessageSchema: z.ZodType<PluginProcessMessage> = z.dis
         methods: z.array(z.string()),
         providers: z.array(providerMetadataSchema),
         hooks: hooksSchema.optional(),
-        forgeProviders: z.array(forgeProviderDescriptorSchema),
+        forgeProviders: z.array(ForgeProviderDescriptorSchema),
       })
       .strict(),
     z
