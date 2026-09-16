@@ -289,6 +289,10 @@ are stale, run `npm run build:server`.
 - Source URL grammars are app-side because blob/tree path syntax is
   forge-specific. If a forge has no grammar, omit the "Open on ..." source link
   rather than constructing a wrong URL.
+- A plugin's line anchor is a `{ single, range }` template pair, not a named
+  style. A closed list of styles would mean every forge that spells anchors its
+  own way needs a Paseo change; built-in modules keep their `lineAnchor`
+  function because they ship with the app anyway.
 - Pasted issue/change-request URL recognition is also app-side and registry
   driven. Put the forge's route infixes in `urlGrammar.referencePaths`; the
   neutral extractor matches the pasted host and full repository path against

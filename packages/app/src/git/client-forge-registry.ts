@@ -1,4 +1,5 @@
 import { useCallback, useSyncExternalStore } from "react";
+import { renderForgeLineAnchor } from "@getpaseo/plugin";
 import type {
   PluginForgeClientProviderContribution,
   PluginForgeClientView,
@@ -59,13 +60,6 @@ export const BUILTIN_CLIENT_FORGE_HOST: ClientForgeHostSnapshot = {
   pluginViewsById: new Map(),
 };
 
-function lineAnchor(style: "github" | "gitlab", start: number, end?: number): string {
-  if (style === "gitlab") {
-    return end && end > start ? `#L${start}-${end}` : `#L${start}`;
-  }
-  return end && end > start ? `#L${start}-L${end}` : `#L${start}`;
-}
-
 function toUrlGrammar(
   contribution: PluginForgeClientProviderContribution,
 ): ForgeUrlGrammar | undefined {
@@ -76,7 +70,7 @@ function toUrlGrammar(
   return {
     treeInfix: grammar.treeInfix,
     blobInfix: grammar.blobInfix,
-    lineAnchor: (start, end) => lineAnchor(grammar.lineAnchorStyle, start, end),
+    lineAnchor: (start, end) => renderForgeLineAnchor(grammar.lineAnchor, start, end),
     changeRequestChecksSuffix: grammar.changeRequestChecksSuffix,
     referencePaths: grammar.referencePaths?.map(({ kind, infix }) => ({ kind, infix })),
   };
