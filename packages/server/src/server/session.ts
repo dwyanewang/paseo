@@ -7793,14 +7793,14 @@ export class Session {
         logger: this.sessionLogger,
       });
       const rows = await this.agentManager.getTimelineRows(msg.agentId);
-      const { epoch } = this.agentManager.fetchTimeline(msg.agentId, {
+      const { epoch } = this.agentManager.fetchPublicTimeline(msg.agentId, {
         direction: "tail",
         limit: 1,
       });
       const result = await searchTimeline({ rows, query: msg.query, cursor: msg.cursor });
       if (
-        this.agentManager.fetchTimeline(msg.agentId, { direction: "tail", limit: 1 }).epoch !==
-        epoch
+        this.agentManager.fetchPublicTimeline(msg.agentId, { direction: "tail", limit: 1 })
+          .epoch !== epoch
       ) {
         throw new Error("History changed; search again");
       }

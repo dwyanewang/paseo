@@ -56,7 +56,17 @@ export async function ensureUnarchivedAgentLoaded(
     throw new Error(`Agent is archived: ${agentId}`);
   }
 
-  const agent = await ensureAgentLoaded(agentId, deps);
+  let agent: ManagedAgent;
+  try {
+    agent = await ensureAgentLoaded(agentId, deps);
+  } catch (error) {
+    // An archive can land while this load waits in the lifecycle queue. The load
+    // then falls back to a history read; report the archive, not that read's failure.
+    if ((await deps.agentStorage.get(agentId))?.archivedAt) {
+      throw new Error(`Agent is archived: ${agentId}`, { cause: error });
+    }
+    throw error;
+  }
   const latestRecord = await deps.agentStorage.get(agentId);
   if (latestRecord?.archivedAt) {
     await deps.agentManager.closeAgent(agentId).catch((error: unknown) => {

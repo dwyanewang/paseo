@@ -1414,18 +1414,13 @@ export class AgentManager {
     },
     hydrateOptions?: HydrateTimelineOptions,
   ): Promise<ManagedAgent> {
-    const resolvedAgentId = validateAgentId(agentId, "readAgentHistoryFromPersistence");
-    // History reads share the lifecycle lane with resume, archive and restore so a
-    // read never observes a half-finished native lifecycle transition.
     return this.trackAgentRegistrationOperation(
-      this.runLifecycleMutation(resolvedAgentId, () =>
-        this.readAgentHistoryFromPersistenceInternal(
-          handle,
-          overrides,
-          resolvedAgentId,
-          options,
-          hydrateOptions,
-        ),
+      this.readAgentHistoryFromPersistenceInternal(
+        handle,
+        overrides,
+        agentId,
+        options,
+        hydrateOptions,
       ),
     );
   }
