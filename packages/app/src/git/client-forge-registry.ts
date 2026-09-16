@@ -144,12 +144,18 @@ function createFactsEntry(
   };
 }
 
-function toDefinition(contribution: PluginForgeClientProviderContribution): ForgeDefinition {
+function toDefinition(
+  pluginId: string,
+  contribution: PluginForgeClientProviderContribution,
+): ForgeDefinition {
   const definition = contribution.definition;
   return {
     ...definition,
     cloudHosts: definition.cloudHosts ? [...definition.cloudHosts] : undefined,
     iconKind: definition.id,
+    // The owning plugin is filled in here rather than taken from the bundle, so
+    // a provider cannot point setup at another plugin's settings screen.
+    ...(contribution.setup ? { setup: { pluginId, screenId: contribution.setup.screenId } } : {}),
   };
 }
 
@@ -185,7 +191,7 @@ function createHostSnapshot(providers: readonly InstalledClientForgeProvider[]):
       continue;
     }
 
-    definitionsById.set(providerId, toDefinition(contribution));
+    definitionsById.set(providerId, toDefinition(pluginId, contribution));
     logicById.set(providerId, {
       id: providerId,
       urlGrammar: toUrlGrammar(contribution),

@@ -1,6 +1,5 @@
 import { useState, useCallback, useMemo, type ReactElement, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import type { TFunction } from "i18next";
 import { TreeRail } from "@/components/tree-rail";
 import { TreeRailToggle } from "@/components/tree-rail-toggle";
 import { DiffStat } from "@/components/diff-stat";
@@ -59,10 +58,15 @@ import type { GitActions } from "@/git/policy";
 import { BranchSwitcher } from "@/components/branch-switcher";
 import { useGitActions } from "@/git/use-actions";
 import { GIT_ACTION_ICONS } from "@/git/action-icons";
-import { buildForgeSignInCommand, getForgePresentation, type Forge } from "@/git/forge";
+import { createPluginNavigation } from "@/plugins/navigation";
+import { getForgePresentation } from "@/git/forge";
+import {
+  buildForgeSetupGuidance,
+  computeForgeSetupAction,
+  type ForgeSetupGuidance,
+} from "@/git/forge-setup";
 import { type ClientForgeHostSnapshot, useClientForgeHost } from "@/git/client-forge-registry";
 import { parseGitRemoteLocation } from "@getpaseo/protocol/git-remote";
-import type { ForgeAuthState } from "@getpaseo/protocol/messages";
 import { useCheckoutGitActionsStore } from "@/git/actions-store";
 import { useToast } from "@/contexts/toast-context";
 import { useSessionStore } from "@/stores/session-store";
@@ -1186,64 +1190,37 @@ function computePrErrorMessage(
   return prPayloadError?.message ?? null;
 }
 
-// The precise setup step a workspace needs before its forge features work, or
-// null when nothing is actionable (authenticated, or no forge remote at all).
-type ForgeSetupAction = "install_cli" | "sign_in" | null;
-
-// Drive the onboarding callout from the forge's auth state so the message names
-// the exact next step (install the CLI vs sign in) for whichever forge backs the
-// workspace — GitHub included. GitLab additionally requires the host to advertise
-// GitLab support, matching the rest of the GitLab UI.
-function computeForgeSetupAction(input: {
-  forge: Forge;
-  forgeProvidersSupported: boolean;
-  authState: ForgeAuthState | undefined;
-}): ForgeSetupAction {
-  // A daemon without pluggable forge support can't operate any non-GitHub forge,
-  // so don't offer a setup action for one it can't drive.
-  if (input.forge !== "github" && !input.forgeProvidersSupported) {
-    return null;
-  }
-  switch (input.authState) {
-    case "cli_missing":
-      return "install_cli";
-    case "unauthenticated":
-      return "sign_in";
-    case "authenticated":
-    case "no_remote":
-    case "error":
-      return null;
-    default:
-      return null;
-  }
-}
-
 function parseForgeHost(url: string | null | undefined): string | null {
   return url ? (parseGitRemoteLocation(url)?.host ?? null) : null;
 }
 
-function buildForgeSetupMessage(input: {
-  action: ForgeSetupAction;
-  forge: Forge;
-  host: string | null;
-  clientForgeHost: ClientForgeHostSnapshot;
-  t: TFunction;
-}): string | null {
-  if (!input.action) {
+function ForgeSetupCallout({
+  guidance,
+  onOpenSetup,
+}: {
+  guidance: ForgeSetupGuidance | null;
+  onOpenSetup: () => void;
+}) {
+  if (!guidance) {
     return null;
   }
-  const { brandLabel, signInCli } = getForgePresentation(input.forge, input.clientForgeHost);
-  // A forge with no known CLI (an unknown/third-party forge rendered neutrally)
-  // has no install/sign-in command to interpolate — show neutral guidance
-  // rather than the GitLab-specific callout or a null command.
-  if (signInCli === null) {
-    return input.t("workspace.git.forgeSetup.generic", { brand: brandLabel });
+  if (!guidance.setup) {
+    return (
+      <View style={styles.forgeSetupCallout} testID="forge-setup-callout">
+        <Text style={styles.forgeSetupCalloutText}>{guidance.message}</Text>
+      </View>
+    );
   }
-  if (input.action === "install_cli") {
-    return input.t("workspace.git.forgeSetup.installCli", { cli: signInCli, brand: brandLabel });
-  }
-  const command = buildForgeSignInCommand(input.forge, input.host, input.clientForgeHost);
-  return input.t("workspace.git.forgeSetup.signIn", { command, brand: brandLabel });
+  return (
+    <Pressable
+      style={styles.forgeSetupCallout}
+      testID="forge-setup-callout"
+      accessibilityRole="button"
+      onPress={onOpenSetup}
+    >
+      <Text style={styles.forgeSetupCalloutActionText}>{guidance.message}</Text>
+    </Pressable>
+  );
 }
 
 function buildToggleButtonStyle(
@@ -1590,9 +1567,9 @@ export function ChangesSurface({
     forgeProvidersSupported,
     authState,
   });
-  const forgeSetupMessage = useMemo(
+  const forgeSetupGuidance = useMemo(
     () =>
-      buildForgeSetupMessage({
+      buildForgeSetupGuidance({
         action: forgeSetupAction,
         forge,
         host: parseForgeHost(status?.remoteUrl),
@@ -1601,6 +1578,14 @@ export function ChangesSurface({
       }),
     [clientForgeHost, forgeSetupAction, forge, status?.remoteUrl, t],
   );
+  const forgeSetupTarget = forgeSetupGuidance?.setup ?? null;
+  const handleOpenForgeSetup = useCallback(() => {
+    if (!forgeSetupTarget) return;
+    createPluginNavigation({ serverId, workspaceId: workspaceId ?? null }).openSettings(
+      forgeSetupTarget.pluginId,
+      forgeSetupTarget.screenId,
+    );
+  }, [forgeSetupTarget, serverId, workspaceId]);
   const handleToggleDesktopTree = useCallback(() => {
     updateState({ ...instanceState, treeVisible: !desktopTreeVisible });
   }, [desktopTreeVisible, instanceState, updateState]);
@@ -1931,11 +1916,7 @@ export function ChangesSurface({
         />
       ) : null}
 
-      {forgeSetupMessage ? (
-        <View style={styles.forgeSetupCallout} testID="forge-setup-callout">
-          <Text style={styles.forgeSetupCalloutText}>{forgeSetupMessage}</Text>
-        </View>
-      ) : null}
+      <ForgeSetupCallout guidance={forgeSetupGuidance} onOpenSetup={handleOpenForgeSetup} />
 
       {prErrorMessage ? <Text style={styles.actionErrorText}>{prErrorMessage}</Text> : null}
 
@@ -2003,6 +1984,10 @@ const styles = StyleSheet.create((theme) => ({
     borderColor: theme.colors.border,
     borderRadius: theme.borderRadius.md,
     backgroundColor: theme.colors.surface1,
+  },
+  forgeSetupCalloutActionText: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.accent,
   },
   forgeSetupCalloutText: {
     fontSize: theme.fontSize.sm,
