@@ -1,5 +1,6 @@
 export type {
   PluginHandlerContext,
+  PluginSecretStore,
   PluginServerContext,
   PluginServerContribution,
   PluginSettings,

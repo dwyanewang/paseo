@@ -59,8 +59,24 @@ export interface PluginSettings<Schema extends ZodType> {
   ): Promise<PluginSettingsUpdateResult<Schema, Result>>;
 }
 
+/**
+ * Values that stay on the daemon host. Use this for API tokens and anything
+ * else a connected client must never receive: settings documents are served
+ * over an ordinary RPC, so a token placed there reaches every connected app.
+ * Expose a write-only plugin RPC on top when the user needs a UI.
+ */
+export interface PluginSecretStore {
+  get(key: string): Promise<string | null>;
+  has(key: string): Promise<boolean>;
+  /** Key names only; values are only available through `get`. */
+  keys(): Promise<string[]>;
+  set(key: string, value: string): Promise<void>;
+  delete(key: string): Promise<void>;
+}
+
 export interface PluginServerContext extends PluginLifecycleRegistration {
   readonly paseo: PaseoApi;
+  readonly secrets: PluginSecretStore;
   registerSettings<Schema extends ZodType>(
     definition: SettingsDefinition<Schema>,
   ): PluginSettings<Schema>;
