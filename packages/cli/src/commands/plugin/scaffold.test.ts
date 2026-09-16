@@ -405,6 +405,7 @@ export type ForgeModuleBoundarySmoke = [
         `import {
   defineForgeClientProvider,
   defineForgeFacts,
+  GITLAB_LINE_ANCHOR,
   type PluginForgeMergeCapability,
 } from "@getpaseo/plugin";
 import { z } from "zod";
@@ -438,7 +439,7 @@ export const forgeClientProvider = defineForgeClientProvider({
   urlGrammar: {
     treeInfix: "/tree/",
     blobInfix: "/blob/",
-    lineAnchorStyle: "gitlab",
+    lineAnchor: GITLAB_LINE_ANCHOR,
   },
   view: {
     icon: {
