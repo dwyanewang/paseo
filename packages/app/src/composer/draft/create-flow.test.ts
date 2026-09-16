@@ -84,7 +84,6 @@ describe("useDraftAgentCreateFlow", () => {
       lifecycle: "active",
       clientMessageId: "message-stable",
       labels: metadata.labels,
-      agentLaunchJournalKey: "journal-1",
     });
     expect(result.current.isSubmitting).toBe(true);
     expect(useDraftStore.getState().getAgentLaunchMetadata(metadata.draftId)?.submissionState).toBe(

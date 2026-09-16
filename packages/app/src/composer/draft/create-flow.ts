@@ -113,7 +113,6 @@ function buildPendingCreateAttempt(input: {
     agentId: null,
     clientMessageId: attempt.clientMessageId,
     ...(attempt.labels ? { labels: attempt.labels } : {}),
-    ...(input.identity.journalKey ? { agentLaunchJournalKey: input.identity.journalKey } : {}),
     text: attempt.text,
     timestamp: attempt.timestamp.getTime(),
     ...(attempt.images && attempt.images.length > 0 ? { images: attempt.images } : {}),
