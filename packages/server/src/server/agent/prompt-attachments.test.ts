@@ -73,17 +73,17 @@ describe("prompt attachments", () => {
     const attachment = {
       type: "forge_change_request" as const,
       mimeType: "application/paseo-forge-change-request",
-      forge: "codeup",
+      forge: "acme",
       number: 42,
       title: "Fix checkout lifecycle",
-      url: "https://codeup.aliyun.com/acme/repo/merge_requests/42",
+      url: "https://forge.example.com/acme/repo/merge_requests/42",
       body: null,
       baseRefName: "main",
       headRefName: "fix/checkout",
     };
     const resolveDefinition = () => ({
-      id: "codeup",
-      displayName: "Codeup",
+      id: "acme",
+      displayName: "Acme",
       changeRequestAbbrev: "MR",
       changeRequestNoun: "merge request",
       changeRequestNumberPrefix: "!",
@@ -93,10 +93,10 @@ describe("prompt attachments", () => {
     });
 
     expect(renderPromptAttachmentAsText(attachment, resolveDefinition)).toContain(
-      "Codeup MR !42: Fix checkout lifecycle",
+      "Acme MR !42: Fix checkout lifecycle",
     );
     expect(buildAgentBranchNameSeed({ attachments: [attachment] }, resolveDefinition)).toContain(
-      "Codeup MR !42: Fix checkout lifecycle",
+      "Acme MR !42: Fix checkout lifecycle",
     );
   });
 

@@ -506,9 +506,8 @@ adapter and client contribution. Registry changes stop active status polls, disc
 resolution, and refresh affected workspaces. Async `invalidate`, `defaultCheckoutRefs`, and
 `buildPrLocalBranchName` calls finish through the subprocess proxy before the next dependent read.
 
-See `plugin-examples/codeup` for a complete provider with Codeup MR status, search, checks, timeline,
-create/merge commands, a brand icon, merge facts, and cross-repository checkout. The generic Forge
-architecture and built-in path remain documented in [forge-providers.md](forge-providers.md).
+The generic Forge architecture and the built-in path are documented in
+[forge-providers.md](forge-providers.md).
 
 ## Contribute composer attachments
 

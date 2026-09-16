@@ -285,7 +285,7 @@ describe("runGitCommand", () => {
       await loadRunGitCommand(1);
     const trace = vi.fn();
     const remoteUrl =
-      "https://codeup-user:codeup-secret@forge.example.com/acme/repo.git?token=query-secret";
+      "https://forge-user:forge-secret@forge.example.com/acme/repo.git?token=query-secret";
     enqueueSpawnBehaviors({ delayMs: 5_000 });
     startGitCommandMetrics();
 
@@ -311,7 +311,7 @@ describe("runGitCommand", () => {
       "git fetch https://[REDACTED]@forge.example.com/acme/repo.git?[REDACTED] refs/heads/main",
     );
     expect(JSON.stringify({ error, trace: trace.mock.calls, metrics })).not.toMatch(
-      /codeup-user|codeup-secret|query-secret/,
+      /forge-user|forge-secret|query-secret/,
     );
     expect(metrics.submissions[0]?.args).toEqual([
       "fetch",
