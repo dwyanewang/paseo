@@ -7,9 +7,9 @@ import {
   execCommand,
   quoteWindowsArgument,
   shouldUseWindowsShell,
-} from "./server/process";
+} from "./process.js";
 
-describe("Codeup process execution", () => {
+describe("forge toolkit process execution", () => {
   const originalPlatform = process.platform;
 
   afterEach(() => {
@@ -19,12 +19,12 @@ describe("Codeup process execution", () => {
   it("routes extensionless PATH commands through the Windows shell", () => {
     Object.defineProperty(process, "platform", { value: "win32", writable: true });
 
-    expect(shouldUseWindowsShell("aliyun")).toBe(true);
-    expect(shouldUseWindowsShell("C:\\tools\\aliyun.cmd")).toBe(true);
-    expect(shouldUseWindowsShell("C:\\tools\\aliyun.exe")).toBe(false);
+    expect(shouldUseWindowsShell("acme")).toBe(true);
+    expect(shouldUseWindowsShell("C:\\tools\\acme.cmd")).toBe(true);
+    expect(shouldUseWindowsShell("C:\\tools\\acme.exe")).toBe(false);
   });
 
-  it("escapes JSON arguments before cmd.exe interprets user-authored MR text", () => {
+  it("escapes JSON arguments before cmd.exe interprets user-authored change request text", () => {
     Object.defineProperty(process, "platform", { value: "win32", writable: true });
 
     const argument = quoteWindowsArgument(
@@ -70,9 +70,9 @@ describe("Codeup process execution", () => {
   });
 });
 
-describe.skipIf(process.platform !== "win32")("Codeup Windows command scripts", () => {
+describe.skipIf(process.platform !== "win32")("forge toolkit Windows command scripts", () => {
   it("passes percent-delimited text literally instead of expanding daemon environment values", async () => {
-    const directory = await mkdtemp(path.join(tmpdir(), "paseo-codeup-cmd-"));
+    const directory = await mkdtemp(path.join(tmpdir(), "paseo-forge-toolkit-cmd-"));
     try {
       const captureScript = path.join(directory, "capture.cjs");
       const commandScript = path.join(directory, "capture.cmd");

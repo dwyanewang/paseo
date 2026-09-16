@@ -1865,11 +1865,16 @@ export default function contribute(plugin: any) {
     const directory = await createPlugin(
       "forge-runtime",
       `import { ForgeCliMissingError, ForgeCommandError } from "@getpaseo/plugin/server";
+import { parseGitRemoteLocation } from "@getpaseo/plugin/server/forge-toolkit";
+
+// Covers a plugin reaching the toolkit: the compiler must leave the specifier
+// external and the subprocess must resolve it before contribute() runs.
+const remote = parseGitRemoteLocation("git@forge.example.com:acme/repo.git");
 
 const pullRequest = {
   number: 7,
   title: "Plugin change",
-  url: "https://forge.example.com/acme/repo/changes/7",
+  url: \`https://\${remote.host}/\${remote.path}/changes/7\`,
   state: "open",
   body: null,
   baseRefName: "main",
