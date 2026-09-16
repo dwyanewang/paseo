@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { fork } from "node:child_process";
 import { tmpdir } from "node:os";
 import { PassThrough } from "node:stream";
@@ -1619,6 +1619,46 @@ export default function contribute(server: any) {
       message: "Hello, Paseo",
     });
     await expect(runtime.invoke("hello", "greet", { name: 7 })).rejects.toThrow();
+
+    await runtime.stopAll();
+  });
+
+  it("gives a plugin secret storage that is not reachable over RPC", async () => {
+    const settingsDirectory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-secrets-"));
+    temporaryDirectories.push(settingsDirectory);
+    const directory = await createPlugin(
+      "secret-keeper",
+      `import { defineRpc } from "@getpaseo/plugin";
+import type { PluginServerContext } from "@getpaseo/plugin/server";
+import { z } from "zod";
+
+const roundTrip = defineRpc({
+  name: "token.round-trip",
+  input: z.object({ value: z.string() }),
+  output: z.object({ stored: z.string().nullable(), keys: z.array(z.string()) }),
+});
+
+export default function contribute(server: PluginServerContext) {
+  server.handle(roundTrip, async (input) => {
+    await server.secrets.set("api-token", input.value);
+    return { stored: await server.secrets.get("api-token"), keys: await server.secrets.keys() };
+  });
+  return () => {};
+}`,
+    );
+    const runtime = createTestRuntime({ settingsDirectory });
+
+    await runtime.startPlugin("secret-keeper", directory);
+
+    await expect(
+      runtime.invoke("secret-keeper", "token.round-trip", { value: "pat-123" }),
+    ).resolves.toEqual({ stored: "pat-123", keys: ["api-token"] });
+
+    // The store deliberately publishes no handler, so a client cannot ask for it.
+    await expect(runtime.invoke("secret-keeper", "secrets.get", {})).rejects.toThrow();
+
+    const file = path.join(settingsDirectory, "secret-keeper", "secrets.json");
+    expect((await stat(file)).mode & 0o777).toBe(0o600);
 
     await runtime.stopAll();
   });
