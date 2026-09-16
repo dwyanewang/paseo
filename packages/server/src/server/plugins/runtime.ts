@@ -274,6 +274,11 @@ function deserializeForgeError(serialized: PluginForgeSerializedError): Error {
         stderr: serialized.stderr ?? serialized.message,
       },
     );
+    // The host class always words its message as a CLI failure. A REST-backed
+    // adapter said something else, so restore what it actually reported rather
+    // than telling the user a command failed that was never run. The class stays
+    // the host's: `instanceof ForgeCommandError` gates cached-failure fallback.
+    error.message = serialized.message;
   } else {
     error = new Error(serialized.message);
   }
