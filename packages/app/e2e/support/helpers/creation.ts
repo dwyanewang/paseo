@@ -7,7 +7,7 @@ import { fillComposerDraft } from "./composer";
 import { createAgentTabFromMenu } from "./workspace-tabs";
 import {
   openNewWorkspaceComposer,
-  selectWorkspaceIsolation,
+  selectWorkspaceMode,
   loadSessionMessageReaders,
 } from "./new-workspace";
 import { seedWorkspace } from "./seed-client";
@@ -147,7 +147,7 @@ export async function createCreationScenario(page: Page) {
       await gotoAppShell(page);
       await waitForSidebarHydration(page);
       await openNewWorkspaceComposer(page, project);
-      await selectWorkspaceIsolation(page, isolation);
+      await selectWorkspaceMode(page, isolation === "worktree" ? "branch-off" : "local");
     },
     async openAgentDraft() {
       await gotoWorkspace(page, project.workspaceId);

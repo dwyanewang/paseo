@@ -136,6 +136,44 @@ test("duplicate client submissions join one complete intent and cumulative updat
   f.client.close();
 });
 
+test("a recovered creation still discloses a checkout that landed on a branch copy", async () => {
+  const checkoutBranchCopy = { requestedBranch: "feature/foo", createdBranch: "feature/foo-1" };
+  let deliver!: (snapshot: CreationSnapshot | null) => void;
+  const client = new CreationClient({
+    supports: () => true,
+    requestId: () => "generated-key",
+    request: () => new Promise<CreationResult>(() => {}),
+    observe: (_kind, _key, next) => {
+      deliver = next;
+      return () => {};
+    },
+    legacyWorkspace: async () => {
+      throw new Error("modern hosts never use legacy workspace creation");
+    },
+    legacyAgent: async () => {
+      throw new Error("modern hosts never use legacy agent creation");
+    },
+  });
+  const result = client.createWorkspace({
+    idempotencyKey: "intent-one",
+    source: { kind: "worktree", cwd: "/project", action: "checkout", branchName: "feature/foo" },
+  });
+  client.reconnect();
+  deliver({
+    kind: "workspace",
+    idempotencyKey: "intent-one",
+    revision: 3,
+    phase: "completed",
+    workspaceId: workspace.id,
+    agentId: null,
+    workspace,
+    error: null,
+    checkoutBranchCopy,
+  });
+  expect(await result).toMatchObject({ workspace, checkoutBranchCopy });
+  client.close();
+});
+
 test("legacy adaptation keeps workspace, agent and initial prompt sequencing inside the client", async () => {
   const f = fixture(false);
   const phases: string[] = [];
