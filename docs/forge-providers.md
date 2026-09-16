@@ -68,6 +68,27 @@ disable, subprocess failure, and daemon shutdown must unregister the adapter,
 clear resolver caches, stop active status polls, ignore stale in-flight results,
 and refresh affected workspace snapshots.
 
+## The plugin toolkit
+
+`@getpaseo/plugin/server/forge-toolkit` owns the plumbing a CLI-backed Forge
+plugin would otherwise copy out of another one: process execution with the
+Windows shell and quoting rules, CLI error classification, cached binary
+resolution, JSON output parsing, argument redaction, Git remote parsing, and
+pagination guards.
+
+Use it instead of reimplementing any of it. The daemon derives auth state from
+the SDK's classified error classes alone, so a plugin that wraps its own spawn
+reports `error` where the user should see `cli_missing` or `unauthenticated`.
+The Windows quoting is there because change-request bodies reach `cmd.exe` as
+arguments. The pagination guards are there because a forge that ignores the page
+cursor or moves its total will otherwise loop forever.
+
+The toolkit carries no host, endpoint, or flag names. A plugin supplies the
+binary, the strings that mean "not signed in", and the command shapes. Codeup
+drives it through the `aliyun` CLI; Gitee's official `gitee` CLI fits the same
+path, with `gitee auth login` for the PAT, `--json` output, and a raw `api`
+subcommand for anything the named commands do not cover.
+
 ## Protocol
 
 `forgeSpecific` on PR status is an open envelope:
@@ -236,8 +257,9 @@ To add `acme` as a local plugin:
    `addForgeClientProvider()`.
 4. Return explicit cross-repository checkout refs. Use `remoteUrl` when the head
    repository is not fetchable through an existing remote.
-5. Use the SDK's classified Forge errors for missing CLI, auth, and command
-   failures.
+5. Take process, CLI, remote, and pagination plumbing from
+   `@getpaseo/plugin/server/forge-toolkit`, and throw the SDK's classified Forge
+   errors for missing CLI, auth, and command failures.
 6. Test the service, client facts/presentation, compiler split, registry
    lifecycle, and change-request checkout.
 7. Run `npm run typecheck`, install the directory, and verify native status,
