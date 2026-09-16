@@ -3,30 +3,7 @@ import type {
   PluginForgeServerProviderDescriptor,
   PluginForgeServiceMethod,
 } from "@getpaseo/plugin/server";
-import type {
-  CheckDetails,
-  CreatePullRequestOptions,
-  CurrentPullRequestStatus,
-  DisablePullRequestAutoMergeOptions,
-  EnablePullRequestAutoMergeOptions,
-  ForgeService,
-  GetCheckDetailsOptions,
-  GetPullRequestOptions,
-  GetPullRequestTimelineOptions,
-  IssueSummary,
-  ListIssuesOptions,
-  ListPullRequestsOptions,
-  MergePullRequestOptions,
-  PullRequestAutoMergeResult,
-  PullRequestCheckoutRef,
-  PullRequestCheckoutTarget,
-  PullRequestCreateResult,
-  PullRequestMergeResult,
-  PullRequestSummary,
-  PullRequestTimeline,
-  SearchIssuesAndPrsOptions,
-  SearchResult,
-} from "../../services/forge-service.js";
+import type { ForgeService, PullRequestCheckoutRef } from "../../services/forge-service.js";
 
 export interface PluginForgeInvoker {
   invokeForge(
@@ -83,55 +60,34 @@ export function createPluginForgeServiceProxy(options: {
     return (await invoke(method, input)) as T;
   }
 
+  /**
+   * Every cwd-scoped method forwards identically. Naming each one keeps the
+   * object literal checked against `ForgeService`, so a method added to the
+   * contract still fails to compile here until it is forwarded.
+   */
+  function forward<M extends PluginForgeServiceMethod & keyof ForgeService>(
+    method: M,
+  ): ForgeService[M] {
+    return ((input: { cwd: string }) => invokeForCwd(method, input)) as ForgeService[M];
+  }
+
   const service: ForgeService = {
     authProbeCanThrow: options.descriptor.authProbeCanThrow,
     supportsCrossRepoCheckoutWithoutRefs: options.descriptor.supportsCrossRepoCheckoutWithoutRefs,
-    listPullRequests(input: ListPullRequestsOptions): Promise<PullRequestSummary[]> {
-      return invokeForCwd("listPullRequests", input);
-    },
-    listIssues(input: ListIssuesOptions): Promise<IssueSummary[]> {
-      return invokeForCwd("listIssues", input);
-    },
-    getPullRequest(input: GetPullRequestOptions): Promise<PullRequestSummary> {
-      return invokeForCwd("getPullRequest", input);
-    },
-    getPullRequestHeadRef(input: GetPullRequestOptions): Promise<string> {
-      return invokeForCwd("getPullRequestHeadRef", input);
-    },
-    getPullRequestCheckoutTarget(input: GetPullRequestOptions): Promise<PullRequestCheckoutTarget> {
-      return invokeForCwd("getPullRequestCheckoutTarget", input);
-    },
-    getCurrentPullRequestStatus(input): Promise<CurrentPullRequestStatus | null> {
-      return invokeForCwd("getCurrentPullRequestStatus", input);
-    },
-    getPullRequestTimeline(input: GetPullRequestTimelineOptions): Promise<PullRequestTimeline> {
-      return invokeForCwd("getPullRequestTimeline", input);
-    },
-    getCheckDetails(input: GetCheckDetailsOptions): Promise<CheckDetails> {
-      return invokeForCwd("getCheckDetails", input);
-    },
-    searchIssuesAndPrs(input: SearchIssuesAndPrsOptions): Promise<SearchResult> {
-      return invokeForCwd("searchIssuesAndPrs", input);
-    },
-    createPullRequest(input: CreatePullRequestOptions): Promise<PullRequestCreateResult> {
-      return invokeForCwd("createPullRequest", input);
-    },
-    mergePullRequest(input: MergePullRequestOptions): Promise<PullRequestMergeResult> {
-      return invokeForCwd("mergePullRequest", input);
-    },
-    enablePullRequestAutoMerge(
-      input: EnablePullRequestAutoMergeOptions,
-    ): Promise<PullRequestAutoMergeResult> {
-      return invokeForCwd("enablePullRequestAutoMerge", input);
-    },
-    disablePullRequestAutoMerge(
-      input: DisablePullRequestAutoMergeOptions,
-    ): Promise<PullRequestAutoMergeResult> {
-      return invokeForCwd("disablePullRequestAutoMerge", input);
-    },
-    isAuthenticated(input): Promise<boolean> {
-      return invokeForCwd("isAuthenticated", input);
-    },
+    listPullRequests: forward("listPullRequests"),
+    listIssues: forward("listIssues"),
+    getPullRequest: forward("getPullRequest"),
+    getPullRequestHeadRef: forward("getPullRequestHeadRef"),
+    getPullRequestCheckoutTarget: forward("getPullRequestCheckoutTarget"),
+    getCurrentPullRequestStatus: forward("getCurrentPullRequestStatus"),
+    getPullRequestTimeline: forward("getPullRequestTimeline"),
+    getCheckDetails: forward("getCheckDetails"),
+    searchIssuesAndPrs: forward("searchIssuesAndPrs"),
+    createPullRequest: forward("createPullRequest"),
+    mergePullRequest: forward("mergePullRequest"),
+    enablePullRequestAutoMerge: forward("enablePullRequestAutoMerge"),
+    disablePullRequestAutoMerge: forward("disablePullRequestAutoMerge"),
+    isAuthenticated: forward("isAuthenticated"),
     invalidate(input): void {
       const previous = pendingInvalidations.get(input.cwd) ?? Promise.resolve();
       const pending = previous
