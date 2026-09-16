@@ -324,8 +324,10 @@ serialization covers one JavaScript runtime only, not multiple browser tabs or E
 The capability's absence is the compatibility gate for older clients. The seed prompt is not proof
 of final composer content. The journal lives in `packages/app/src/plugins/agent-launch/`; its
 draft binding is the `agentLaunch` record on the draft store (v6). Journal-backed drafts skip the
-ordinary `CREATE_FAILED → draft` restore after a request-start, and closing such a draft before any
-request-start is an explicit discard. The public contract, including the `no_eligible_workspace`
+ordinary `CREATE_FAILED → draft` restore after a request-start. Closing a journal-backed workspace draft
+tab before any request-start is the only explicit discard; emptying the composer keeps the draft
+active and bound, because the draft store's `abandoned` lifecycle also means "content emptied" and
+finalized drafts are pruned. The public contract, including the `no_eligible_workspace`
 rejection, is in the reference under "Native agent launch".
 
 ## Lifecycle hooks

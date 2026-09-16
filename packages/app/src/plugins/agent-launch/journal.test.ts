@@ -6,6 +6,7 @@ import {
   AGENT_LAUNCH_TERMINAL_RETENTION_MS,
   buildAgentLaunchJournalKey,
   discardAgentLaunch,
+  discardAgentLaunchForClosedDraft,
   garbageCollectAgentLaunchJournals,
   getAgentLaunchJournalForDraft,
   markAgentCreated,
@@ -381,13 +382,31 @@ describe("milestones", () => {
     expect(journalOf(storage, "attempt-2")).toMatchObject({ phase: "workspace_request_started" });
   });
 
-  it("discards a journal-backed draft the user abandons before request-start", async () => {
+  it("keeps the journal open when an emptied draft is marked abandoned", async () => {
     const storage = createMemoryStorage();
     await open(storage);
+    // The composer marks a draft abandoned when its last attachment is removed from empty text.
+    // That is an edit; only closing the draft tab discards the launch.
     useDraftStore.getState().clearDraftInput({ draftKey: "key:draft-1", lifecycle: "abandoned" });
-    await vi.waitFor(() => {
-      expect(journalOf(storage)).toMatchObject({ terminalOutcome: "discarded" });
-    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(journalOf(storage)).toMatchObject({ phase: "prepared" });
+    expect(journalOf(storage)).not.toHaveProperty("terminalOutcome");
+  });
+
+  it("discards a launch when its draft tab closes before any request starts", async () => {
+    const storage = createMemoryStorage();
+    const events: PluginAgentLaunchEvent[] = [];
+    await open(storage, { onEvent: (event) => events.push(event) });
+    await discardAgentLaunchForClosedDraft("draft-1");
+    expect(journalOf(storage)).toMatchObject({ terminalOutcome: "discarded" });
+    expect(events.at(-1)).toMatchObject({ type: "discarded", certainty: "not_submitted" });
+
+    await open(storage, { launchId: "attempt-2", requestFingerprint: "fp-2" });
+    await markWorkspaceRequestStarted("draft-2");
+    await expect(discardAgentLaunchForClosedDraft("draft-2")).resolves.toBeUndefined();
+    expect(journalOf(storage, "attempt-2")).toMatchObject({ phase: "workspace_request_started" });
+
+    await expect(discardAgentLaunchForClosedDraft("unbound-draft")).resolves.toBeUndefined();
   });
 
   it("keeps the journal open when the user empties the launch draft's text", async () => {
