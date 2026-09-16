@@ -215,7 +215,11 @@ function resolveCrossRepositoryFields(target: PullRequestCheckoutTarget): {
   if (!target.isCrossRepository) return {};
   const headRepositoryOwner = target.headOwnerLogin?.trim() || undefined;
   const headRepository = resolveHeadRepository(target);
-  const pushRemoteUrl = target.headRepositorySshUrl || target.headRepositoryUrl || undefined;
+  // An adapter that knows which transport its host accepts for a cross-repository
+  // push says so through `preferredPushUrl`. Only fall back to the generic
+  // SSH-then-HTTPS preference when it stays silent.
+  const pushRemoteUrl =
+    target.preferredPushUrl || target.headRepositorySshUrl || target.headRepositoryUrl || undefined;
   return {
     ...(headRepositoryOwner ? { headRepositoryOwner } : {}),
     ...(headRepository ? { headRepository } : {}),
