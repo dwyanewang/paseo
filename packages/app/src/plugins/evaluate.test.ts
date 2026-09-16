@@ -316,18 +316,18 @@ describe("evaluatePluginClientBundle", () => {
 
   it("collects a declarative Forge client provider", () => {
     const plugin = evaluatePluginClientBundle(
-      "codeup",
+      "acme",
       bundle(`
         plugin.addForgeClientProvider({
           definition: {
-            id: "codeup",
-            displayName: " Codeup ",
+            id: "acme",
+            displayName: " Acme ",
             changeRequestAbbrev: "MR",
             changeRequestNoun: "merge request",
             changeRequestNumberPrefix: "!",
             issueNumberPrefix: "#",
             signIn: { cli: "aliyun", command: "aliyun configure" },
-            cloudHosts: ["codeup.aliyun.com"],
+            cloudHosts: ["forge.example.com"],
           },
           view: {
             icon: { kind: "svg-path", viewBox: [0, 0, 24, 24], path: "M0 0h24v24H0z" },
@@ -339,7 +339,7 @@ describe("evaluatePluginClientBundle", () => {
 
     expect(plugin.forgeClientProviders).toEqual([
       expect.objectContaining({
-        definition: expect.objectContaining({ id: "codeup", displayName: "Codeup" }),
+        definition: expect.objectContaining({ id: "acme", displayName: "Acme" }),
       }),
     ]);
   });
@@ -399,12 +399,12 @@ describe("evaluatePluginClientBundle", () => {
   it("rejects malformed Forge client contributions", () => {
     expect(() =>
       evaluatePluginClientBundle(
-        "codeup",
+        "acme",
         bundle(`
           plugin.addForgeClientProvider({
             definition: {
-              id: "codeup",
-              displayName: "Codeup",
+              id: "acme",
+              displayName: "Acme",
               changeRequestAbbrev: "MR",
               changeRequestNoun: "merge request",
               changeRequestNumberPrefix: "!",
