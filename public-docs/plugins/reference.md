@@ -274,6 +274,21 @@ contributions run in a daemon subprocess with Node access to the host machine. K
 process, credential, and other machine-local work under `server/`. A plugin without
 `index.server.ts` starts no subprocess.
 
+`server.secrets` holds values that must stay on the daemon host — API tokens above all. Settings
+documents are served to clients over `settings.<id>.read`, so a token placed there reaches every
+connected app; `server.secrets` publishes no RPC and writes an owner-only file next to them.
+
+```ts
+await server.secrets.set("api-token", token);
+const token = await server.secrets.get("api-token"); // string | null
+await server.secrets.has("api-token");
+await server.secrets.keys(); // names only
+await server.secrets.delete("api-token");
+```
+
+Keys match `^[a-z0-9][a-z0-9._-]*$`. To collect a token from a settings screen, expose your own
+write-only RPC and a status RPC that returns whether a value exists, never the value.
+
 ### Providers
 
 Follow [Build a provider plugin](/docs/plugins/providers) for direct and ACP implementations,
