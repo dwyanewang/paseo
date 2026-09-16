@@ -34,7 +34,26 @@ import { createPluginClientId } from "./plugin-session-identity.js";
 import { parsePluginForgeInput } from "./forge-validation.js";
 
 import { PluginSettingsStore } from "./settings/index.js";
+import { PluginSecretStore } from "./secrets.js";
 let settingsStore: PluginSettingsStore | null = null;
+let secretStore: PluginSecretStore | null = null;
+
+/**
+ * Deliberately not an RPC. The daemon never publishes a handler for these, so a
+ * plugin's token cannot be fetched by a connected client.
+ */
+const secrets = {
+  get: (key: string) => requireSecretStore().get(key),
+  has: (key: string) => requireSecretStore().has(key),
+  keys: () => requireSecretStore().keys(),
+  set: (key: string, value: string) => requireSecretStore().set(key, value),
+  delete: (key: string) => requireSecretStore().delete(key),
+};
+
+function requireSecretStore(): PluginSecretStore {
+  if (!secretStore) throw new Error("Plugin secret storage is unavailable");
+  return secretStore;
+}
 function registerSettings<Schema extends ZodType>(definition: SettingsDefinition<Schema>) {
   if (!settingsStore) throw new Error("Plugin settings storage is unavailable");
   const handlers = settingsStore.register(definition);
@@ -333,6 +352,7 @@ function evaluateBundle(bundle: string): void {
   if (!paseo) throw new Error("Plugin Paseo API is unavailable");
   const contributedCleanup = setup({
     paseo,
+    secrets,
     handle: register,
     registerProvider,
     registerSettings,
@@ -371,6 +391,7 @@ async function initialize(message: Extract<PluginProcessRequest, { type: "initia
         send({ type: "settings.changed", settingsId }),
       )
     : null;
+  secretStore = message.settingsDirectory ? new PluginSecretStore(message.settingsDirectory) : null;
   evaluateBundle(message.bundle);
   send({
     type: "ready",

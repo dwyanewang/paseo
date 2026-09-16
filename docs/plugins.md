@@ -566,6 +566,29 @@ later access until plugin reload. The subscription cleanup belongs in the plugin
 cleanup when it outlives the entry. `server.paseo` is the already-connected owner-authority daemon
 SDK and is available during contribution startup as well as handlers and lifecycle callbacks.
 
+## Keep secrets on the daemon
+
+**Never put an API token in a settings document.** `settings.<id>.read` is an ordinary RPC and the
+id is derivable from the plugin, so any connected client can fetch that document — the token would
+reach every phone attached to the daemon, and it is cached there.
+
+`server.secrets` stores values that never leave the daemon host: `get`, `has`, `keys`, `set`,
+`delete`, keyed by `^[a-z0-9][a-z0-9._-]*$`. It writes `secrets.json` beside the settings documents
+with owner-only permissions and publishes no RPC handler at all.
+
+Give the user a UI by pairing it with your own RPCs — one that only accepts a value, one that only
+reports whether a value exists:
+
+```ts
+server.handle(setTokenRpc, async ({ token }) => {
+  await server.secrets.set("api-token", token);
+  return { ok: true };
+});
+server.handle(tokenStatusRpc, async () => ({ configured: await server.secrets.has("api-token") }));
+```
+
+Settings then hold only the non-secret half: base URL, self-hosted host, which account to use.
+
 ## Contribute a theme
 
 `addTheme` takes a small light or dark palette and a display name. Paseo expands it through the
