@@ -78,8 +78,10 @@ const ForgeProviderDescriptorsSchema = z
     }
   });
 
+const PositiveIntegerSchema = z.number().int().positive();
+
 const PullRequestSummarySchema = z.object({
-  number: z.number(),
+  number: PositiveIntegerSchema,
   title: z.string(),
   url: z.string(),
   state: z.string(),
@@ -92,7 +94,7 @@ const PullRequestSummarySchema = z.object({
 });
 
 const IssueSummarySchema = z.object({
-  number: z.number(),
+  number: PositiveIntegerSchema,
   title: z.string(),
   url: z.string(),
   state: z.string(),
@@ -109,7 +111,7 @@ const PullRequestCheckoutRefSchema = z.object({
 });
 
 const PullRequestCheckoutTargetSchema = z.object({
-  number: z.number(),
+  number: PositiveIntegerSchema,
   baseRefName: z.string(),
   headRefName: z.string(),
   checkoutRefs: z.array(PullRequestCheckoutRefSchema).optional(),
@@ -133,33 +135,8 @@ const PullRequestCheckSchema = z.object({
 
 const ForgeSpecificStatusFactsSchema = z.object({ forge: z.string() }).catchall(z.unknown());
 
-const NonEmptyStringSchema = z.string().min(1);
-const PositiveIntegerSchema = z.number().int().positive();
-const ForgeReadInputSchema = z.union([
-  z.object({ force: z.literal(true), reason: NonEmptyStringSchema }),
-  z.object({ force: z.literal(false).optional(), reason: z.string().optional() }),
-]);
-
-function forgeReadInputSchema(shape: z.ZodRawShape): z.ZodType {
-  return z.object(shape).and(ForgeReadInputSchema);
-}
-
-const PullRequestCommandStatusSchema = z.object({
-  mergeable: z.enum(["MERGEABLE", "CONFLICTING", "UNKNOWN"]).optional(),
-  forgeSpecific: ForgeSpecificStatusFactsSchema.optional(),
-});
-
-const ForgeMergeMethodSchema = z.enum(["merge", "squash", "rebase"]);
-const ForgeSearchKindSchema = z.enum([
-  "issue",
-  "change_request",
-  "github-issue",
-  "github-pr",
-  "pr",
-]);
-
 const CurrentPullRequestStatusSchema = z.object({
-  number: z.number().optional(),
+  number: PositiveIntegerSchema.optional(),
   repoOwner: z.string().optional(),
   repoName: z.string().optional(),
   projectPath: z.string().optional(),
@@ -336,93 +313,6 @@ const SearchResultSchema = z.object({
 
 const SuccessSchema = z.object({ success: z.literal(true) });
 
-const ForgeInputSchemas: Record<PluginForgeServiceMethod | "probeHost", z.ZodType> = {
-  listPullRequests: forgeReadInputSchema({
-    cwd: NonEmptyStringSchema,
-    query: z.string().optional(),
-    limit: PositiveIntegerSchema.optional(),
-  }),
-  listIssues: forgeReadInputSchema({
-    cwd: NonEmptyStringSchema,
-    query: z.string().optional(),
-    limit: PositiveIntegerSchema.optional(),
-  }),
-  getPullRequest: forgeReadInputSchema({
-    cwd: NonEmptyStringSchema,
-    number: PositiveIntegerSchema,
-  }),
-  getPullRequestHeadRef: forgeReadInputSchema({
-    cwd: NonEmptyStringSchema,
-    number: PositiveIntegerSchema,
-  }),
-  getPullRequestCheckoutTarget: forgeReadInputSchema({
-    cwd: NonEmptyStringSchema,
-    number: PositiveIntegerSchema,
-  }),
-  defaultCheckoutRefs: z.object({
-    changeRequestNumber: PositiveIntegerSchema,
-    headRef: NonEmptyStringSchema,
-  }),
-  buildPrLocalBranchName: z.object({
-    headRef: NonEmptyStringSchema,
-    checkoutTarget: PullRequestCheckoutTargetSchema,
-  }),
-  getCurrentPullRequestStatus: forgeReadInputSchema({
-    cwd: NonEmptyStringSchema,
-    headRef: NonEmptyStringSchema,
-    headSha: NonEmptyStringSchema.optional(),
-    headRepositoryOwner: NonEmptyStringSchema.optional(),
-  }),
-  getPullRequestTimeline: forgeReadInputSchema({
-    cwd: NonEmptyStringSchema,
-    prNumber: PositiveIntegerSchema,
-    repoOwner: NonEmptyStringSchema,
-    repoName: NonEmptyStringSchema,
-  }),
-  getCheckDetails: forgeReadInputSchema({
-    cwd: NonEmptyStringSchema,
-    repoOwner: NonEmptyStringSchema.optional(),
-    repoName: NonEmptyStringSchema.optional(),
-    checkRunId: PositiveIntegerSchema.optional(),
-    workflowRunId: PositiveIntegerSchema.optional(),
-    changeRequestNumber: PositiveIntegerSchema.optional(),
-  }),
-  searchIssuesAndPrs: forgeReadInputSchema({
-    cwd: NonEmptyStringSchema,
-    query: z.string(),
-    limit: PositiveIntegerSchema.optional(),
-    kinds: z.array(ForgeSearchKindSchema).optional(),
-  }),
-  createPullRequest: z.object({
-    cwd: NonEmptyStringSchema,
-    title: NonEmptyStringSchema,
-    head: NonEmptyStringSchema,
-    base: NonEmptyStringSchema,
-    body: z.string().optional(),
-  }),
-  mergePullRequest: z.object({
-    cwd: NonEmptyStringSchema,
-    prNumber: PositiveIntegerSchema,
-    mergeMethod: ForgeMergeMethodSchema,
-    status: PullRequestCommandStatusSchema.nullable().optional(),
-  }),
-  enablePullRequestAutoMerge: z.object({
-    cwd: NonEmptyStringSchema,
-    prNumber: PositiveIntegerSchema,
-    mergeMethod: ForgeMergeMethodSchema,
-    status: PullRequestCommandStatusSchema.nullable().optional(),
-  }),
-  disablePullRequestAutoMerge: z.object({
-    cwd: NonEmptyStringSchema,
-    prNumber: PositiveIntegerSchema,
-    status: PullRequestCommandStatusSchema.nullable().optional(),
-  }),
-  isAuthenticated: forgeReadInputSchema({ cwd: NonEmptyStringSchema }),
-  invalidate: z.object({ cwd: NonEmptyStringSchema }),
-  dispose: z.undefined(),
-  probeHost: NonEmptyStringSchema,
-};
-
 const ForgeResultSchemas: Record<PluginForgeServiceMethod | "probeHost", z.ZodType> = {
   listPullRequests: z.array(PullRequestSummarySchema),
   listIssues: z.array(IssueSummarySchema),
@@ -435,7 +325,7 @@ const ForgeResultSchemas: Record<PluginForgeServiceMethod | "probeHost", z.ZodTy
   getPullRequestTimeline: PullRequestTimelineSchema,
   getCheckDetails: CheckDetailsSchema,
   searchIssuesAndPrs: SearchResultSchema,
-  createPullRequest: z.object({ url: z.string(), number: z.number() }),
+  createPullRequest: z.object({ url: z.string(), number: PositiveIntegerSchema }),
   mergePullRequest: SuccessSchema,
   enablePullRequestAutoMerge: SuccessSchema,
   disablePullRequestAutoMerge: SuccessSchema,
@@ -449,20 +339,6 @@ export function parsePluginForgeProviderDescriptors(
   value: unknown,
 ): PluginForgeServerProviderDescriptor[] {
   return ForgeProviderDescriptorsSchema.parse(value) as PluginForgeServerProviderDescriptor[];
-}
-
-export function parsePluginForgeInput(method: "probeHost", value: unknown): string;
-export function parsePluginForgeInput(
-  method: PluginForgeServiceMethod | "probeHost",
-  value: unknown,
-): unknown;
-export function parsePluginForgeInput(
-  method: PluginForgeServiceMethod | "probeHost",
-  value: unknown,
-): unknown {
-  const parsed = ForgeInputSchemas[method].safeParse(value);
-  if (parsed.success) return parsed.data;
-  throw new Error(`Plugin forge ${method} received invalid input: ${parsed.error.message}`);
 }
 
 export function parsePluginForgeResult(
