@@ -31,7 +31,6 @@ import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { createPluginDaemonTransportFactory } from "./daemon-transport.js";
 import { isPluginClientOnlySdkSpecifier } from "./plugin-sdk-specifiers.js";
 import { createPluginClientId } from "./plugin-session-identity.js";
-import { parsePluginForgeInput } from "./forge-validation.js";
 
 import { PluginSettingsStore } from "./settings/index.js";
 import { PluginSecretStore } from "./secrets.js";
@@ -469,10 +468,8 @@ function handleForgeInvocation(
       if (!contribution.probeHost) {
         throw new Error(`Forge provider ${message.providerId} has no host probe`);
       }
-      const host = parsePluginForgeInput("probeHost", message.input);
-      return contribution.probeHost(host);
+      return contribution.probeHost(message.input as string);
     }
-    const input = parsePluginForgeInput(message.method, message.input);
     const method = contribution.service[message.method];
     if (typeof method !== "function") {
       throw new Error(`Forge provider ${message.providerId} does not implement ${message.method}`);
@@ -482,7 +479,7 @@ function handleForgeInvocation(
       disposedForgeProviders.add(message.providerId);
       return invokeMethod.call(contribution.service);
     }
-    return invokeMethod.call(contribution.service, input);
+    return invokeMethod.call(contribution.service, message.input);
   });
   void invocation.then(
     (output) => send({ type: "forge_result", requestId: message.requestId, output }),
