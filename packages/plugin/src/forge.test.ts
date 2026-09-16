@@ -6,6 +6,9 @@ import {
   defineForgeServerProvider,
   ForgeAuthenticationError,
   formatCheckDuration,
+  GITHUB_LINE_ANCHOR,
+  GITLAB_LINE_ANCHOR,
+  renderForgeLineAnchor,
   ForgeCliMissingError,
   ForgeCommandError,
   type PluginForgeServerService,
@@ -187,5 +190,29 @@ describe("formatCheckDuration", () => {
     expect(formatCheckDuration("2026-01-01T00:00:00Z", null)).toBeUndefined();
     expect(formatCheckDuration("not a date", "2026-01-01T00:00:42Z")).toBeUndefined();
     expect(formatCheckDuration("2026-01-01T00:00:42Z", "2026-01-01T00:00:42Z")).toBeUndefined();
+  });
+});
+
+describe("renderForgeLineAnchor", () => {
+  it("renders the shipped GitHub and GitLab shapes", () => {
+    expect(renderForgeLineAnchor(GITHUB_LINE_ANCHOR, 12)).toBe("#L12");
+    expect(renderForgeLineAnchor(GITHUB_LINE_ANCHOR, 12, 20)).toBe("#L12-L20");
+    expect(renderForgeLineAnchor(GITLAB_LINE_ANCHOR, 12, 20)).toBe("#L12-20");
+  });
+
+  it("renders a shape neither built-in style can express", () => {
+    const anchor = { single: "#line-{start}", range: "#lines-{start}..{end}" };
+
+    expect(renderForgeLineAnchor(anchor, 3)).toBe("#line-3");
+    expect(renderForgeLineAnchor(anchor, 3, 9)).toBe("#lines-3..9");
+  });
+
+  it("uses the single template when a forge has no range syntax", () => {
+    expect(renderForgeLineAnchor({ single: "#L{start}" }, 4, 10)).toBe("#L4");
+  });
+
+  it("treats a collapsed or trailing-backwards range as a single line", () => {
+    expect(renderForgeLineAnchor(GITHUB_LINE_ANCHOR, 7, 7)).toBe("#L7");
+    expect(renderForgeLineAnchor(GITHUB_LINE_ANCHOR, 7, 3)).toBe("#L7");
   });
 });
