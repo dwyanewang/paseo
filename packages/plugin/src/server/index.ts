@@ -7,6 +7,7 @@ export type {
 } from "./usage.js";
 export type {
   PluginHandlerContext,
+  PluginSecretStore,
   PluginServerContext,
   PluginServerContribution,
   PluginSettings,
