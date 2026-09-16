@@ -756,7 +756,8 @@ known IDs), or `rejected` with `wrong_device`, `launch_key_conflict`, `journal_i
 
 Events are `journal_ready`, `workspace_request_started`, `workspace_created`,
 `agent_request_started`, `agent_created`, `discarded` (`not_submitted`), and `failed` with a `stage`
-and `certainty`. Each request-start is persisted before the daemon request is sent. After a stage's
+and `certainty`. `discarded` means the user closed the launch's workspace draft tab before any
+request-start; clearing the composer's text or attachments does not discard a launch. Each request-start is persisted before the daemon request is sent. After a stage's
 request-start, every timeout, disconnect, error, or negative daemon response for that stage is
 `outcome_unknown`: the seeded composer becomes read-only, ordinary retry is disabled, and the
 plugin must offer status checks or an explicit new attempt instead. A stage that never started stays

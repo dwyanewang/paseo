@@ -709,18 +709,15 @@ export async function garbageCollectAgentLaunchJournals(
 }
 
 /**
- * A journal-backed draft that the user abandons before any request-start (closing the draft tab)
- * is an explicit discard. Drafts that already started a stage keep their journal untouched.
+ * Closing a launch's draft tab is the user's explicit discard. A draft marked abandoned is not:
+ * the composer also abandons a draft whose content was emptied. A launch that already started a
+ * request stage, or already ended, keeps its journal.
  */
-export function observeAbandonedLaunchDrafts(): () => void {
-  return useDraftStore.subscribe((state, previous) => {
-    for (const [draftKey, record] of Object.entries(state.drafts)) {
-      const launch = record.agentLaunch;
-      if (!launch || record.lifecycle !== "abandoned") continue;
-      if (previous.drafts[draftKey]?.lifecycle === "abandoned") continue;
-      void discardAgentLaunch(launch.draftId).catch(() => undefined);
-    }
-  });
+export async function discardAgentLaunchForClosedDraft(draftId: string): Promise<void> {
+  const journal = await getAgentLaunchJournalForDraft(draftId);
+  if (!journal || journal.terminalOutcome) return;
+  if (journal.milestones.workspaceRequestStartedAt || journal.milestones.agentRequestStartedAt) {
+    return;
+  }
+  await discardAgentLaunch(draftId);
 }
-
-observeAbandonedLaunchDrafts();
