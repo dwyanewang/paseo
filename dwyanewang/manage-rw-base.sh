@@ -1160,7 +1160,8 @@ finalize_operation() {
     if ((rebuild_status == 6)); then
       printf '%s\n' 'rw-main integration paused; continue this lifecycle operation after resolving the child operation.'
     else
-      printf '%s\n' 'Candidate validation failed; fix the source or abort this operation.'
+      printf 'rw-main rebuild or publication failed (exit %s); the operation was retained. Inspect the preceding error.\n' "$rebuild_status"
+      printf '%s\n' 'For network or environment failures, fix the environment and retry continue --operation with the same lifecycle request. Publication may have started; do not abort or change source refs based only on this exit status.'
     fi
     exit "$rebuild_status"
   fi

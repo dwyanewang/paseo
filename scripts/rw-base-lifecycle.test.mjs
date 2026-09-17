@@ -605,6 +605,76 @@ test("keeps published parent and child operations when ready state writing fails
   });
 }, 30_000);
 
+test("publication network failures preserve the operation and recommend continue instead of source repair", () => {
+  withFixture({}, (fixture) => {
+    const gitPath = path.join(fixture.fixtureRoot, "bin/git");
+    writeFileSync(
+      gitPath,
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "\${1:-}" == ls-remote && "\${PASEO_TEST_FAIL_PUBLICATION_NETWORK:-0}" == 1 ]]; then
+  for progress in "$PASEO_TEST_OPERATION_ROOT"/*/progress.env; do
+    if [[ -f "$progress" ]] && grep -q '^rw_main_operation_phase=publishing$' "$progress"; then
+      printf '%s\\n' 'Connection closed by test peer port 22' >&2
+      exit 128
+    fi
+  done
+fi
+exec /usr/bin/git "$@"
+`,
+    );
+    chmodSync(gitPath, 0o755);
+    fixture.env.PASEO_TEST_OPERATION_ROOT = path.join(
+      fixture.fixtureRoot,
+      ".paseo-rw-main-operations",
+    );
+    const targetBefore = git(fixture.controlRoot, "rev-parse", "rw-main");
+    const failed = runManage(
+      fixture,
+      "promote",
+      [
+        "--state-file",
+        fixture.lifecycleState,
+        "--feature",
+        "feature-one",
+        "--branch",
+        "feature/one",
+      ],
+      { PASEO_TEST_FAIL_PUBLICATION_NETWORK: "1" },
+    );
+    assert.equal(failed.status, 128, `${failed.stdout}\n${failed.stderr}`);
+    assert.match(failed.stderr, /Connection closed by test peer/);
+    assert.match(failed.stdout, /rebuild or publication failed.*128/);
+    assert.match(failed.stdout, /continue --operation/);
+    assert.doesNotMatch(failed.stdout, /Candidate validation failed|fix the source or abort/);
+    const request = failed.stdout.match(/^PASEO_RW_BASE_OPERATION=(.+)$/m)?.[1];
+    assert.notEqual(request, undefined, failed.stdout);
+    assert.equal(existsSync(request), true);
+    assert.equal(existsSync(fixture.lifecycleState), false);
+    assert.equal(git(fixture.controlRoot, "rev-parse", "rw-main"), targetBefore);
+    assert.equal(git(fixture.originRoot, "rev-parse", "rw-main"), targetBefore);
+    const childRequest = readFileSync(
+      path.join(fixture.buildRoot, ".dev/rw-main-operation"),
+      "utf8",
+    ).trim();
+    assert.match(
+      readFileSync(path.join(path.dirname(childRequest), "progress.env"), "utf8"),
+      /rw_main_operation_phase=publishing/,
+    );
+
+    const aborted = runManage(fixture, "abort", ["--operation", request]);
+    assert.equal(aborted.status, 1, `${aborted.stdout}\n${aborted.stderr}`);
+    assert.equal(existsSync(request), true);
+    const resumed = runManage(fixture, "continue", ["--operation", request]);
+    assert.equal(resumed.status, 0, `${resumed.stdout}\n${resumed.stderr}`);
+    assert.equal(existsSync(fixture.lifecycleState), true);
+    assert.match(
+      readFileSync(path.join(path.dirname(childRequest), "result"), "utf8"),
+      /^completed /,
+    );
+  });
+}, 30_000);
+
 test("reports direct rw-base commits and blocks lifecycle inference", () => {
   withFixture({}, (fixture) => {
     promoteBoth(fixture);

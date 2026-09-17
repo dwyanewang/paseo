@@ -169,6 +169,8 @@ Scripts that select individual tests across workspaces must run them from the pa
 
 The `.test.` name alone does not identify a Vitest unit test. Files under `packages/cli/tests/` use the CLI script runner, and files importing `node:test` need the Node test runner. App unit discovery follows the candidate's package configuration: `src/**/*.{test,spec}.{ts,tsx}` plus any explicit includes, such as `native-release-version.test.ts` in versions that declare it. Automated candidate selection must respect those boundaries and record unsupported files as coverage gaps instead of repeatedly invoking the wrong runner. Do not infer a product candidate's include rules solely from a separate control checkout.
 
+Tests that assert Git diagnostic text need a fixed locale: invoke their runner with `LC_ALL=C LANG=C LANGUAGE=C`. Otherwise a translated Git error can fail an English assertion even when behavior is correct. The build control scripts apply this environment only within candidate capability checks, across all workspace runners and batches, and include it in the audit used for PASS reuse. Source-worktree test invocations should set it explicitly too; do not change the machine's locale or shared Git configuration to fix a test run.
+
 ## Running tests locally
 
 Test suites in this repo are heavy. Running them in bulk freezes the machine, especially with multiple agents in parallel.

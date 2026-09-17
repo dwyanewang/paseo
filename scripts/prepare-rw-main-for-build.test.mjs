@@ -550,6 +550,109 @@ test("missing run-id fails before syncing, creating a request, or deleting ready
   });
 });
 
+test("recording a review result succeeds without rebuilding or accepting the manifest", () => {
+  withFixture({ advanceUpstream: true }, (fixture) => {
+    const runArgs = ["--run-id", "record-review"];
+    const pending = runPreflight(fixture, ...runArgs);
+    assert.equal(pending.status, 3, `${pending.stdout}\n${pending.stderr}`);
+    const request = reviewRequestPath(pending);
+    const evidence = path.join(fixture.fixtureRoot, "review.txt");
+    writeFileSync(evidence, "Feature one remains necessary; upstream only adds upstream.txt.\n");
+    const manifestPath = path.join(fixture.controlRoot, "dwyanewang/rw-main-branches.txt");
+    const manifestBefore = readFileSync(manifestPath, "utf8");
+    const refsBefore = git(fixture.controlRoot, "show-ref");
+    const recorded = runPreflight(
+      fixture,
+      ...runArgs,
+      "--no-fetch",
+      "--record-review-result",
+      request,
+      "feature/one",
+      "keep",
+      evidence,
+    );
+    assert.equal(recorded.status, 0, `${recorded.stdout}\n${recorded.stderr}`);
+    assert.match(recorded.stdout, /PASEO_PREFLIGHT_STATUS=review-recorded/);
+    assert.doesNotMatch(recorded.stdout, /readiness:start|PASEO_REBUILD_SECONDS=/);
+    assert.equal(readFileSync(manifestPath, "utf8"), manifestBefore);
+    assert.equal(git(fixture.controlRoot, "show-ref"), refsBefore);
+    assert.equal(existsSync(fixture.commandLog), false);
+    assert.equal(existsSync(fixture.miseCallLog), false);
+    assert.equal(existsSync(fixture.stateFile), false);
+    assert.equal(existsSync(path.join(fixture.buildRoot, ".dev/rw-main-operation")), false);
+    const cacheDir = path.join(
+      fixture.buildRoot,
+      ".dev/build-paseo-runs/record-review/review-cache",
+    );
+    const cachedEvidence = readdirSync(cacheDir).filter((name) => name.endsWith(".evidence"));
+    assert.equal(cachedEvidence.length, 1);
+    assert.equal(
+      readFileSync(path.join(cacheDir, cachedEvidence[0]), "utf8"),
+      readFileSync(evidence, "utf8"),
+    );
+
+    writeFileSync(evidence, "");
+    const invalid = runPreflight(
+      fixture,
+      ...runArgs,
+      "--no-fetch",
+      "--record-review-result",
+      request,
+      "feature/one",
+      "keep",
+      evidence,
+    );
+    assert.equal(invalid.status, 1, `${invalid.stdout}\n${invalid.stderr}`);
+    assert.doesNotMatch(invalid.stdout, /PASEO_PREFLIGHT_STATUS=review-recorded/);
+    assert.equal(existsSync(fixture.stateFile), false);
+
+    const accepted = runPreflight(
+      fixture,
+      ...runArgs,
+      "--no-fetch",
+      "--accept-review-request",
+      request,
+    );
+    assert.equal(accepted.status, 4, `${accepted.stdout}\n${accepted.stderr}`);
+    assert.match(accepted.stdout, /manifest:review-reuse branch=feature\/one/);
+    assert.equal(existsSync(fixture.stateFile), false);
+  });
+}, 30_000);
+
+test("recording a review requires an existing frozen run before changing state", () => {
+  withFixture({ advanceUpstream: true }, (fixture) => {
+    writeFileSync(fixture.stateFile, "previous-state\n");
+    const result = runPreflight(
+      fixture,
+      "--run-id",
+      "record-without-freeze",
+      "--record-review-result",
+      "request.tsv",
+      "feature/one",
+      "keep",
+      "evidence.txt",
+    );
+    assert.equal(result.status, 2, `${result.stdout}\n${result.stderr}`);
+    assert.match(result.stderr, /Recording review requires.*--no-fetch/);
+    const emptyRequest = runPreflight(
+      fixture,
+      "--run-id",
+      "empty-review",
+      "--no-fetch",
+      "--record-review-result",
+      "",
+      "feature/one",
+      "keep",
+      "evidence.txt",
+    );
+    assert.equal(emptyRequest.status, 2, `${emptyRequest.stdout}\n${emptyRequest.stderr}`);
+    assert.match(emptyRequest.stderr, /Review request path must not be empty/);
+    assert.equal(git(fixture.controlRoot, "rev-parse", "main"), fixture.reviewedMain);
+    assert.equal(readFileSync(fixture.stateFile, "utf8"), "previous-state\n");
+    assert.equal(existsSync(path.join(fixture.buildRoot, ".dev/build-paseo-runs")), false);
+  });
+});
+
 test("propagates semantic-review status before rebuilding rw-main", () => {
   withFixture({ advanceUpstream: true }, (fixture) => {
     const result = runPreflight(fixture, "--run-id", "review-status");

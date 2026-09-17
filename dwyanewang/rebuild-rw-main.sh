@@ -1542,6 +1542,8 @@ refresh_expo_router_types
 
 run_candidate_capability_checks() {
   [[ -n "$operation_request" ]] || return 0
+  # Git diagnostics asserted by tests must not depend on the invoking shell's locale.
+  local -x LC_ALL=C LANG=C LANGUAGE=C
   local conflict_file path directory stem test_file input_hash previous_hash status
   local branch dependencies dependency head comparison_base index platform applicable
   local node_version npm_version toolchain_hash dependency_hash output_hash executor_hash
@@ -1975,6 +1977,7 @@ run_candidate_capability_checks() {
   done
   {
     printf 'candidate\t%s\n' "$candidate_tree"
+    printf 'locale\tLC_ALL=%s LANG=%s LANGUAGE=%s\n' "$LC_ALL" "$LANG" "$LANGUAGE"
     printf 'platform\t%s\nnode\t%s\nnpm\t%s\n' "$platform" "$node_version" "$npm_version"
     printf 'toolchain\t%s\ndependencies\t%s\noutputs\t%s\nexecutor\t%s\n' \
       "$toolchain_hash" "$dependency_hash" "$output_hash" "$executor_hash"

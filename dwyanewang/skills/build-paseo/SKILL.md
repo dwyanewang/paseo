@@ -46,12 +46,15 @@ bash "$paseo_chore_root/dwyanewang/prepare-rw-main-for-build.sh" \
 - 退出码 `3`：读取输出的 `PASEO_REVIEW_REQUEST_FILE` 并把值保存为 `paseo_review_request_file`。只有一个简单待审分支时由主代理审查；有至少两个独立待审分支时，按 request 中冻结的精确 SHA 区间启动最多 3 个只读 reviewer subagent 并行审查，禁止它们改文件、移动 refs 或运行测试。每项固定返回分支名、main/head 区间、`keep|remove|partial`、提交/路径证据和所需动作。主代理核对待审集合和全部坐标，并由 AI 自行完成接受决策；不向用户请求人工确认。
 - rebase 后优先使用报告中的 `git range-diff`：若旧 feature commits 均能与新 commits 对应，且变化仅限冲突解决带来的必要调整，执行增量语义审查；否则执行完整区间审查。AI 必须继续查看冲突解决 diff、路径和验证结果，不能仅凭 patch 等价自动接受。
 - 同一 request 中某分支已完成最终 `keep|remove` 审查、但另一分支要回源时，在其他分支 head 改变之前，把该分支的非空证据文件通过 prepare 的 `--record-review-result REQUEST BRANCH DECISION EVIDENCE` 记录；旧 request 已失效则先生成新 request。同 run 后续 request 会按 branch 行、PR 映射和规则哈希精确复用；`remove` 仍须最终显式传 `--remove-branch`。该缓存不免除依赖替代、冲突、组合验证或 readiness。
+- 记录命令必须带原 `--run-id --no-fetch`；成功退出 `0` 并打印 `PASEO_PREFLIGHT_STATUS=review-recorded`，只代表证据已记录，不继续重建、不接受清单、不生成 ready state。完成其余审查后另行接受清单，不能把记录成功当作已可打包。
 - `partial` 则回源功能分支修整、定向验证并推送。`uncertain` 只作为 AI 内部中间态：继续扩大证据范围；仍无法证明上游完整吸收时默认 `keep`，不得自动 `remove`。必须等所有 reviewer 的最终结论返回且集合、坐标核对一致，才能传 `--accept-review-request "$paseo_review_request_file"` 接受；中途的 keep 不算最终结论。接受轮原样重传 request 轮的新增和 PR 重映射参数，再加必要的 `--remove-branch`，并使用同一 `--run-id --no-fetch`；不要退回 main-only 接受方式。
 - 完整同步的前置命令会在语义审查 request 输出前运行一次只读 mergeability 预检：在临时 detached worktree 中按真实顺序模拟 `rw-base + main + overlays` 的合并。支持的文本/`.patch` 冲突只诊断具体阶段和文件，继续原 exit 3/4；未支持冲突仍停止。预检不解决冲突、不学习 rerere、不移动 `rw-base`/`rw-main`、不改清单、不安装依赖，也不运行构建。
+- 支持的文本冲突优先在 operation 内解决，不因冲突存在就默认回源 rebase。需要修改非冲突文件、删除部分吸收的重复实现、处理未支持冲突或明确安排源维护时，才回源/适配。类型或接口删除/替换的审查须查看调用方，避免无冲突的旧引用拖到 readiness 才发现。
 - 正式 readiness 不是对 `rw-base` 和每条 overlay 分别校验。脚本先顺序合并全部层；stamp miss 时先构建 server 共用依赖与 app audio 依赖，立即运行 app typecheck，成功后才构建 server/CLI，最后仍执行完整 format/typecheck/lint。同一请求内若重试产生不同 commit 但完全相同的 Git tree，且固定工具链、实际 Node/npm、依赖输入和完整 dist 摘要仍匹配可信 readiness stamp，则复用该结果；任一项变化都完整重跑。
 - 退出码 `4`：清单已更新但尚未 ready。集中提交本轮清单变更，不为每项 PR/分支单独提交；校验按下方 hook 规则执行，推送 `chore/build-paseo` 后，保留 `--run-id --no-fetch`、不带增删/重映射/接受参数重跑。
 - 退出码 `6`：清单提交后的 rebuild 在隔离 rw-main operation 中遇到支持的 sync/main/overlay 文本冲突。保存 `PASEO_RW_MAIN_OPERATION` 与 worktree；只修改冲突路径并 `git add`，运行 `git write-tree`，把 tree SHA 填入 `conflict-review.tsv` 的 `resolution-tree` 行，并为所有生成行填写非空证据说明，然后原样重跑同一 `--run-id --no-fetch` prepare。不要手工 commit/reset/rebase。可用 rebuild 的 `--operation-status` 查看；仅尚未进入发布阶段的现场可用 `--abort-operation` 放弃，`publishing`/`awaiting-ready` 必须恢复完成。多个冲突逐次暂停，已完成前缀不重做；clean merge 在调用 Git merge 前保存冻结双父/说明，随后补记经双父重建核对的 tree，因此首次 tree 记录前或 commit 后首次完成记录前中断均可恢复；已包含在合法前缀中的 overlay 记为 no-op，不造空提交。rerere 匹配只恢复内容，仍须审查和暂存。重复冲突会给出不阻断的源维护建议，不会自动 rebase。
 - 冲突/依赖候选测试在 readiness 完成后运行：精确同名直接回归及平台变体，加上变化区间内的同名相关测试；排除 e2e/browser/real/local 并记录覆盖缺口。按 workspace 的 Vitest 配置执行，app 指定 `--project unit`，每批最多 8 个。适用集合超过 32 个时，在当前 operation 的 `capability-test-selection.tsv` 中对每行填写 `run|skip` 和依据，直接回归必须保留；清单绑定候选 tree 和完整集合。原样重试即可，逐项审查后可运行超过 32 个必要测试，无需 abort 或回源。测试使候选变脏时不得记录 PASS 或发布。
+- 候选测试固定 `LC_ALL=C LANG=C LANGUAGE=C` 并纳入审计/PASS 输入，避免 Git 中文报错导致英文断言失败。源分支手工定向测试也显式传这些变量，从所属 workspace 执行；不改机器 locale 或共享 Git 配置。
 - `.test.` 文件名不代表可交给 Vitest：导入或 require `node:test` 的文件记为 `node-test-runner` 覆盖缺口，CLI `tests/` 的脚本测试及不支持的路径/扩展名同样排除。app 已知 unit 范围包括 `src/` 下 ts/tsx 和显式包含的 `native-release-version.test.ts`。发布恢复中的能力测试失败保留发布进度，不能改用 abort；修复环境后仍按原请求续跑。
 - 其他非零退出：停止并诊断。readiness gate 未成功，不得启动任一产物构建。
 
@@ -91,7 +94,7 @@ bash "$paseo_chore_root/dwyanewang/build-paseo-artifacts.sh" \
 
 - 修改任意 `dwyanewang/*.sh` 或对应测试后，提交前运行 `bash "$paseo_chore_root/dwyanewang/check-build-paseo.sh"`；它只做 Shell 语法和定向构建控制测试，不代替真实产物打包。
 - 上游 `lefthook.yml` 的 pre-commit typecheck 没有路径过滤，仓库规则也要求每次修改后 typecheck/lint。控制面即将提交时不要先手工跑一遍全仓 typecheck 再让 hook 重复执行：提交前做定向测试、`npm run format` 和一次 lint，由 pre-commit 承担该轮唯一一次全仓 typecheck；若不提交或 hook 未执行，再显式运行 typecheck。
-- 任一步非零即停止，保留真实退出码。失败时按日志症状查询 `踩坑记录.md`；临时叠加修复回源分支，长期功能修复经 `maintain`，不能直接修改候选、`rw-base` 或 `rw-main`。
+- 非零按阶段处理并保留真实退出码：`3/4/5/6` 走审查、提交或冲突续跑；其他失败按日志症状查询 `踩坑记录.md`。网络/SSH/远端查询失败不等于代码验证失败，修复环境后按原 prepare 或父 lifecycle operation 续跑，不能仅凭退出码要求回源或 abort。已进入发布阶段必须恢复完成。确需产品代码适配时，临时层回源分支，长期功能经 `maintain`，不能直接修改验证候选、`rw-base` 或 `rw-main`。
 - app Playwright 是可选的源分支验证：一次只能运行一个 invocation，不得与 prepare/lifecycle/readiness、`build:server` 或 pre-commit hook 重叠。Metro warmup 超时先保存具体 phase、URL、elapsed、进程状态和近期输出；只有明确改变一个条件才允许最多一次重试，仍失败就保留证据并继续必需 gate，禁止无诊断连续重启。
 - 证据优先读取 `.dev/build-paseo-runs/<轮次>/result.env`、`stages.log`、已选择端的分支日志、`build.log` 和资源 summary。核对 `paseo_artifact_targets`、`paseo_artifact_preflight_mode` 与临时分支 SHA；Windows 目标还要核对 retention limit、保留数和清理数。
 - 只汇报所选端的产物路径/体积/mtime和资源数据；Windows 目标同时汇报历史 zip 保留/清理数量，同时选择 Android 与 Windows 时再汇报并发/回退模式。还要汇报本轮 main 快照 SHA/同步时间、临时分支及冻结 SHA、下载地址，以及从用户消息到下载服务就绪的真实总墙钟。ready-state 产物结果中的 `paseo_build_request_total_seconds` 包含前置与重试（起点取 `--requested-at`）；`paseo_artifact_total_seconds` 仅作产物链分段数据。

@@ -27,12 +27,14 @@ the atomic rw-base/rw-main readiness gate.
   --accept-branch-head BRANCH SHA
                             Forward an accepted exact branch head coordinate.
   --record-review-result REQUEST BRANCH DECISION EVIDENCE
-                            Record one same-run semantic-review result.
+                            Only record one same-run review result; requires --no-fetch.
   --help                    Show this help.
 
 Exit status 3 means semantic review is required. Exit status 4 means the
 manifest changed and must be formatted, reviewed, committed, and pushed before
 rerunning this command without addition/removal arguments.
+With --record-review-result, exit status 0 only confirms that evidence was
+recorded (PASEO_PREFLIGHT_STATUS=review-recorded), not that the build is ready.
 EOF
 }
 
@@ -44,6 +46,7 @@ requested_at=
 no_fetch=0
 refresh_main=0
 accepting_review=0
+recording_review=0
 declare -a sync_args=()
 
 while (($# > 0)); do
@@ -116,6 +119,8 @@ while (($# > 0)); do
       ;;
     --record-review-result)
       (($# >= 5)) || { printf '%s\n' 'Missing review result arguments.' >&2; exit 2; }
+      [[ -n "$2" ]] || { printf '%s\n' 'Review request path must not be empty.' >&2; exit 2; }
+      recording_review=1
       sync_args+=("$1" "$2" "$3" "$4" "$5")
       shift 5
       ;;
@@ -138,6 +143,10 @@ if [[ -z "$run_id" ]]; then
 fi
 if ((accepting_review && !no_fetch)); then
   printf '%s\n' 'Accepting review requires the same --run-id and --no-fetch; refresh separately before reviewing.' >&2
+  exit 2
+fi
+if ((recording_review && !no_fetch)); then
+  printf '%s\n' 'Recording review requires the same --run-id and --no-fetch; create the frozen review request first.' >&2
   exit 2
 fi
 
@@ -356,6 +365,12 @@ else
   fi
 fi
 printf 'PASEO_MANIFEST_SYNC_SECONDS=%s\n' "$(( $(date +%s) - manifest_sync_started ))"
+
+if ((recording_review)); then
+  printf '%s\n' 'PASEO_PREFLIGHT_STATUS=review-recorded'
+  printf '%s\n' 'Review evidence recorded; readiness has not run. Complete semantic review and manifest acceptance before rebuilding.'
+  exit 0
+fi
 
 if ! git -C "$control_root" diff --quiet -- "$manifest_path"; then
   printf '%s\n' 'PASEO_PREFLIGHT_STATUS=manifest-changed'

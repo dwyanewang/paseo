@@ -392,12 +392,14 @@ esac
   const npmPath = path.join(binDir, "npm");
   const npmCallLog = path.join(root, ".git", "npm-calls.log");
   const npmCwdCallLog = path.join(root, ".git", "npm-cwd-calls.log");
+  const npmLocaleCallLog = path.join(root, ".git", "npm-locale-calls.log");
   writeFileSync(
     npmPath,
     `#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\\n' "$*" >> "$NPM_CALL_LOG"
 printf '%s|%s\\n' "$PWD" "$*" >> "$NPM_CWD_CALL_LOG"
+printf '%s|%s|%s|%s\\n' "\${LC_ALL:-}" "\${LANG:-}" "\${LANGUAGE:-}" "$*" >> "$NPM_LOCALE_CALL_LOG"
 if [[ "$*" == --version ]]; then
   printf '%s\\n' "\${PASEO_TEST_NPM_VERSION:-10.9.0}"
   exit 0
@@ -455,6 +457,7 @@ exec /usr/bin/diff "$@"
       GH_CALL_LOG: ghCallLog,
       NPM_CALL_LOG: npmCallLog,
       NPM_CWD_CALL_LOG: npmCwdCallLog,
+      NPM_LOCALE_CALL_LOG: npmLocaleCallLog,
       PASEO_EXPO_ROUTER_TYPES_HELPER: expoRouterTypesHelper,
       PASEO_TEST_BUILD_ROOT: root,
       PASEO_PATCHED_DEPENDENCIES_HELPER: path.join(binDir, "prepare-patched-dependencies.mjs"),
@@ -465,6 +468,7 @@ exec /usr/bin/diff "$@"
     manifestPath,
     npmCallLog,
     npmCwdCallLog,
+    npmLocaleCallLog,
     reviewedMain,
     reviewedFeatureHead,
     root,
@@ -2341,6 +2345,39 @@ test("candidate tests use each workspace's actual Vitest configuration", () => {
     });
   }
 }, 45_000);
+
+test("candidate test batches use C locale across workspace runners without changing readiness locale", () => {
+  for (const conflictPath of [
+    "shared.ts",
+    "packages/app/src/registry.ts",
+    "packages/server/src/session.ts",
+  ]) {
+    withFixture(
+      {
+        conflictingOverlay: true,
+        conflictPath,
+        extraRelatedTests: 8,
+        modifyExtraRelatedTests: true,
+      },
+      (fixture) => {
+        fixture.env.LC_ALL = "C.UTF-8";
+        fixture.env.LANG = "C.UTF-8";
+        fixture.env.LANGUAGE = "zh_CN";
+        const { completed, operationDir } = completeReviewedConflict(fixture);
+        assert.equal(completed.status, 0, `${completed.stdout}\n${completed.stderr}`);
+        const calls = readFileSync(fixture.npmLocaleCallLog, "utf8").trim().split("\n");
+        const testCalls = calls.filter((line) => line.includes("|exec -- vitest run "));
+        assert.equal(testCalls.length, 2, testCalls.join("\n"));
+        for (const call of testCalls) assert.match(call, /^C\|C\|C\|/);
+        assert.ok(calls.includes("C.UTF-8|C.UTF-8|zh_CN|run typecheck"));
+        assert.match(
+          readFileSync(path.join(operationDir, "capability-tests.tsv"), "utf8"),
+          /^locale\tLC_ALL=C LANG=C LANGUAGE=C$/m,
+        );
+      },
+    );
+  }
+}, 60_000);
 
 test("candidate capability checks record a coverage gap when no related test exists", () => {
   withFixture({ conflictingOverlay: true, withoutRelatedTest: true }, (fixture) => {
