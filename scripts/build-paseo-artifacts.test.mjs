@@ -367,6 +367,19 @@ exec /usr/bin/chmod "$@"
 `,
   );
   writeExecutable(
+    path.join(binRoot, "paseo"),
+    `#!/usr/bin/env bash
+set -euo pipefail
+printf 'paseo|%s\\n' "$*" >>"$PASEO_TEST_COMMAND_LOG"
+case "\${1:-}" in
+  heartbeat)
+    [[ "\${2:-}" == create ]] && printf '%s\\n' '{"id":"fixture-heartbeat"}'
+    ;;
+esac
+exit 0
+`,
+  );
+  writeExecutable(
     path.join(binRoot, "npm"),
     `#!/usr/bin/env bash
 set -euo pipefail
@@ -546,6 +559,8 @@ test("rejects the main daemon port before starting a build", () => {
     "--skip-preflight",
     "--download-port",
     "6767",
+    "--run-dir",
+    "/tmp/paseo-port-check",
   ]);
   assert.equal(result.status, 2);
   assert.match(result.stderr, /main daemon port 6767/);
@@ -565,6 +580,93 @@ test("requires skip-preflight for temporary local branches", () => {
   assert.match(result.stderr, /--local-branch requires --skip-preflight/);
 });
 
+test("requires an explicit run directory for wait and recovery", () => {
+  const result = run(repoRoot, "bash", [
+    sourceScript,
+    "--build-root",
+    "/does/not/exist",
+    "--skip-preflight",
+  ]);
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /--run-dir is required/);
+});
+
+test("detached launcher prepares the run directory before low-output waiting", () => {
+  withFixture({}, (fixture) => {
+    const runDir = path.join(fixture.buildRoot, ".dev", "detached-startup");
+    const result = run(
+      fixture.controlRoot,
+      "bash",
+      [
+        "-c",
+        `
+          set -e
+          source "$1"
+          paseo_prepare_artifact_run_dir "$2" 5
+          setsid bash "$3" \\
+            --build-root "$4" \\
+            --preflight-state "$5" \\
+            --target server \\
+            --no-serve-dist \\
+            --run-dir "$2" \\
+            >"$2/launcher.log" 2>&1 < /dev/null &
+          launcher_pid=$!
+          printf '%s\\n' "$launcher_pid" >"$2/launcher.pid"
+          paseo_wait_for_artifact_run "$2" 1 5
+        `,
+        "detached",
+        sourceStateHelper,
+        runDir,
+        fixture.script,
+        fixture.buildRoot,
+        fixture.preflightState,
+      ],
+      { ...fixture.env, PASEO_TEST_DISABLE_HEARTBEAT: "1" },
+    );
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.match(result.stdout, /build-paseo wait: (starting|running)/);
+    assert.match(result.stdout, /build-paseo wait: ready/);
+    assert.equal(readFileSync(path.join(runDir, "exit-status"), "utf8").trim(), "0");
+    assert.equal(existsSync(path.join(runDir, "pid.env")), true);
+    assert.equal(existsSync(path.join(runDir, "launcher.pid")), true);
+    const launchState = readFileSync(path.join(runDir, "launch.env"), "utf8");
+    assert.match(launchState, /paseo_artifact_launch_status=running/);
+    assert.match(launchState, /paseo_artifact_launch_prepared_at=/);
+    assert.match(launchState, /paseo_artifact_launch_timeout_seconds=5/);
+  });
+});
+
+test("rejects ignored Expo module remnants before deleting selected artifacts", () => {
+  withFixture({}, (fixture) => {
+    const staleModule = path.join(fixture.buildRoot, "packages/app/modules/paseo-word-stream");
+    mkdirSync(staleModule, { recursive: true });
+    writeFileSync(
+      path.join(staleModule, "package.json"),
+      '{"name":"paseo-word-stream","version":"0.0.0"}\n',
+    );
+    const excludePath = git(fixture.buildRoot, "rev-parse", "--git-path", "info/exclude");
+    writeFileSync(excludePath, "packages/app/modules/paseo-word-stream/\n", { flag: "a" });
+    const apk = path.join(
+      fixture.buildRoot,
+      "packages/app/android/app/build/outputs/apk/release/app-release.apk",
+    );
+    const zip = path.join(fixture.buildRoot, "packages/desktop/release/Paseo-Setup-old-x64.zip");
+    mkdirSync(path.dirname(apk), { recursive: true });
+    mkdirSync(path.dirname(zip), { recursive: true });
+    writeFileSync(apk, "old apk\n");
+    writeFileSync(zip, "old zip\n");
+
+    const result = runBuild(fixture, "module-preflight", ["--target", "windows"], {
+      ANDROID_HOME: "",
+    });
+    assert.notEqual(result.status, 0);
+    assert.match(`${result.stdout}\n${result.stderr}`, /rejected untracked\/ignored module/);
+    assert.equal(readFileSync(apk, "utf8"), "old apk\n");
+    assert.equal(readFileSync(zip, "utf8"), "old zip\n");
+    assert.equal(existsSync(fixture.commandLog), false);
+  });
+});
+
 test("runs the complete three-platform artifact chain from one ready state", () => {
   withFixture({}, (fixture) => {
     const result = runBuild(fixture, "successful");
@@ -574,6 +676,7 @@ test("runs the complete three-platform artifact chain from one ready state", () 
 
     const commandLog = readFileSync(fixture.commandLog, "utf8");
     assertOrdered(commandLog, [
+      "paseo|heartbeat create",
       "mise|install",
       "serve|prepare-build",
       "npm|run build:terminal-webview",
@@ -583,6 +686,7 @@ test("runs the complete three-platform artifact chain from one ready state", () 
       "profile|android-metro-hermes",
       "serve|8800 10800",
     ]);
+    assert.match(commandLog, /paseo\|heartbeat delete/);
     for (const fragment of [
       "profile|android-native-assemble",
       "profile|windows-artifacts",
@@ -596,6 +700,18 @@ test("runs the complete three-platform artifact chain from one ready state", () 
 
     const runDir = path.join(fixture.buildRoot, ".dev", "successful");
     assert.equal(readFileSync(path.join(runDir, "exit-status"), "utf8").trim(), "0");
+    assert.match(
+      readFileSync(path.join(runDir, "terminal-state"), "utf8"),
+      /paseo_artifact_terminal_state_written=1/,
+    );
+    assert.match(
+      readFileSync(path.join(runDir, "heartbeat.env"), "utf8"),
+      /paseo_artifact_heartbeat_id=fixture-heartbeat/,
+    );
+    assert.match(
+      readFileSync(path.join(runDir, "heartbeat.env"), "utf8"),
+      /paseo_artifact_heartbeat_cleaned=1/,
+    );
     const resultState = readFileSync(path.join(runDir, "result.env"), "utf8");
     assert.match(resultState, /status=ready/);
     assert.match(resultState, /paseo_artifact_windows_summary=/);
@@ -647,6 +763,31 @@ test("links artifact stages and results to the original request including prefli
     assert.match(state, new RegExp(`paseo_build_snapshot_main=${main}`));
     const total = Number(state.match(/^paseo_build_request_total_seconds=(\d+)$/m)[1]);
     assert.ok(total >= 600, state);
+  });
+});
+
+test("reuses a successful attempt for the same request without prepare-build", () => {
+  withFixture({}, (fixture) => {
+    const requestId = "request-recovery";
+    const requestDir = path.join(fixture.buildRoot, ".dev/build-paseo-runs", requestId);
+    const requestedAt = Math.floor(Date.now() / 1000) - 60;
+    const frozenAt = requestedAt + 1;
+    const main = git(fixture.controlRoot, "rev-parse", "main");
+    mkdirSync(requestDir, { recursive: true });
+    writeFileSync(path.join(requestDir, "requested-at"), `${requestedAt}\n`);
+    writeFileSync(path.join(requestDir, "main.snapshot"), `${main} ${frozenAt}\n`);
+    writeFileSync(
+      fixture.preflightState,
+      `${readFileSync(fixture.preflightState, "utf8")}paseo_build_run_id=${requestId}\npaseo_build_requested_at=${requestedAt}\npaseo_build_frozen_at=${frozenAt}\n`,
+    );
+    const first = runBuild(fixture, "recovery-attempt-1", ["--target", "server"]);
+    assert.equal(first.status, 0, `${first.stdout}\n${first.stderr}`);
+    writeFileSync(fixture.commandLog, "");
+    const second = runBuild(fixture, "recovery-attempt-2", ["--target", "server"]);
+    assert.equal(second.status, 0, `${second.stdout}\n${second.stderr}`);
+    assert.match(second.stdout, /already has a successful attempt; read-only reuse/);
+    assert.doesNotMatch(readFileSync(fixture.commandLog, "utf8"), /build:server|prepare-build/);
+    assert.equal(existsSync(path.join(fixture.buildRoot, ".dev/recovery-attempt-2")), false);
   });
 });
 
@@ -758,8 +899,11 @@ test("does not prune Windows zip history before resource validation succeeds", (
 
 test("builds only Android with app dependencies and no Windows or server artifact", () => {
   withFixture({}, (fixture) => {
-    const result = runBuild(fixture, "android-only", ["--target", "android", "--no-serve-dist"]);
+    const result = runBuild(fixture, "android-only", ["--target", "android", "--no-serve-dist"], {
+      PASEO_AGENT_ID: "",
+    });
     assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.match(result.stdout, /PASEO_AGENT_ID is unavailable; heartbeat skipped/);
     assert.match(result.stdout, /PASEO_ARTIFACT_TARGETS=android/);
     assert.match(result.stdout, /PASEO_ARTIFACT_APK=/);
     assert.doesNotMatch(result.stdout, /PASEO_ARTIFACT_SERVER=/);

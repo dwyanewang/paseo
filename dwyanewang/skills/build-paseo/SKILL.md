@@ -68,25 +68,48 @@ bash "$paseo_chore_root/dwyanewang/prepare-rw-main-for-build.sh" \
 
 ## 正式产物链与端选择
 
-ready 后把同一个 state 文件交给版本化脚本；把整个命令作为一个长后台任务运行，等待平台的输出/完成通知，不现场拼 heredoc，也不定时轮询：
+ready 后先确定一个本轮不会复用的 attempt 目录，再把同一个 state 文件交给版本化脚本；必须显式传入 `--run-dir`，这样 heartbeat 唤醒后的恢复 agent 可以直接使用该绝对路径调用低输出 wait helper。Codex 没有 Claude 风格的后台完成通知，因此脚本会创建约每 5 分钟一次、3 小时过期的 Paseo heartbeat（仅在存在 `PASEO_AGENT_ID` 时），并写入 PID、`exit-status`、`result.env` 和阶段日志。需要等待时使用低输出 wait helper（每 15–30 秒检查，仅在阶段变化、终态或长静默时输出），不要让模型持续 `write_stdin` 轮询：
 
 ```bash
-bash "$paseo_chore_root/dwyanewang/build-paseo-artifacts.sh" \
+paseo_artifact_run_dir=/home/yangfei/Projects/paseo/.dev/build-paseo-runs/$paseo_run_id/artifact-attempt-1
+source "$paseo_chore_root/dwyanewang/build-paseo-state.sh"
+paseo_prepare_artifact_run_dir "$paseo_artifact_run_dir" 60
+setsid bash "$paseo_chore_root/dwyanewang/build-paseo-artifacts.sh" \
   --build-root /home/yangfei/Projects/paseo \
-  --preflight-state "$paseo_preflight_state"
+  --preflight-state "$paseo_preflight_state" \
+  --run-dir "$paseo_artifact_run_dir" \
+  >"$paseo_artifact_run_dir/launcher.log" 2>&1 < /dev/null &
+paseo_artifact_launcher_pid=$!
+printf '%s\n' "$paseo_artifact_launcher_pid" >"$paseo_artifact_run_dir/launcher.pid"
+printf 'artifact launcher pid=%s run-dir=%s\n' "$paseo_artifact_launcher_pid" "$paseo_artifact_run_dir"
+paseo_wait_for_artifact_run "$paseo_artifact_run_dir" 20 60
 ```
 
+`setsid` 和 `< /dev/null` 让构建脱离当前终端；`launcher.pid` 只用于诊断，脚本启动后写入的 `pid.env`（含启动时间和命令）才是恢复判断的权威 PID。成功必须同时满足同一目录的 `exit-status=0`、`result.env` 为 `ready` 且 run-dir 精确匹配；不要用 `$!` 或 `write_stdin` 判断成功。`paseo_prepare_artifact_run_dir` 写入的 `starting` 标记给后台启动留下窗口，helper 会在窗口内等待目录和 PID 出现，超时后明确报告 `abandoned`。
+
 按用户要求追加可重复的 `--target server|android|windows`；`desktop` 是 `windows` 别名。未传 `--target` 时保持三端默认。只选 Windows 时仍构建其内嵌 daemon 所需的 server/CLI 依赖，但只交付 Windows zip；只选 Android 时构建 app 依赖，不构建 Windows；只选 server 时不生成移动/桌面产物且不启动下载服务。
+
+用户明确要求不拉取/不同步且不叠加本地分支时，仍按同一后台启动顺序，仅将 `--preflight-state` 换成 `--skip-preflight`：先 `paseo_prepare_artifact_run_dir`，再 `setsid ... &`，保存 `$!` 到 `launcher.pid`，最后立即调用 `paseo_wait_for_artifact_run`。这条规则同样适用于后面的本地分支 Windows 示例。
 
 不拉取并临时测试一个 Windows 分支的标准命令：
 
 ```bash
-bash "$paseo_chore_root/dwyanewang/build-paseo-artifacts.sh" \
+paseo_artifact_run_dir=/home/yangfei/Projects/paseo/.dev/build-paseo-runs/local-windows-attempt-1
+source "$paseo_chore_root/dwyanewang/build-paseo-state.sh"
+paseo_prepare_artifact_run_dir "$paseo_artifact_run_dir" 60
+setsid bash "$paseo_chore_root/dwyanewang/build-paseo-artifacts.sh" \
   --build-root /home/yangfei/Projects/paseo \
   --skip-preflight \
   --local-branch fix/example \
-  --target windows
+  --target windows \
+  --run-dir "$paseo_artifact_run_dir" \
+  >"$paseo_artifact_run_dir/launcher.log" 2>&1 < /dev/null &
+paseo_artifact_launcher_pid=$!
+printf '%s\n' "$paseo_artifact_launcher_pid" >"$paseo_artifact_run_dir/launcher.pid"
+paseo_wait_for_artifact_run "$paseo_artifact_run_dir" 20 60
 ```
+
+heartbeat prompt 必须包含绝对 run 目录、请求/attempt、编排 PID 和终态判据，并明确禁止重新启动构建。heartbeat ID 会持久化在该目录的 `heartbeat.env`；异常退出后，拥有同一 `PASEO_AGENT_ID` 的恢复 agent 可执行 `source "$paseo_chore_root/dwyanewang/build-paseo-state.sh"; paseo_cleanup_artifact_heartbeat "$paseo_artifact_run_dir"` 清理，不能用其他 agent 身份删除。heartbeat 没有 agent 身份时不能让构建失败，只打印人工检查提示。终态只能由同一 run 目录同时满足 `exit-status=0`、`result.env` 的 `paseo_artifact_build_status=ready` 和 `paseo_artifact_build_run_dir` 精确匹配来确认；缺失 `exit-status` 时结合 PID 文件的启动时间与命令判断 `running`，编排进程已死则报告 `abandoned`，不能无限报告运行中。`terminal-state` 只表示脚本已完成终态收尾，不是代理已汇报标记。取消只走 SIGTERM。成功后按幂等顺序删除 heartbeat，消费方确认后自行记录用户汇报并只发送一次最终结果。
 
 脚本统一负责整轮独占锁、mise、临时分支清理、所选旧产物标记、terminal-webview 清理、依赖构建、Android/Windows 画像、三端同时选择时的 Android bundle gate 与 16 GiB 并发判定、产物校验、Windows 历史 zip 轮转和按目标下载服务。Windows 成功构建后只保留当前包与最近两个历史 `Paseo-Setup-*-x64.zip`；不要让多个 subagent 各自启动平台构建，也不要在代理侧重复这些实现细节。
 

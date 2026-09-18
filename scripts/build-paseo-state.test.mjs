@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -196,3 +197,231 @@ test("inventory path lists larger than ARG_MAX do not travel through argv", () =
     assert.equal(result.stdout.trim(), hash(record.repeat(count)));
   });
 }, 30_000);
+
+test("Expo module preflight accepts tracked iOS-only and scoped modules", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "paseo-expo-modules-"));
+  try {
+    mkdirSync(path.join(root, "packages/app/modules/@scope/ios-only"), { recursive: true });
+    writeFileSync(
+      path.join(root, "packages/app/modules/@scope/ios-only/package.json"),
+      '{"name":"@scope/ios-only","version":"1.0.0"}\n',
+    );
+    mkdirSync(path.join(root, "packages/app/modules/.stale"), { recursive: true });
+    writeFileSync(path.join(root, "packages/app/modules/.stale/package.json"), "not json\n");
+    symlinkSync("@scope/ios-only", path.join(root, "packages/app/modules/ios-only-link"));
+    const init = spawnSync("git", ["init", "-b", "main", root], { encoding: "utf8" });
+    assert.equal(init.status, 0, init.stderr);
+    spawnSync("git", ["-C", root, "config", "user.name", "Test User"]);
+    spawnSync("git", ["-C", root, "config", "user.email", "test@example.com"]);
+    spawnSync("git", ["-C", root, "add", "."]);
+    const commit = spawnSync("git", ["-C", root, "commit", "-m", "module"], { encoding: "utf8" });
+    assert.equal(commit.status, 0, commit.stderr);
+    const result = spawnSync(
+      "bash",
+      ["-c", 'source "$1"; paseo_check_expo_modules "$2"', "modules", helper, root],
+      { encoding: "utf8" },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /OK packages\/app\/modules\/@scope\/ios-only/);
+    assert.match(result.stdout, /OK packages\/app\/modules\/ios-only-link/);
+    assert.doesNotMatch(result.stderr, /\.stale/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Expo module preflight rejects ignored remnants and never removes them", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "paseo-expo-stale-"));
+  try {
+    mkdirSync(path.join(root, "packages/app/modules/paseo-word-stream"), { recursive: true });
+    writeFileSync(
+      path.join(root, "packages/app/modules/paseo-word-stream/package.json"),
+      '{"name":"paseo-word-stream","version":"0.0.0"}\n',
+    );
+    writeFileSync(path.join(root, ".gitignore"), "packages/app/modules/paseo-word-stream/\n");
+    spawnSync("git", ["init", "-b", "main", root]);
+    const result = spawnSync(
+      "bash",
+      ["-c", 'source "$1"; paseo_check_expo_modules "$2"', "modules", helper, root],
+      { encoding: "utf8" },
+    );
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stderr, /rejected untracked\/ignored module/);
+    assert.equal(
+      existsSync(path.join(root, "packages/app/modules/paseo-word-stream/package.json")),
+      true,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("artifact run state distinguishes ready, failed, live, and abandoned attempts", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "paseo-run-state-"));
+  let child;
+  try {
+    writeFileSync(
+      path.join(root, "result.env"),
+      `paseo_artifact_build_status=ready\npaseo_artifact_build_run_dir=${root}\n`,
+    );
+    writeFileSync(path.join(root, "exit-status"), "0\n");
+    let state = spawnSync(
+      "bash",
+      ["-c", 'source "$1"; paseo_artifact_run_state "$2"', "state", helper, root],
+      { encoding: "utf8" },
+    );
+    assert.equal(state.status, 0);
+    assert.equal(state.stdout.trim(), "ready");
+    rmSync(path.join(root, "result.env"));
+    writeFileSync(path.join(root, "exit-status"), "7\n");
+    state = spawnSync(
+      "bash",
+      ["-c", 'source "$1"; paseo_artifact_run_state "$2"', "state", helper, root],
+      { encoding: "utf8" },
+    );
+    assert.equal(state.stdout.trim(), "failed");
+    rmSync(path.join(root, "exit-status"));
+    child = spawn("bash", ["-c", "exec -a build-paseo-artifacts.sh sleep 5"], {
+      stdio: "ignore",
+    });
+    const ticks = spawnSync(
+      "bash",
+      ["-c", 'source "$1"; paseo_pid_start_ticks "$2"', "state", helper, String(child.pid)],
+      { encoding: "utf8" },
+    ).stdout.trim();
+    writeFileSync(
+      path.join(root, "pid.env"),
+      `paseo_artifact_pid=${child.pid}\npaseo_artifact_pid_start_ticks=${ticks}\npaseo_artifact_pid_command=build-paseo-artifacts.sh\n`,
+    );
+    state = spawnSync(
+      "bash",
+      ["-c", 'source "$1"; paseo_artifact_run_state "$2"', "state", helper, root],
+      { encoding: "utf8" },
+    );
+    assert.equal(state.stdout.trim(), "running");
+    child.kill("SIGTERM");
+    child = undefined;
+    state = spawnSync(
+      "bash",
+      ["-c", 'source "$1"; paseo_artifact_run_state "$2"', "state", helper, root],
+      { encoding: "utf8" },
+    );
+    assert.equal(state.stdout.trim(), "abandoned");
+  } finally {
+    child?.kill("SIGTERM");
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("low-output wait helper reports a terminal state once", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "paseo-wait-helper-"));
+  try {
+    writeFileSync(
+      path.join(root, "result.env"),
+      `paseo_artifact_build_status=ready\npaseo_artifact_build_run_dir=${root}\n`,
+    );
+    writeFileSync(path.join(root, "exit-status"), "0\n");
+    const result = spawnSync(
+      "bash",
+      ["-c", 'source "$1"; paseo_wait_for_artifact_run "$2" 1', "wait", helper, root],
+      { encoding: "utf8" },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /wait: ready/);
+    assert.equal(result.stdout.trim().split("\n").length, 1);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("wait helper tolerates a missing run directory during detached startup", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "paseo-wait-starting-"));
+  const runDir = path.join(root, "attempt");
+  let creator;
+  try {
+    creator = spawn(
+      "bash",
+      [
+        "-c",
+        'sleep 1; mkdir -p "$1"; printf "paseo_artifact_build_status=ready\\npaseo_artifact_build_run_dir=%s\\n" "$1" >"$1/result.env"; printf "0\\n" >"$1/exit-status"',
+        "creator",
+        runDir,
+      ],
+      { stdio: "ignore" },
+    );
+    const result = spawnSync(
+      "bash",
+      ["-c", 'source "$1"; paseo_wait_for_artifact_run "$2" 1 3', "wait", helper, runDir],
+      { encoding: "utf8", timeout: 10_000 },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal((result.stdout.match(/build-paseo wait: starting/g) ?? []).length, 1);
+    assert.equal((result.stdout.match(/build-paseo wait: ready/g) ?? []).length, 1);
+  } finally {
+    creator?.kill("SIGTERM");
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("wait helper reports an invalid missing run directory abandoned once", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "paseo-wait-abandoned-"));
+  const runDir = path.join(root, "never-started");
+  try {
+    const result = spawnSync(
+      "bash",
+      ["-c", 'source "$1"; paseo_wait_for_artifact_run "$2" 1 1', "wait", helper, runDir],
+      { encoding: "utf8", timeout: 10_000 },
+    );
+    assert.equal(result.status, 2, result.stderr);
+    assert.equal((result.stdout.match(/build-paseo wait: starting/g) ?? []).length, 1);
+    assert.equal((result.stdout.match(/build-paseo wait: abandoned/g) ?? []).length, 1);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("heartbeat cleanup uses the persisted ID and is safe without agent identity", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "paseo-heartbeat-cleanup-"));
+  const bin = path.join(root, "bin");
+  const calls = path.join(root, "calls.log");
+  mkdirSync(bin);
+  writeFileSync(
+    path.join(root, "heartbeat.env"),
+    "paseo_artifact_heartbeat_id=fixture-heartbeat\npaseo_artifact_heartbeat_cleaned=0\n",
+  );
+  writeFileSync(
+    path.join(bin, "paseo"),
+    `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >>"${calls}"
+`,
+  );
+  chmodSync(path.join(bin, "paseo"), 0o755);
+  try {
+    let result = spawnSync(
+      "bash",
+      ["-c", 'source "$1"; paseo_cleanup_artifact_heartbeat "$2"', "cleanup", helper, root],
+      {
+        encoding: "utf8",
+        env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, PASEO_AGENT_ID: "" },
+      },
+    );
+    assert.equal(result.status, 2);
+    assert.match(result.stderr, /PASEO_AGENT_ID is unavailable/);
+    assert.match(readFileSync(path.join(root, "heartbeat.env"), "utf8"), /cleaned=0/);
+
+    result = spawnSync(
+      "bash",
+      ["-c", 'source "$1"; paseo_cleanup_artifact_heartbeat "$2"', "cleanup", helper, root],
+      {
+        encoding: "utf8",
+        env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, PASEO_AGENT_ID: "agent-1" },
+      },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(readFileSync(calls, "utf8"), /heartbeat delete fixture-heartbeat --json/);
+    assert.match(readFileSync(path.join(root, "heartbeat.env"), "utf8"), /cleaned=1/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

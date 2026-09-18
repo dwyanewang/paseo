@@ -89,6 +89,240 @@ paseo_atomic_write_state_file() {
   fi
 }
 
+# Expo's autolinker enumerates packages/app/modules by directory shape, not by
+# whether a module has native files or an expo-module.config.json.  Keep this
+# check close to the shared build state helpers so the artifact orchestrator and
+# its focused tests use exactly the same rules.
+paseo_check_expo_modules() {
+  (($# == 1)) || return 2
+  local root=$1 modules_dir candidate relative package_file package_info tracked ignored
+  local failed=0
+  local -a candidates=()
+
+  modules_dir="$root/packages/app/modules"
+  [[ -d "$modules_dir" || -L "$modules_dir" ]] || return 0
+
+  # nativeModulesDir changes Expo's search root.  Do not silently apply the
+  # default rules to a different resolver; make the configuration change
+  # explicit instead.
+  if command -v rg >/dev/null && rg -n --no-messages 'nativeModulesDir' \
+    "$root/packages/app/app.json" "$root/packages/app/app.config.js" \
+    "$root/packages/app/app.config.cjs" "$root/packages/app/app.config.ts" \
+    "$root/packages/app/package.json" >/dev/null 2>&1; then
+    printf '%s\n' 'Expo module preflight: nativeModulesDir is configured; update the preflight rules before building.' >&2
+    return 1
+  fi
+
+  # Expo scans visible direct module directories and one level below a scoped
+  # namespace (for example @scope/name).  Shell globs intentionally exclude
+  # hidden entries; symlinks are retained as candidates even when their target
+  # is missing so a useful diagnostic is emitted.
+  local entry child base
+  for entry in "$modules_dir"/*; do
+    [[ -e "$entry" || -L "$entry" ]] || continue
+    base=${entry##*/}
+    [[ "$base" != .* ]] || continue
+    if [[ "$base" == @* && -d "$entry" ]]; then
+      for child in "$entry"/*; do
+        [[ -e "$child" || -L "$child" ]] || continue
+        base=${child##*/}
+        [[ "$base" != .* ]] || continue
+        candidates+=("$child")
+      done
+    else
+      candidates+=("$entry")
+    fi
+  done
+
+  for candidate in "${candidates[@]}"; do
+    [[ -d "$candidate" || -L "$candidate" ]] || continue
+    relative=${candidate#"$root/"}
+    package_file="$candidate/package.json"
+    tracked=$(git -C "$root" ls-files -- "$relative" "$relative/" 2>/dev/null || true)
+    ignored=$(git -C "$root" check-ignore -v -- "$relative" "$package_file" 2>/dev/null || true)
+    if [[ ! -f "$package_file" ]]; then
+      printf 'Expo module preflight: invalid module %s: package.json is missing\n' "$relative" >&2
+      printf '  git-tracked: %s\n  git-ignored: %s\n' \
+        "${tracked:-no}" "${ignored:-no}" >&2
+      printf '%s\n' '  isolate the stale directory manually; the preflight never deletes or moves modules.' >&2
+      failed=1
+      continue
+    fi
+    if ! package_info=$(node -e '
+      const fs = require("node:fs");
+      const value = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+      if (!value || typeof value !== "object") throw new Error("package.json is not an object");
+      process.stdout.write(`name=${typeof value.name === "string" ? value.name : "<unnamed>"} version=${typeof value.version === "string" ? value.version : "<unknown>"}`);
+    ' "$package_file" 2>&1); then
+      printf 'Expo module preflight: invalid module %s: package.json cannot be parsed (%s)\n' \
+        "$relative" "$package_info" >&2
+      printf '  git-tracked: %s\n  git-ignored: %s\n' \
+        "${tracked:-no}" "${ignored:-no}" >&2
+      failed=1
+      continue
+    fi
+    if [[ -z "$tracked" ]]; then
+      printf 'Expo module preflight: rejected untracked/ignored module %s (%s)\n' \
+        "$relative" "$package_info" >&2
+      printf '  git-tracked: no\n  git-ignored: %s\n' "${ignored:-no}" >&2
+      printf '%s\n' '  isolate the stale directory manually; the preflight never deletes or moves modules.' >&2
+      failed=1
+    else
+      printf 'Expo module preflight: OK %s (%s)\n' "$relative" "$package_info"
+    fi
+  done
+  return "$failed"
+}
+
+paseo_pid_start_ticks() {
+  (($# == 1)) || return 2
+  local pid=$1 stat_line
+  [[ "$pid" =~ ^[0-9]+$ && -r "/proc/$pid/stat" ]] || return 1
+  stat_line=$(<"/proc/$pid/stat") || return 1
+  # The comm field is parenthesized and may contain spaces; the build script's
+  # comm is stable, so the final fields are safe to read after the last ')'.
+  printf '%s\n' "${stat_line##*) }" | awk '{print $20}'
+}
+
+paseo_prepare_artifact_run_dir() {
+  (($# == 1 || $# == 2)) || return 2
+  local run_dir=$1 start_timeout=${2:-${PASEO_WAIT_START_TIMEOUT_SECONDS:-30}}
+  local prepared_at
+  [[ "$run_dir" == /* ]] || {
+    printf '%s\n' 'build-paseo launch: run directory must be absolute.' >&2
+    return 2
+  }
+  [[ "$start_timeout" =~ ^[0-9]+$ && "$start_timeout" -ge 1 ]] || return 2
+  [[ ! -e "$run_dir" ]] || {
+    printf 'build-paseo launch: run directory already exists: %s\n' "$run_dir" >&2
+    return 1
+  }
+  mkdir -p -- "$(dirname -- "$run_dir")" || return 1
+  mkdir -- "$run_dir" || return 1
+  prepared_at=$(date +%s)
+  paseo_atomic_write_state_file "$run_dir/launch.env" \
+    paseo_artifact_launch_status starting \
+    paseo_artifact_launch_prepared_at "$prepared_at" \
+    paseo_artifact_launch_timeout_seconds "$start_timeout"
+}
+
+paseo_artifact_run_state() {
+  (($# == 1)) || return 2
+  local run_dir=$1 status result_status result_run pid pid_ticks current_ticks command
+  local launch_status launch_prepared_at launch_timeout now
+  if [[ -f "$run_dir/exit-status" ]]; then
+    status=$(<"$run_dir/exit-status")
+    if [[ -f "$run_dir/result.env" ]]; then
+      result_status=$(sed -n 's/^paseo_artifact_build_status=\(.*\)$/\1/p' "$run_dir/result.env")
+      result_run=$(sed -n 's/^paseo_artifact_build_run_dir=\(.*\)$/\1/p' "$run_dir/result.env")
+      if [[ "$result_status" == ready && "$result_run" == "$run_dir" && "$status" == 0 ]]; then
+        printf '%s\n' ready
+        return 0
+      fi
+    fi
+    if [[ "$status" =~ ^[0-9]+$ && "$status" != 0 ]]; then
+      printf '%s\n' failed
+      return 1
+    fi
+  fi
+  if [[ -f "$run_dir/pid.env" ]]; then
+    pid=$(sed -n 's/^paseo_artifact_pid=\(.*\)$/\1/p' "$run_dir/pid.env")
+    pid_ticks=$(sed -n 's/^paseo_artifact_pid_start_ticks=\(.*\)$/\1/p' "$run_dir/pid.env")
+    command=$(sed -n 's/^paseo_artifact_pid_command=\(.*\)$/\1/p' "$run_dir/pid.env")
+    current_ticks=$(paseo_pid_start_ticks "$pid" 2>/dev/null || true)
+    if [[ -n "$current_ticks" && "$current_ticks" == "$pid_ticks" && -r "/proc/$pid/cmdline" ]] &&
+      tr '\0' ' ' <"/proc/$pid/cmdline" | grep -F -- "$command" >/dev/null 2>&1; then
+      printf '%s\n' running
+      return 3
+    fi
+  fi
+  if [[ -f "$run_dir/launch.env" ]]; then
+    launch_status=$(sed -n 's/^paseo_artifact_launch_status=\(.*\)$/\1/p' "$run_dir/launch.env")
+    launch_prepared_at=$(sed -n 's/^paseo_artifact_launch_prepared_at=\(.*\)$/\1/p' "$run_dir/launch.env")
+    launch_timeout=$(sed -n 's/^paseo_artifact_launch_timeout_seconds=\(.*\)$/\1/p' "$run_dir/launch.env")
+    if [[ ("$launch_status" == starting || "$launch_status" == running) &&
+      "$launch_prepared_at" =~ ^[0-9]+$ &&
+      "$launch_timeout" =~ ^[0-9]+$ ]]; then
+      now=$(date +%s)
+      if ((now <= launch_prepared_at + launch_timeout)); then
+        printf '%s\n' starting
+        return 4
+      fi
+    fi
+  fi
+  printf '%s\n' abandoned
+  return 2
+}
+
+paseo_wait_for_artifact_run() {
+  (($# >= 1 && $# <= 3)) || return 2
+  local run_dir=$1 interval=${2:-${PASEO_WAIT_INTERVAL_SECONDS:-20}}
+  local start_timeout=${3:-${PASEO_WAIT_START_TIMEOUT_SECONDS:-30}}
+  local previous= now last_report wait_started state
+  [[ "$run_dir" == /* ]] || return 2
+  [[ "$interval" =~ ^[0-9]+$ && "$interval" -ge 1 ]] || return 2
+  [[ "$start_timeout" =~ ^[0-9]+$ && "$start_timeout" -ge 1 ]] || return 2
+  wait_started=$(date +%s)
+  last_report=$wait_started
+  while :; do
+    now=$(date +%s)
+    if [[ ! -e "$run_dir" ]]; then
+      if ((now <= wait_started + start_timeout)); then
+        state=starting
+      else
+        state=abandoned
+      fi
+    else
+      state=$(paseo_artifact_run_state "$run_dir") || true
+      if [[ "$state" == abandoned && ! -e "$run_dir/pid.env" &&
+        ! -e "$run_dir/exit-status" && $now -le $((wait_started + start_timeout)) ]]; then
+        state=starting
+      fi
+    fi
+    if [[ "$state" != "$previous" ]]; then
+      printf 'build-paseo wait: %s (%s)\n' "$state" "$run_dir"
+      previous=$state
+      last_report=$now
+    elif ((now - last_report >= 600)); then
+      printf 'build-paseo wait: still %s (%s)\n' "$state" "$run_dir"
+      last_report=$now
+    fi
+    case "$state" in
+      ready) return 0 ;;
+      failed) return 1 ;;
+      abandoned) return 2 ;;
+    esac
+    sleep "$interval"
+  done
+}
+
+paseo_cleanup_artifact_heartbeat() {
+  (($# == 1)) || return 2
+  local run_dir=$1 heartbeat_file="$1/heartbeat.env"
+  local heartbeat_id heartbeat_cleaned output cleaned_at
+  [[ -f "$heartbeat_file" && ! -L "$heartbeat_file" ]] || return 0
+  heartbeat_id=$(sed -n 's/^paseo_artifact_heartbeat_id=\(.*\)$/\1/p' "$heartbeat_file")
+  heartbeat_cleaned=$(sed -n 's/^paseo_artifact_heartbeat_cleaned=\(.*\)$/\1/p' "$heartbeat_file")
+  [[ "$heartbeat_cleaned" != 1 && -n "$heartbeat_id" ]] || return 0
+  [[ -n "${PASEO_AGENT_ID:-}" ]] || {
+    printf 'build-paseo heartbeat cleanup: PASEO_AGENT_ID is unavailable; run paseo heartbeat delete %s inside the owning agent.\n' "$heartbeat_id" >&2
+    return 2
+  }
+  command -v paseo >/dev/null || {
+    printf '%s\n' 'build-paseo heartbeat cleanup: global paseo CLI is unavailable; heartbeat will expire automatically.' >&2
+    return 2
+  }
+  if ! output=$(timeout --signal=TERM 5s paseo heartbeat delete "$heartbeat_id" --json 2>&1); then
+    printf 'build-paseo heartbeat cleanup: failed for %s: %s\n' "$heartbeat_id" "$output" >&2
+    return 1
+  fi
+  cleaned_at=$(date +%s)
+  paseo_atomic_write_state_file "$heartbeat_file" \
+    paseo_artifact_heartbeat_id "$heartbeat_id" \
+    paseo_artifact_heartbeat_cleaned 1 \
+    paseo_artifact_heartbeat_cleaned_at "$cleaned_at"
+}
+
 _paseo_build_stamp_hash_inventory() {
   (($# >= 2)) || return 1
   local root=$1 output

@@ -20,7 +20,7 @@ terminal-webview cleanup, final artifact verification, and the download service.
                           changes the overlay manifest, or moves rw-main.
   --target TARGET         Artifact target: server, android, or windows. Repeatable;
                           desktop is accepted as an alias for windows. Default: all.
-  --run-dir PATH          New directory for logs and the sourceable result file.
+  --run-dir PATH          New attempt directory (choose before launch for wait/recovery).
   --download-port PORT    Download service port (default: 8800).
   --download-ttl SECONDS  Download service lifetime (default: 10800).
   --no-serve-dist         Build artifacts without starting the download service.
@@ -51,6 +51,8 @@ parallel_min_available_bytes=${PASEO_BUILD_PARALLEL_MIN_AVAILABLE_BYTES:-1717986
 windows_archive_retention_limit=3
 windows_archive_count=0
 windows_pruned_count=0
+heartbeat_id=
+heartbeat_cleanup_needed=0
 
 while (($# > 0)); do
   case "$1" in
@@ -142,6 +144,8 @@ fi
 if ((${#local_branches[@]} > 0)) && ((skip_preflight == 0)); then
   fail "--local-branch requires --skip-preflight" 2
 fi
+[[ -n "$run_dir_arg" ]] ||
+  fail "--run-dir is required; choose an absolute attempt directory before starting the build" 2
 if ((target_option_seen == 0)); then
   requested_targets[server]=1
   requested_targets[android]=1
@@ -306,8 +310,55 @@ if [[ -n "$run_dir_arg" ]]; then
 else
   run_dir="$build_root/.dev/build-paseo-runs/$run_id"
 fi
-[[ ! -e "$run_dir" ]] || fail "run directory already exists: $run_dir"
+if [[ -e "$run_dir" && ! -f "$run_dir/launch.env" ]]; then
+  fail "run directory already exists: $run_dir"
+fi
+
+find_successful_request_attempt() {
+  local request_id_value=$1 candidate result request_value run_value
+  [[ -n "$request_id_value" ]] || return 1
+  while IFS= read -r candidate; do
+    [[ -f "$candidate" ]] || continue
+    result=$(sed -n 's/^paseo_artifact_build_status=\(.*\)$/\1/p' "$candidate")
+    [[ "$result" == ready ]] || continue
+    [[ -f "${candidate%/result.env}/exit-status" ]] || continue
+    [[ "$(<"${candidate%/result.env}/exit-status")" == 0 ]] || continue
+    request_value=$(sed -n 's/^paseo_build_request_id=\(.*\)$/\1/p' "$candidate")
+    [[ "$request_value" == "$request_id_value" ]] || continue
+    run_value=$(sed -n 's/^paseo_artifact_build_run_dir=\(.*\)$/\1/p' "$candidate")
+    [[ "$run_value" == "${candidate%/result.env}" ]] || continue
+    printf '%s\n' "${candidate%/result.env}"
+    return 0
+  # --run-dir is caller-selected and may be nested under the request directory;
+  # search all .dev depths rather than silently missing a valid recovery attempt.
+  done < <(find "$build_root/.dev" -type f -name result.env -print 2>/dev/null)
+  return 1
+}
+
+if [[ -n "$preflight_state_arg" && -f "$preflight_state_arg" ]]; then
+  existing_request_id=$(sed -n 's/^paseo_build_run_id=\([^[:space:]]*\)$/\1/p' "$preflight_state_arg" | head -n 1)
+  [[ "$existing_request_id" =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]{0,95}$ ]] || existing_request_id=
+  if existing_attempt=$(find_successful_request_attempt "$existing_request_id"); then
+    printf 'build-paseo-artifacts: request %s already has a successful attempt; read-only reuse: %s\n' \
+      "$existing_request_id" "$existing_attempt"
+    printf 'PASEO_ARTIFACT_BUILD_STATUS=ready\nPASEO_BUILD_RUN_DIR=%s\n' "$existing_attempt"
+    exit 0
+  fi
+fi
 mkdir -p -- "$run_dir"
+if [[ -f "$run_dir/launch.env" ]]; then
+  launch_status=$(sed -n 's/^paseo_artifact_launch_status=\(.*\)$/\1/p' "$run_dir/launch.env")
+  [[ "$launch_status" == starting ]] || fail "run directory launch marker is not starting: $run_dir" 2
+  launch_prepared_at=$(sed -n 's/^paseo_artifact_launch_prepared_at=\(.*\)$/\1/p' "$run_dir/launch.env")
+  launch_timeout=$(sed -n 's/^paseo_artifact_launch_timeout_seconds=\(.*\)$/\1/p' "$run_dir/launch.env")
+  [[ "$launch_prepared_at" =~ ^[0-9]+$ && "$launch_timeout" =~ ^[0-9]+$ ]] ||
+    fail "run directory launch marker is incomplete: $run_dir" 2
+  paseo_atomic_write_state_file "$run_dir/launch.env" \
+    paseo_artifact_launch_status running \
+    paseo_artifact_launch_prepared_at "$launch_prepared_at" \
+    paseo_artifact_launch_timeout_seconds "$launch_timeout" \
+    paseo_artifact_launch_started_at "$(date +%s)"
+fi
 full_log="$run_dir/build.log"
 stage_log="$run_dir/stages.log"
 exit_status_file="$run_dir/exit-status"
@@ -321,6 +372,9 @@ request_frozen_at=
 : >"$stage_log"
 
 exec > >(exec {build_lock_fd}>&-; tee -a "$full_log") 2>&1
+# A disconnected presentation pipe must not prevent EXIT cleanup from writing
+# the machine-readable terminal state and direct build.log evidence.
+trap '' PIPE
 
 started_epoch=$(date +%s)
 terminal_webview=packages/app/src/terminal/webview/terminal-emulator-webview-html.ts
@@ -337,6 +391,8 @@ windows_log="$run_dir/windows-artifacts.branch.log"
 android_native_bundle_gate=not-checked
 artifact_parallel_mode=not-evaluated
 mem_available_bytes=0
+pid_file="$run_dir/pid.env"
+heartbeat_file="$run_dir/heartbeat.env"
 
 restore_local_overlay() {
   ((local_overlay_cleanup_needed)) || return 0
@@ -368,6 +424,75 @@ write_exit_status() {
   mv -- "$status_temp" "$exit_status_file"
 }
 
+append_build_log() {
+  # The stdout tee is a presentation aid. Cleanup must still record evidence
+  # if a reader closes that pipe and the shell receives SIGPIPE.
+  printf '%s\n' "$*" >>"$full_log" 2>/dev/null || true
+}
+
+write_pid_state() {
+  local ticks
+  ticks=$(paseo_pid_start_ticks "$$") || fail 'could not read the build orchestrator start time'
+  paseo_atomic_write_state_file "$pid_file" \
+    paseo_artifact_pid "$$" \
+    paseo_artifact_pid_start_ticks "$ticks" \
+    paseo_artifact_pid_command build-paseo-artifacts.sh
+}
+
+create_build_heartbeat() {
+  local prompt output
+  [[ "${PASEO_TEST_DISABLE_HEARTBEAT:-}" == 1 ]] && {
+    printf '%s\n' 'build-paseo: heartbeat disabled by focused test fixture.'
+    return 0
+  }
+  [[ -n "${PASEO_AGENT_ID:-}" ]] || {
+    printf '%s\n' 'build-paseo: PASEO_AGENT_ID is unavailable; heartbeat skipped. Use the run directory wait helper for manual monitoring.'
+    return 0
+  }
+  command -v paseo >/dev/null || {
+    printf '%s\n' 'build-paseo: global paseo CLI is unavailable; heartbeat skipped. Build state remains machine-readable.'
+    return 0
+  }
+  prompt=$(printf 'Build heartbeat: inspect run directory %s for request %s attempt %s. Orchestrator PID %s. Do not restart the build. Use exit-status=0 and result.env paseo_artifact_build_status=ready in this same run directory as the only success condition; otherwise report the current phase from stages.log/build.log.' \
+    "$run_dir" "${request_id:-<standalone>}" "$run_id" "$$")
+  if output=$(timeout --signal=TERM 5s paseo heartbeat create "$prompt" --cron '*/5 * * * *' --expires-in 3h --name "paseo-build-$run_id" --json 2>&1); then
+    heartbeat_id=$(printf '%s\n' "$output" | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)
+    if [[ -n "$heartbeat_id" ]]; then
+      paseo_atomic_write_state_file "$heartbeat_file" \
+        paseo_artifact_heartbeat_id "$heartbeat_id" \
+        paseo_artifact_heartbeat_cleaned 0 ||
+        printf '%s\n' 'build-paseo: could not persist heartbeat ID; recovery cleanup may require the CLI output.' >&2
+      heartbeat_cleanup_needed=1
+    fi
+    printf 'build-paseo: heartbeat created%s\n' "${heartbeat_id:+ ($heartbeat_id)}"
+  else
+    printf 'build-paseo: heartbeat creation failed; continuing with machine-readable state: %s\n' "$output" >&2
+  fi
+}
+
+cleanup_build_heartbeat() {
+  local cleaned
+  if [[ -z "$heartbeat_id" && -f "$heartbeat_file" ]]; then
+    heartbeat_id=$(sed -n 's/^paseo_artifact_heartbeat_id=\(.*\)$/\1/p' "$heartbeat_file")
+    cleaned=$(sed -n 's/^paseo_artifact_heartbeat_cleaned=\(.*\)$/\1/p' "$heartbeat_file")
+    [[ "$cleaned" == 1 ]] || heartbeat_cleanup_needed=1
+  fi
+  ((heartbeat_cleanup_needed)) || return 0
+  if [[ -n "$heartbeat_id" && ! -f "$heartbeat_file" ]]; then
+    if [[ -n "${PASEO_AGENT_ID:-}" && -n "$(command -v paseo || true)" ]]; then
+      timeout --signal=TERM 5s paseo heartbeat delete "$heartbeat_id" --json >/dev/null 2>&1 ||
+        printf 'build-paseo: heartbeat remains unavailable for recovery; cleanup failed for %s.\n' "$heartbeat_id" >&2
+    else
+      printf 'build-paseo: heartbeat %s was not persisted and cannot be cleaned without the owning agent.\n' "$heartbeat_id" >&2
+    fi
+    heartbeat_cleanup_needed=0
+    return 0
+  fi
+  paseo_cleanup_artifact_heartbeat "$run_dir" ||
+    printf 'build-paseo: heartbeat remains recorded in %s for recovery cleanup.\n' "$heartbeat_file" >&2
+  heartbeat_cleanup_needed=0
+}
+
 restore_terminal_webview() {
   ((terminal_restore_needed)) || return 0
   git -C "$build_root" restore --worktree -- "$terminal_webview"
@@ -394,7 +519,19 @@ terminate_branch_group() {
     kill -0 -- "-$pid" 2>/dev/null || return 0
     sleep 0.1
   done
-  kill -KILL -- "-$pid" 2>/dev/null || true
+  printf 'build-paseo-artifacts: process group %s did not exit after SIGTERM; leaving it for safe external cleanup.\n' "$pid" >&2
+  return 1
+}
+
+reap_branch_if_stopped() {
+  local pid=$1
+  [[ -n "$pid" ]] || return 0
+  if ! kill -0 -- "$pid" 2>/dev/null; then
+    wait "$pid" >/dev/null 2>&1 || true
+    return 0
+  fi
+  printf 'build-paseo-artifacts: branch PID %s remains alive after SIGTERM; not forcing termination.\n' "$pid" >&2
+  return 1
 }
 
 stop_active_branches() {
@@ -403,7 +540,7 @@ stop_active_branches() {
     terminate_branch_group "$pid"
   done
   for pid in "$android_native_pid" "$windows_pid"; do
-    [[ -n "$pid" ]] && wait "$pid" >/dev/null 2>&1 || true
+    reap_branch_if_stopped "$pid" || true
   done
   android_native_pid=
   windows_pid=
@@ -413,6 +550,7 @@ finish() {
   local status=$? restore_status=0
   trap - EXIT INT TERM
   set +e
+  cleanup_build_heartbeat
   stop_active_branches
   if ((status != 0 && distribution_cleanup_needed)); then
     (
@@ -440,7 +578,11 @@ finish() {
       ((status != 0)) || status=1
     fi
   fi
-  write_exit_status "$status"
+  write_exit_status "$status" || append_build_log "build-paseo: failed to write exit-status=$status"
+  paseo_atomic_write_state_file "$run_dir/terminal-state" \
+    paseo_artifact_terminal_state_written 1 paseo_artifact_terminal_exit_status "$status" ||
+    append_build_log "build-paseo: failed to write terminal-state marker"
+  append_build_log "build-paseo: final exit-status=$status"
   if [[ -n "$request_stage_log" ]]; then
     stage "artifacts:end exit=$status elapsed=$(( $(date +%s) - started_epoch ))s"
   fi
@@ -658,19 +800,15 @@ wait_for_active_branches() {
       terminate_branch_group "$android_native_pid"
       terminate_branch_group "$windows_pid"
       if [[ -n "$android_native_pid" ]]; then
-        set +e
-        wait "$android_native_pid"
-        completed_status=$?
-        set -e
-        stage "parallel: terminated android-native-assemble sibling exited with status $completed_status"
+        if reap_branch_if_stopped "$android_native_pid"; then
+          stage 'parallel: terminated android-native-assemble sibling exited'
+        fi
         android_native_pid=
       fi
       if [[ -n "$windows_pid" ]]; then
-        set +e
-        wait "$windows_pid"
-        completed_status=$?
-        set -e
-        stage "parallel: terminated windows-artifacts sibling exited with status $completed_status"
+        if reap_branch_if_stopped "$windows_pid"; then
+          stage 'parallel: terminated windows-artifacts sibling exited'
+        fi
         windows_pid=
       fi
     fi
@@ -816,6 +954,7 @@ run_profiled_artifact_branches() {
 
 printf 'PASEO_BUILD_RUN_DIR=%s\nPASEO_BUILD_LOG=%s\nPASEO_BUILD_STAGE_LOG=%s\n' \
   "$run_dir" "$full_log" "$stage_log"
+write_pid_state
 
 rw_main_rebuilt=0
 dependencies_reinstalled=1
@@ -877,6 +1016,16 @@ if [[ -n "$preflight_state_arg" ]]; then
       "$request_run_dir" "$main_after" "$request_frozen_at" "$request_stage_log"
   fi
   preflight_mode=ready-state
+fi
+
+if ((build_android_target || build_windows_target)); then
+  stage 'preflight: validate Expo modules before prepare-build'
+  paseo_check_expo_modules "$build_root" || fail 'Expo module preflight failed; no old artifacts were deleted'
+fi
+if ((build_android_target || build_windows_target)); then
+  create_build_heartbeat
+else
+  printf '%s\n' 'build-paseo: server-only build is short-lived; heartbeat not required.'
 fi
 
 stage "environment: activate repository-pinned mise toolchain"
