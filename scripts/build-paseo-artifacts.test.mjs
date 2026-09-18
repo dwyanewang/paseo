@@ -669,14 +669,13 @@ test("rejects ignored Expo module remnants before deleting selected artifacts", 
 
 test("runs the complete three-platform artifact chain from one ready state", () => {
   withFixture({}, (fixture) => {
-    const result = runBuild(fixture, "successful");
+    const result = runBuild(fixture, "successful", ["--heartbeat-id", "fixture-heartbeat"]);
     assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
     assert.match(result.stdout, /PASEO_ARTIFACT_BUILD_STATUS=ready/);
     assert.match(result.stdout, /PASEO_ARTIFACT_BUILD_VERSION=1\.2\.3-beta\.4/);
 
     const commandLog = readFileSync(fixture.commandLog, "utf8");
     assertOrdered(commandLog, [
-      "paseo|heartbeat create",
       "mise|install",
       "serve|prepare-build",
       "npm|run build:terminal-webview",
@@ -686,7 +685,7 @@ test("runs the complete three-platform artifact chain from one ready state", () 
       "profile|android-metro-hermes",
       "serve|8800 10800",
     ]);
-    assert.match(commandLog, /paseo\|heartbeat delete/);
+    assert.doesNotMatch(commandLog, /paseo\|heartbeat (create|delete)/);
     for (const fragment of [
       "profile|android-native-assemble",
       "profile|windows-artifacts",
@@ -710,10 +709,11 @@ test("runs the complete three-platform artifact chain from one ready state", () 
     );
     assert.match(
       readFileSync(path.join(runDir, "heartbeat.env"), "utf8"),
-      /paseo_artifact_heartbeat_cleaned=1/,
+      /paseo_artifact_heartbeat_cleaned=0/,
     );
     const resultState = readFileSync(path.join(runDir, "result.env"), "utf8");
     assert.match(resultState, /status=ready/);
+    assert.match(resultState, /paseo_artifact_heartbeat_status=created/);
     assert.match(resultState, /paseo_artifact_windows_summary=/);
     assert.match(resultState, /paseo_artifact_parallel_mode=/);
     assert.match(resultState, /paseo_artifact_android_native_bundle_gate=up-to-date/);
@@ -903,13 +903,14 @@ test("builds only Android with app dependencies and no Windows or server artifac
       PASEO_AGENT_ID: "",
     });
     assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
-    assert.match(result.stdout, /PASEO_AGENT_ID is unavailable; heartbeat skipped/);
+    assert.match(result.stdout, /heartbeat status=unavailable/);
     assert.match(result.stdout, /PASEO_ARTIFACT_TARGETS=android/);
     assert.match(result.stdout, /PASEO_ARTIFACT_APK=/);
     assert.doesNotMatch(result.stdout, /PASEO_ARTIFACT_SERVER=/);
     assert.doesNotMatch(result.stdout, /PASEO_ARTIFACT_WINDOWS_ZIP=/);
 
     const commandLog = readFileSync(fixture.commandLog, "utf8");
+    assert.doesNotMatch(commandLog, /heartbeat (create|delete)/);
     assert.match(commandLog, /npm\|run build:app-deps/);
     assert.match(commandLog, /profile\|android-native-assemble/);
     assert.doesNotMatch(commandLog, /npm\|run build:server/);
@@ -917,6 +918,10 @@ test("builds only Android with app dependencies and no Windows or server artifac
     const resultState = readFileSync(
       path.join(fixture.buildRoot, ".dev/android-only/result.env"),
       "utf8",
+    );
+    assert.match(
+      readFileSync(path.join(fixture.buildRoot, ".dev/android-only/heartbeat.env"), "utf8"),
+      /paseo_artifact_heartbeat_status=unavailable/,
     );
     assert.match(resultState, /paseo_artifact_server_build_mode=app-deps-only/);
     assert.match(resultState, /paseo_artifact_parallel_mode=android-only/);

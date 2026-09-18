@@ -380,48 +380,46 @@ test("wait helper reports an invalid missing run directory abandoned once", () =
   }
 });
 
-test("heartbeat cleanup uses the persisted ID and is safe without agent identity", () => {
+test("heartbeat cleanup only records MCP deletion confirmation", () => {
   const root = mkdtempSync(path.join(tmpdir(), "paseo-heartbeat-cleanup-"));
-  const bin = path.join(root, "bin");
-  const calls = path.join(root, "calls.log");
-  mkdirSync(bin);
-  writeFileSync(
-    path.join(root, "heartbeat.env"),
-    "paseo_artifact_heartbeat_id=fixture-heartbeat\npaseo_artifact_heartbeat_cleaned=0\n",
-  );
-  writeFileSync(
-    path.join(bin, "paseo"),
-    `#!/usr/bin/env bash
-set -euo pipefail
-printf '%s\\n' "$*" >>"${calls}"
-`,
-  );
-  chmodSync(path.join(bin, "paseo"), 0o755);
   try {
+    writeFileSync(
+      path.join(root, "heartbeat.env"),
+      "paseo_artifact_heartbeat_id=fixture-heartbeat\npaseo_artifact_heartbeat_status=created\npaseo_artifact_heartbeat_cleaned=0\n",
+    );
     let result = spawnSync(
       "bash",
       ["-c", 'source "$1"; paseo_cleanup_artifact_heartbeat "$2"', "cleanup", helper, root],
-      {
-        encoding: "utf8",
-        env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, PASEO_AGENT_ID: "" },
-      },
+      { encoding: "utf8", env: { ...process.env, PASEO_ARTIFACT_HEARTBEAT_DELETE_CONFIRMED: "" } },
     );
     assert.equal(result.status, 2);
-    assert.match(result.stderr, /PASEO_AGENT_ID is unavailable/);
-    assert.match(readFileSync(path.join(root, "heartbeat.env"), "utf8"), /cleaned=0/);
+    assert.match(result.stderr, /first delete the heartbeat through the owning agent MCP tool/);
+    assert.match(readFileSync(path.join(root, "heartbeat.env"), "utf8"), /status=created/);
 
     result = spawnSync(
       "bash",
       ["-c", 'source "$1"; paseo_cleanup_artifact_heartbeat "$2"', "cleanup", helper, root],
       {
         encoding: "utf8",
-        env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, PASEO_AGENT_ID: "agent-1" },
+        env: { ...process.env, PASEO_ARTIFACT_HEARTBEAT_DELETE_CONFIRMED: "1" },
       },
     );
     assert.equal(result.status, 0, result.stderr);
-    assert.match(readFileSync(calls, "utf8"), /heartbeat delete fixture-heartbeat --json/);
+    assert.match(readFileSync(path.join(root, "heartbeat.env"), "utf8"), /status=cleaned/);
     assert.match(readFileSync(path.join(root, "heartbeat.env"), "utf8"), /cleaned=1/);
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("heartbeat prompt contract does not require a PID before launch", () => {
+  const skill = readFileSync(
+    path.join(path.dirname(helper), "skills/build-paseo/SKILL.md"),
+    "utf8",
+  );
+  const flow = readFileSync(path.join(path.dirname(helper), "打包流程.md"), "utf8");
+  for (const document of [skill, flow]) {
+    assert.match(document, /PID (?:会写入|will be written to) `?pid\.env/);
+    assert.match(document, /尚不知道真实后台 PID|尚不知道后台编排 PID|does not require a real PID/);
   }
 });

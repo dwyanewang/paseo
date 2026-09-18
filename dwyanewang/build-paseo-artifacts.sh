@@ -21,6 +21,9 @@ terminal-webview cleanup, final artifact verification, and the download service.
   --target TARGET         Artifact target: server, android, or windows. Repeatable;
                           desktop is accepted as an alias for windows. Default: all.
   --run-dir PATH          New attempt directory (choose before launch for wait/recovery).
+  --heartbeat-id ID       Heartbeat already created by the owning agent through MCP.
+                          The build only persists this opaque ID; it never creates
+                          or deletes heartbeats through the shell CLI.
   --download-port PORT    Download service port (default: 8800).
   --download-ttl SECONDS  Download service lifetime (default: 10800).
   --no-serve-dist         Build artifacts without starting the download service.
@@ -44,6 +47,7 @@ declare -a local_branches=()
 declare -A requested_targets=()
 target_option_seen=0
 run_dir_arg=
+heartbeat_id_arg=
 download_port=8800
 download_ttl=10800
 serve_dist=1
@@ -52,7 +56,7 @@ windows_archive_retention_limit=3
 windows_archive_count=0
 windows_pruned_count=0
 heartbeat_id=
-heartbeat_cleanup_needed=0
+heartbeat_status=unavailable
 
 while (($# > 0)); do
   case "$1" in
@@ -103,6 +107,12 @@ while (($# > 0)); do
       (($# >= 2)) || fail "missing value for --run-dir" 2
       [[ -z "$run_dir_arg" ]] || fail "--run-dir may only be specified once" 2
       run_dir_arg=$2
+      shift 2
+      ;;
+    --heartbeat-id)
+      (($# >= 2)) || fail "missing value for --heartbeat-id" 2
+      [[ -z "$heartbeat_id_arg" ]] || fail "--heartbeat-id may only be specified once" 2
+      heartbeat_id_arg=$2
       shift 2
       ;;
     --download-port)
@@ -439,58 +449,38 @@ write_pid_state() {
     paseo_artifact_pid_command build-paseo-artifacts.sh
 }
 
-create_build_heartbeat() {
-  local prompt output
-  [[ "${PASEO_TEST_DISABLE_HEARTBEAT:-}" == 1 ]] && {
-    printf '%s\n' 'build-paseo: heartbeat disabled by focused test fixture.'
-    return 0
-  }
-  [[ -n "${PASEO_AGENT_ID:-}" ]] || {
-    printf '%s\n' 'build-paseo: PASEO_AGENT_ID is unavailable; heartbeat skipped. Use the run directory wait helper for manual monitoring.'
-    return 0
-  }
-  command -v paseo >/dev/null || {
-    printf '%s\n' 'build-paseo: global paseo CLI is unavailable; heartbeat skipped. Build state remains machine-readable.'
-    return 0
-  }
-  prompt=$(printf 'Build heartbeat: inspect run directory %s for request %s attempt %s. Orchestrator PID %s. Do not restart the build. Use exit-status=0 and result.env paseo_artifact_build_status=ready in this same run directory as the only success condition; otherwise report the current phase from stages.log/build.log.' \
-    "$run_dir" "${request_id:-<standalone>}" "$run_id" "$$")
-  if output=$(timeout --signal=TERM 5s paseo heartbeat create "$prompt" --cron '*/5 * * * *' --expires-in 3h --name "paseo-build-$run_id" --json 2>&1); then
-    heartbeat_id=$(printf '%s\n' "$output" | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)
-    if [[ -n "$heartbeat_id" ]]; then
-      paseo_atomic_write_state_file "$heartbeat_file" \
-        paseo_artifact_heartbeat_id "$heartbeat_id" \
-        paseo_artifact_heartbeat_cleaned 0 ||
-        printf '%s\n' 'build-paseo: could not persist heartbeat ID; recovery cleanup may require the CLI output.' >&2
-      heartbeat_cleanup_needed=1
-    fi
-    printf 'build-paseo: heartbeat created%s\n' "${heartbeat_id:+ ($heartbeat_id)}"
+persist_build_heartbeat() {
+  local supplied_id=${heartbeat_id_arg:-${PASEO_ARTIFACT_HEARTBEAT_ID:-}}
+  if [[ -n "$heartbeat_id_arg" && -n "${PASEO_ARTIFACT_HEARTBEAT_ID:-}" &&
+    "$heartbeat_id_arg" != "$PASEO_ARTIFACT_HEARTBEAT_ID" ]]; then
+    fail 'heartbeat ID supplied by --heartbeat-id and PASEO_ARTIFACT_HEARTBEAT_ID disagree' 2
+  fi
+  [[ "$supplied_id" != *$'\n'* && "$supplied_id" != *$'\r'* ]] ||
+    fail 'heartbeat ID must not contain a newline' 2
+  heartbeat_id=$supplied_id
+  if [[ -n "$heartbeat_id" ]]; then
+    heartbeat_status=created
+    paseo_atomic_write_state_file "$heartbeat_file" \
+      paseo_artifact_heartbeat_id "$heartbeat_id" \
+      paseo_artifact_heartbeat_status created \
+      paseo_artifact_heartbeat_cleaned 0 \
+      paseo_artifact_heartbeat_cleanup_owner "${PASEO_AGENT_ID:-unknown}"
+    printf 'build-paseo: heartbeat status=created id=%s; cleanup is delegated to the owning agent through MCP.\n' "$heartbeat_id"
   else
-    printf 'build-paseo: heartbeat creation failed; continuing with machine-readable state: %s\n' "$output" >&2
+    heartbeat_status=unavailable
+    paseo_atomic_write_state_file "$heartbeat_file" \
+      paseo_artifact_heartbeat_status unavailable \
+      paseo_artifact_heartbeat_cleaned 0
+    printf '%s\n' 'build-paseo: heartbeat status=unavailable; create it through MCP before launching for external wakeup. Build state remains machine-readable.'
   fi
 }
 
 cleanup_build_heartbeat() {
-  local cleaned
-  if [[ -z "$heartbeat_id" && -f "$heartbeat_file" ]]; then
-    heartbeat_id=$(sed -n 's/^paseo_artifact_heartbeat_id=\(.*\)$/\1/p' "$heartbeat_file")
-    cleaned=$(sed -n 's/^paseo_artifact_heartbeat_cleaned=\(.*\)$/\1/p' "$heartbeat_file")
-    [[ "$cleaned" == 1 ]] || heartbeat_cleanup_needed=1
+  if [[ -n "$heartbeat_id" ]]; then
+    printf 'build-paseo: heartbeat status=created; owning agent must delete %s through MCP after consuming terminal state.\n' "$heartbeat_id"
+  else
+    printf '%s\n' 'build-paseo: heartbeat status=unavailable; no external wakeup to clean.'
   fi
-  ((heartbeat_cleanup_needed)) || return 0
-  if [[ -n "$heartbeat_id" && ! -f "$heartbeat_file" ]]; then
-    if [[ -n "${PASEO_AGENT_ID:-}" && -n "$(command -v paseo || true)" ]]; then
-      timeout --signal=TERM 5s paseo heartbeat delete "$heartbeat_id" --json >/dev/null 2>&1 ||
-        printf 'build-paseo: heartbeat remains unavailable for recovery; cleanup failed for %s.\n' "$heartbeat_id" >&2
-    else
-      printf 'build-paseo: heartbeat %s was not persisted and cannot be cleaned without the owning agent.\n' "$heartbeat_id" >&2
-    fi
-    heartbeat_cleanup_needed=0
-    return 0
-  fi
-  paseo_cleanup_artifact_heartbeat "$run_dir" ||
-    printf 'build-paseo: heartbeat remains recorded in %s for recovery cleanup.\n' "$heartbeat_file" >&2
-  heartbeat_cleanup_needed=0
 }
 
 restore_terminal_webview() {
@@ -1023,9 +1013,9 @@ if ((build_android_target || build_windows_target)); then
   paseo_check_expo_modules "$build_root" || fail 'Expo module preflight failed; no old artifacts were deleted'
 fi
 if ((build_android_target || build_windows_target)); then
-  create_build_heartbeat
+  persist_build_heartbeat
 else
-  printf '%s\n' 'build-paseo: server-only build is short-lived; heartbeat not required.'
+  persist_build_heartbeat
 fi
 
 stage "environment: activate repository-pinned mise toolchain"
@@ -1309,6 +1299,8 @@ result_temp=$(mktemp "${result_file}.tmp.XXXXXX")
   printf 'paseo_artifact_build_log=%q\n' "$full_log"
   printf 'paseo_artifact_stage_log=%q\n' "$stage_log"
   printf 'paseo_artifact_exit_status_file=%q\n' "$exit_status_file"
+  printf 'paseo_artifact_heartbeat_status=%q\n' "$heartbeat_status"
+  printf 'paseo_artifact_heartbeat_id=%q\n' "$heartbeat_id"
   printf 'paseo_artifact_total_seconds=%q\n' "$total_seconds"
   printf 'paseo_build_request_id=%q\n' "$request_id"
   printf 'paseo_build_request_dir=%q\n' "$request_run_dir"

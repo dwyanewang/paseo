@@ -296,31 +296,32 @@ paseo_wait_for_artifact_run() {
   done
 }
 
-paseo_cleanup_artifact_heartbeat() {
+paseo_mark_artifact_heartbeat_cleaned() {
   (($# == 1)) || return 2
   local run_dir=$1 heartbeat_file="$1/heartbeat.env"
-  local heartbeat_id heartbeat_cleaned output cleaned_at
+  local heartbeat_id heartbeat_status cleaned_at
   [[ -f "$heartbeat_file" && ! -L "$heartbeat_file" ]] || return 0
   heartbeat_id=$(sed -n 's/^paseo_artifact_heartbeat_id=\(.*\)$/\1/p' "$heartbeat_file")
-  heartbeat_cleaned=$(sed -n 's/^paseo_artifact_heartbeat_cleaned=\(.*\)$/\1/p' "$heartbeat_file")
-  [[ "$heartbeat_cleaned" != 1 && -n "$heartbeat_id" ]] || return 0
-  [[ -n "${PASEO_AGENT_ID:-}" ]] || {
-    printf 'build-paseo heartbeat cleanup: PASEO_AGENT_ID is unavailable; run paseo heartbeat delete %s inside the owning agent.\n' "$heartbeat_id" >&2
-    return 2
-  }
-  command -v paseo >/dev/null || {
-    printf '%s\n' 'build-paseo heartbeat cleanup: global paseo CLI is unavailable; heartbeat will expire automatically.' >&2
-    return 2
-  }
-  if ! output=$(timeout --signal=TERM 5s paseo heartbeat delete "$heartbeat_id" --json 2>&1); then
-    printf 'build-paseo heartbeat cleanup: failed for %s: %s\n' "$heartbeat_id" "$output" >&2
-    return 1
-  fi
+  heartbeat_status=$(sed -n 's/^paseo_artifact_heartbeat_status=\(.*\)$/\1/p' "$heartbeat_file")
+  [[ -n "$heartbeat_id" && "$heartbeat_status" == created ]] || return 0
   cleaned_at=$(date +%s)
   paseo_atomic_write_state_file "$heartbeat_file" \
     paseo_artifact_heartbeat_id "$heartbeat_id" \
+    paseo_artifact_heartbeat_status cleaned \
     paseo_artifact_heartbeat_cleaned 1 \
     paseo_artifact_heartbeat_cleaned_at "$cleaned_at"
+}
+
+# The heartbeat is created and deleted through the owning agent's MCP tools.
+# This helper only records the deletion confirmation after that MCP call; it
+# deliberately never invokes the shell CLI, which may require a daemon password.
+paseo_cleanup_artifact_heartbeat() {
+  (($# == 1)) || return 2
+  [[ "${PASEO_ARTIFACT_HEARTBEAT_DELETE_CONFIRMED:-}" == 1 ]] || {
+    printf '%s\n' 'build-paseo heartbeat cleanup: first delete the heartbeat through the owning agent MCP tool, then set PASEO_ARTIFACT_HEARTBEAT_DELETE_CONFIRMED=1.' >&2
+    return 2
+  }
+  paseo_mark_artifact_heartbeat_cleaned "$1"
 }
 
 _paseo_build_stamp_hash_inventory() {

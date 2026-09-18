@@ -68,7 +68,15 @@ bash "$paseo_chore_root/dwyanewang/prepare-rw-main-for-build.sh" \
 
 ## 正式产物链与端选择
 
-ready 后先确定一个本轮不会复用的 attempt 目录，再把同一个 state 文件交给版本化脚本；必须显式传入 `--run-dir`，这样 heartbeat 唤醒后的恢复 agent 可以直接使用该绝对路径调用低输出 wait helper。Codex 没有 Claude 风格的后台完成通知，因此脚本会创建约每 5 分钟一次、3 小时过期的 Paseo heartbeat（仅在存在 `PASEO_AGENT_ID` 时），并写入 PID、`exit-status`、`result.env` 和阶段日志。需要等待时使用低输出 wait helper（每 15–30 秒检查，仅在阶段变化、终态或长静默时输出），不要让模型持续 `write_stdin` 轮询：
+ready 后先确定一个本轮不会复用的 attempt 目录，再把同一个 state 文件交给版本化脚本；必须显式传入 `--run-dir`，这样 heartbeat 唤醒后的恢复 agent 可以直接使用该绝对路径调用低输出 wait helper。Codex 没有 Claude 风格的后台完成通知，因此启动 agent 先通过 Paseo MCP 创建约每 5 分钟一次、3 小时过期的 heartbeat，再把返回的 opaque ID 通过 `--heartbeat-id "$paseo_heartbeat_id"` 传给脚本。脚本只持久化该 ID 和状态，不通过 shell CLI 创建或删除 heartbeat，并写入 PID、`exit-status`、`result.env` 和阶段日志。需要等待时使用低输出 wait helper（每 15–30 秒检查，仅在阶段变化、终态或长静默时输出），不要让模型持续 `write_stdin` 轮询：
+
+先调用 agent-scoped MCP `create_heartbeat`（`cron="*/5 * * * *"`、`expiresIn="3h"`），把返回对象中的 `id` 保存为 `paseo_heartbeat_id`。prompt 必须包含绝对 run 目录、请求/attempt、说明 PID 会写入 `pid.env` 并按该文件恢复，以及“不要重启构建”的指令；创建 heartbeat 时尚不知道后台编排 PID。脚本结束后，读取 `heartbeat.env` 和终态文件；由同一 agent 通过 MCP `delete_heartbeat({ id: paseo_heartbeat_id })` 删除，再执行状态 helper 标记清理完成：
+
+```text
+create_heartbeat({ cron: "*/5 * * * *", expiresIn: "3h", name: "paseo-build-<run-id>", prompt: "...absolute run-dir... request/attempt... PID will be written to pid.env for recovery... do not restart..." })
+delete_heartbeat({ id: paseo_heartbeat_id })
+PASEO_ARTIFACT_HEARTBEAT_DELETE_CONFIRMED=1 paseo_cleanup_artifact_heartbeat "$paseo_artifact_run_dir"
+```
 
 ```bash
 paseo_artifact_run_dir=/home/yangfei/Projects/paseo/.dev/build-paseo-runs/$paseo_run_id/artifact-attempt-1
@@ -78,6 +86,7 @@ setsid bash "$paseo_chore_root/dwyanewang/build-paseo-artifacts.sh" \
   --build-root /home/yangfei/Projects/paseo \
   --preflight-state "$paseo_preflight_state" \
   --run-dir "$paseo_artifact_run_dir" \
+  --heartbeat-id "$paseo_heartbeat_id" \
   >"$paseo_artifact_run_dir/launcher.log" 2>&1 < /dev/null &
 paseo_artifact_launcher_pid=$!
 printf '%s\n' "$paseo_artifact_launcher_pid" >"$paseo_artifact_run_dir/launcher.pid"
@@ -103,13 +112,14 @@ setsid bash "$paseo_chore_root/dwyanewang/build-paseo-artifacts.sh" \
   --local-branch fix/example \
   --target windows \
   --run-dir "$paseo_artifact_run_dir" \
+  --heartbeat-id "$paseo_heartbeat_id" \
   >"$paseo_artifact_run_dir/launcher.log" 2>&1 < /dev/null &
 paseo_artifact_launcher_pid=$!
 printf '%s\n' "$paseo_artifact_launcher_pid" >"$paseo_artifact_run_dir/launcher.pid"
 paseo_wait_for_artifact_run "$paseo_artifact_run_dir" 20 60
 ```
 
-heartbeat prompt 必须包含绝对 run 目录、请求/attempt、编排 PID 和终态判据，并明确禁止重新启动构建。heartbeat ID 会持久化在该目录的 `heartbeat.env`；异常退出后，拥有同一 `PASEO_AGENT_ID` 的恢复 agent 可执行 `source "$paseo_chore_root/dwyanewang/build-paseo-state.sh"; paseo_cleanup_artifact_heartbeat "$paseo_artifact_run_dir"` 清理，不能用其他 agent 身份删除。heartbeat 没有 agent 身份时不能让构建失败，只打印人工检查提示。终态只能由同一 run 目录同时满足 `exit-status=0`、`result.env` 的 `paseo_artifact_build_status=ready` 和 `paseo_artifact_build_run_dir` 精确匹配来确认；缺失 `exit-status` 时结合 PID 文件的启动时间与命令判断 `running`，编排进程已死则报告 `abandoned`，不能无限报告运行中。`terminal-state` 只表示脚本已完成终态收尾，不是代理已汇报标记。取消只走 SIGTERM。成功后按幂等顺序删除 heartbeat，消费方确认后自行记录用户汇报并只发送一次最终结果。
+heartbeat prompt 必须包含绝对 run 目录、请求/attempt、说明后台 PID 会写入 `pid.env` 并按该文件恢复、终态判据，并明确禁止重新启动构建；heartbeat 创建时不宣称已有真实 PID。heartbeat ID 会持久化在该目录的 `heartbeat.env`，状态为 `created`；异常退出或终态后，拥有同一 agent 身份的 agent 先通过 MCP 删除该 heartbeat，再执行 `PASEO_ARTIFACT_HEARTBEAT_DELETE_CONFIRMED=1 paseo_cleanup_artifact_heartbeat "$paseo_artifact_run_dir"` 将状态记为 `cleaned`。脚本和状态 helper 不调用 heartbeat create/delete CLI，也不会把 daemon 密码写入环境、日志或文件。没有 ID 时状态为 `unavailable`。终态只能由同一 run 目录同时满足 `exit-status=0`、`result.env` 的 `paseo_artifact_build_status=ready` 和 `paseo_artifact_build_run_dir` 精确匹配来确认；缺失 `exit-status` 时结合 PID 文件的启动时间与命令判断 `running`，编排进程已死则报告 `abandoned`，不能无限报告运行中。`terminal-state` 只表示脚本已完成终态收尾，不是代理已汇报标记。取消只走 SIGTERM。成功后按幂等顺序删除 heartbeat，消费方确认后自行记录用户汇报并只发送一次最终结果。
 
 脚本统一负责整轮独占锁、mise、临时分支清理、所选旧产物标记、terminal-webview 清理、依赖构建、Android/Windows 画像、三端同时选择时的 Android bundle gate 与 16 GiB 并发判定、产物校验、Windows 历史 zip 轮转和按目标下载服务。Windows 成功构建后只保留当前包与最近两个历史 `Paseo-Setup-*-x64.zip`；不要让多个 subagent 各自启动平台构建，也不要在代理侧重复这些实现细节。
 
