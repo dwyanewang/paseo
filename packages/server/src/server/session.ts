@@ -2027,7 +2027,7 @@ export class Session {
     }
     const title = storedRecord?.title ?? null;
     const payload = toAgentPayload(agent, { title });
-    const storedUpdatedAt = storedRecord ? resolveStoredAgentPayloadUpdatedAt(storedRecord) : null;
+    const storedUpdatedAt = storedRecord ? resolveStoredAgentUpdatedAt(storedRecord) : null;
     if (storedUpdatedAt) {
       const liveUpdatedAt = Date.parse(payload.updatedAt);
       const persistedUpdatedAt = Date.parse(storedUpdatedAt);
