@@ -70,6 +70,13 @@ const FORGE_ID = /^[a-z0-9][a-z0-9._-]*$/;
 const FORGE_COLOR = /^(?:#[0-9a-f]{6}|#[0-9a-f]{8})$/i;
 const MAX_FORGE_ICON_PATH_LENGTH = 16_384;
 
+/** Badges count things, so anything that is not a positive whole number means "no badge". */
+function normalizeSidebarBadge(badge: number | null | undefined): number | undefined {
+  if (typeof badge !== "number" || !Number.isFinite(badge)) return undefined;
+  const count = Math.floor(badge);
+  return count > 0 ? count : undefined;
+}
+
 function requireId(value: string, label: string): string {
   const id = value.trim();
   if (!CONTRIBUTION_ID.test(id)) throw new Error(`Invalid ${label}: ${value}`);
@@ -329,9 +336,21 @@ export function runPluginClientBundle(
           title: contribution.title.trim(),
           icon: contribution.icon.trim(),
           surface: requireId(contribution.surface, "sidebar surface id"),
+          badge: normalizeSidebarBadge(contribution.badge),
         },
         () => sidebarItemIds.delete(normalizedId),
       );
+    },
+    setSidebarBadge(itemId: string, badge: number | null) {
+      if (stopped) return;
+      const item = collector.sidebarItems.find((candidate) => candidate.id === itemId.trim());
+      if (!item) throw new Error(`Sidebar item is unavailable: ${itemId}`);
+      const next = normalizeSidebarBadge(badge);
+      if (item.badge === next) return;
+      // Mutated in place: `register` removes contributions by identity, so the array entry has to
+      // stay the same object. The registry republishes a fresh snapshot, which is what re-renders.
+      item.badge = next;
+      notifyChange();
     },
     addWorkspacePanel(contribution: PluginWorkspacePanelContribution) {
       const normalizedId = requireId(contribution.id, "workspace panel id");

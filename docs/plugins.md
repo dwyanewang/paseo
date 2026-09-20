@@ -314,7 +314,25 @@ They use typed plugin RPC only for plugin-specific backend work. Surface and pan
 belongs to the app; plugins do not receive Expo Router or workspace-layout store access.
 See the public [navigation fields](../public-docs/plugins/reference.md#surfaces-and-sidebar-items)
 and [external links and workspace browsers](../public-docs/plugins/reference.md#external-links-and-workspace-browsers)
-for the author-facing contract.
+for the author-facing contract. Header buttons and timeline renderers get the same navigation
+object from `buildPluginHostNavigation`, the non-hook form: both render from stores, and an overflow
+menu builds several plugins' props in one pass, where a hook per entry is not available.
+
+Toasts raised by plugin callbacks go through `packages/app/src/contexts/app-toast.ts`, the app
+shell's single toast API. A button `onPress` or slash-command `onSubmit` fires outside React and has
+no context to read, so the capability is one implementation rather than a parameter every call site
+threads.
+
+Sidebar badges are pushed, not derived. `client.setSidebarBadge` mutates the registered contribution
+in place and republishes the registry snapshot — in place because `register` removes contributions
+by object identity, so replacing the array entry would leak it.
+
+A Command Center item's `shortcut` becomes a binding appended after the built-ins, so a built-in
+always wins a collision and a plugin can never capture keys the app already uses. The binding id is
+`plugin:<pluginId>:<itemId>`, which reuses ordinary override storage: rebinding works, but the
+shortcut has no row in the shortcuts dialog, whose section order is a static list. Bindings exist
+only while the item is contributed — the Command Center registration republishes them from the
+contributions it just built (`packages/app/src/plugins/command-center/shortcuts.ts`).
 Surface and panel props also expose optional
 `openAgentLaunch`, a Host-owned operation that seeds the existing native workspace draft or
 `/new` flow with immutable labels and a stable message ID. Its local journal is scoped by host,

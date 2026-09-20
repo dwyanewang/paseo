@@ -712,6 +712,14 @@ export default function contribute(client: PluginClientContext) {
 }
 ```
 
+A sidebar item may carry a count. Pass `badge` for the starting value and call
+`client.setSidebarBadge(id, count)` as it changes; `0` and `null` clear it. The call is optional on
+older hosts, so guard it — the item still renders without the count:
+
+```ts
+client.setSidebarBadge?.("main", pending.length);
+```
+
 `PluginSurfaceProps` contains:
 
 | Field        | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                     |
@@ -1017,7 +1025,9 @@ return `undefined` until recognizable if the first text is insufficient to ident
 Each replacement may set an optional plugin-local `id`; otherwise Paseo uses its index within that
 source item's output.
 
-Renderers receive `agentId`, `item`, `timestamp`, `theme`, `host`, and `layout`. Paseo validates
+Renderers receive `agentId`, `item`, `timestamp`, `theme`, `host`, `layout`, and the optional
+`navigation` described under [surfaces](#surfaces-and-sidebar-items), so a row can open the agent or
+workspace it reports on. Paseo validates
 `item.data` with the registered schema before rendering. Keep transformers synchronous and
 deterministic. Paseo memoizes results by source-item reference and derives replacement identity from
 the source row, so updates to one streaming item do not remount its renderer. Use the exported
@@ -1447,8 +1457,14 @@ client.addCommandCenterItem({
 | `title`    | Yes      | Search result title.                           |
 | `icon`     | Yes      | Lucide icon name.                              |
 | `keywords` | No       | Additional Command Center search terms.        |
+| `shortcut` | No       | Default keybinding, e.g. `"Mod+Shift+Y"`.      |
 | `context`  | Yes      | `global`, `workspace`, or `agent`.             |
 | `onSelect` | Yes      | Client-side callback for the matching context. |
+
+A `shortcut` joins modifiers `Mod`, `Cmd`, `Ctrl`, `Alt` and `Shift` to one key with `+`, and
+separates the steps of a chord with a space. The keys fire only while the item is contributed, they
+never take a combination a built-in shortcut already uses, and the user can rebind them like any
+Paseo shortcut. Hosts that do not support plugin keybindings ignore the field.
 
 Global items appear on the installation's selected host. Workspace items appear only when that host has an active cached workspace. Agent items appear only when the focused workspace tab is an agent or an agent-context plugin panel whose cached record belongs to that workspace. Missing context removes the item rather than calling the plugin to discover it.
 
@@ -1459,6 +1475,7 @@ Every callback receives:
 | `context`                 | All                 | Matching discriminator.                                                                                         |
 | `paseo`                   | All                 | Selected host's existing `PaseoApi`.                                                                            |
 | `rpc(contract, input)`    | All                 | Typed call to this installation's daemon-side plugin handler.                                                   |
+| `notify`                  | All                 | Optional toast: `notify?.success(message)`, `notify?.info(message)`, `notify?.error(message)`.                  |
 | `openSurface(id)`         | All                 | Opens one of this plugin's registered global surfaces.                                                          |
 | `workspace`               | Workspace and agent | Synchronous workspace snapshot.                                                                                 |
 | `agent`                   | Agent               | Synchronous matching agent snapshot.                                                                            |
@@ -1496,6 +1513,8 @@ client.addSlashCommand({
 `args` is `"src"`; Paseo trims only the remainder's leading and trailing whitespace and leaves
 parsing to the plugin. Paseo owns the autocomplete row, input clearing, and the error toast. It
 does not wait for `onSubmit` or show a pending state; use a composer pill or panel for that.
+Confirm what the command did with `notify?.success("Captured")` — the composer is cleared by then,
+so a command that leaves no visible trace looks like it did nothing.
 
 Precedence is built-in client commands, plugin commands, then provider commands. A lower-precedence
 collision is omitted. Built-in aliases also reserve their names. The first plugin in stable catalog
@@ -1532,6 +1551,9 @@ review.update({ visible: false });
 review.update({ visible: true });
 review.remove();
 ```
+
+Custom icon and popover components receive the same `theme`, `host`, `layout`, and optional
+`navigation` props a surface gets, plus the button's workspace and agent context.
 
 Omit `label` for an icon-only header button. Menus and popovers show a chevron on wide layouts.
 Compact header buttons use icons without labels or chevrons. Paseo moves excess contributions
