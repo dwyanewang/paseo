@@ -1,14 +1,15 @@
 import type { ComponentType } from "react";
-import type { PluginHostProps } from "./contracts.js";
+import type { PluginNavigableHostProps } from "./contracts.js";
 
 export type PluginButtonContext =
   | { context: "workspace"; workspaceId: string }
   | { context: "agent"; workspaceId: string; agentId: string };
 
-export type PluginButtonIconProps = PluginHostProps &
+export type PluginButtonIconProps = PluginNavigableHostProps &
   PluginButtonContext & { size: number; color: string };
 
-export type PluginButtonContentProps = PluginHostProps & PluginButtonContext & { close(): void };
+export type PluginButtonContentProps = PluginNavigableHostProps &
+  PluginButtonContext & { close(): void };
 
 export type PluginButtonIcon = string | ComponentType<PluginButtonIconProps>;
 

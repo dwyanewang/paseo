@@ -2,7 +2,7 @@ import type {
   PluginButtonBehavior,
   PluginButtonIcon,
   PluginButtonMenuEntry,
-  PluginHostProps,
+  PluginNavigableHostProps,
 } from "@getpaseo/plugin/client";
 import type { PluginTheme } from "@getpaseo/plugin";
 import { useCallback, useMemo, useSyncExternalStore, type ReactNode } from "react";
@@ -32,6 +32,7 @@ import { useToast } from "@/contexts/toast-context";
 import { useHostRuntimeClient, useHosts } from "@/runtime/host-runtime";
 import type { Theme } from "@/styles/theme";
 import { createPluginClientStateSource } from "../client-state/source";
+import { buildPluginHostNavigation } from "../host-navigation";
 import { Icon } from "../icons";
 import {
   PluginEnvironmentProvider,
@@ -47,7 +48,7 @@ import { resolvePluginPlatform } from "../platform";
 
 interface ButtonView {
   entry: RegisteredPluginButton;
-  props: PluginHostProps & RegisteredPluginButton["context"];
+  props: PluginNavigableHostProps & RegisteredPluginButton["context"];
   environment: PluginEnvironment;
   toast: ReturnType<typeof useToast>;
 }
@@ -395,6 +396,7 @@ function createButtonView({
       ...entry.context,
       theme,
       host: { id: entry.installation.serverId, label: hostLabel },
+      navigation: buildPluginHostNavigation(entry.installation.serverId, entry.installation.id),
       layout: { compact, platform: resolvePluginPlatform() },
     },
   };
