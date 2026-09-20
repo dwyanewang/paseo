@@ -7,6 +7,7 @@ import type {
   PluginWorkspaceCommandContext,
 } from "@getpaseo/plugin/client";
 import type { PluginClientStateSource } from "@getpaseo/plugin/client/host";
+import { createPluginNotifier } from "./notify";
 import { resolvePluginPanelOpenLocation } from "./workspace-panels/locations";
 import { parsePluginOpenScreenInput } from "./surface-contribution";
 import type { InstalledPlugin } from "./types";
@@ -33,6 +34,7 @@ export function createPluginCapabilities(
   }
   return {
     paseo: plugin.paseo,
+    notify: createPluginNotifier(),
     rpc: (contract, input) => callPluginRpc(contract, plugin.invoke, input),
     openSettings(screenId) {
       if (!plugin.settingsScreens.some((screen) => screen.id === screenId))

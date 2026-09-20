@@ -10,25 +10,30 @@ import { getIsElectron } from "@/constants/platform";
 import { createWorkspaceBrowser } from "@/desktop/browser/store";
 import { createPluginHostNavigation } from "./host-navigation-model";
 
+/** Non-hook form. Header buttons and timeline items build one per plugin outside React. */
+export function buildPluginHostNavigation(
+  serverId: string,
+  pluginId: string,
+): NonNullable<PluginSurfaceProps["navigation"]> {
+  return {
+    ...createPluginHostNavigation(serverId, {
+      browserAvailable: getIsElectron(),
+      openAgent: navigateToAgent,
+      openWorkspace: navigateToWorkspace,
+      createBrowser: createWorkspaceBrowser,
+      resolveWorkspace: ({ serverId: targetServerId, workspaceId }) =>
+        resolveWorkspaceMapKeyByIdentity({
+          workspaces: useSessionStore.getState().sessions[targetServerId]?.workspaces,
+          workspaceId,
+        }),
+    }),
+    openAgentLaunch: (request) => openPluginAgentLaunch({ serverId, pluginId, request }),
+  };
+}
+
 export function usePluginHostNavigation(
   serverId: string,
   pluginId: string,
 ): NonNullable<PluginSurfaceProps["navigation"]> {
-  return useMemo(
-    () => ({
-      ...createPluginHostNavigation(serverId, {
-        browserAvailable: getIsElectron(),
-        openAgent: navigateToAgent,
-        openWorkspace: navigateToWorkspace,
-        createBrowser: createWorkspaceBrowser,
-        resolveWorkspace: ({ serverId: targetServerId, workspaceId }) =>
-          resolveWorkspaceMapKeyByIdentity({
-            workspaces: useSessionStore.getState().sessions[targetServerId]?.workspaces,
-            workspaceId,
-          }),
-      }),
-      openAgentLaunch: (request) => openPluginAgentLaunch({ serverId, pluginId, request }),
-    }),
-    [pluginId, serverId],
-  );
+  return useMemo(() => buildPluginHostNavigation(serverId, pluginId), [pluginId, serverId]);
 }
