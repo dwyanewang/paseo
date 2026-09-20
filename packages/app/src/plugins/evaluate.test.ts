@@ -197,6 +197,46 @@ describe("evaluatePluginClientBundle", () => {
     ]);
   });
 
+  it("normalizes sidebar badges and republishes only when one changes", () => {
+    let changes = 0;
+    const plugin = runPluginClientBundle(
+      "badges",
+      bundle(`
+        function Surface() { return null; }
+        plugin.addSurface("main", Surface);
+        plugin.addSidebarItem({ id: "main", title: "Todo", icon: "Blocks", surface: "main", badge: 2.7 });
+        globalThis.__pluginBadgeClient = plugin;
+      `),
+      runtime,
+      () => {
+        changes += 1;
+      },
+    );
+    const client = Reflect.get(globalThis, "__pluginBadgeClient") as {
+      setSidebarBadge(id: string, badge: number | null): void;
+    };
+
+    expect(plugin.sidebarItems[0].badge).toBe(2);
+
+    client.setSidebarBadge("main", 5);
+    expect(plugin.sidebarItems[0].badge).toBe(5);
+    expect(changes).toBe(1);
+
+    client.setSidebarBadge("main", 5);
+    expect(changes).toBe(1);
+
+    client.setSidebarBadge("main", 0);
+    expect(plugin.sidebarItems[0].badge).toBeUndefined();
+    expect(changes).toBe(2);
+
+    client.setSidebarBadge("main", null);
+    expect(changes).toBe(2);
+
+    expect(() => client.setSidebarBadge("missing", 1)).toThrow(
+      "Sidebar item is unavailable: missing",
+    );
+  });
+
   it("collects a declarative attachment source", () => {
     const plugin = evaluatePluginClientBundle(
       "linear",

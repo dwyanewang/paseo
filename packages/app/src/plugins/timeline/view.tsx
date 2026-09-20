@@ -9,6 +9,7 @@ import { useHostRuntimeClient, useHosts } from "@/runtime/host-runtime";
 import type { Theme } from "@/styles/theme";
 import type { PluginTimelineStreamItem } from "@/types/stream";
 import { createPluginClientStateSource } from "../client-state/source";
+import { usePluginHostNavigation } from "../host-navigation";
 import { useInstalledPlugin } from "../registry";
 import { PluginRuntimeBoundary } from "../runtime-boundary";
 import { SurfaceErrorBoundary } from "../surface-error-boundary";
@@ -60,6 +61,7 @@ function PluginTimelineItemBody({
   const parsed = parseRendererData(renderer, item.data);
   const client = useHostRuntimeClient(serverId);
   const compact = useIsCompactFormFactor();
+  const navigation = usePluginHostNavigation(serverId, item.pluginId);
   const hosts = useHosts();
   const hostLabel = hosts.find((host) => host.serverId === serverId)?.label ?? serverId;
   const host = useMemo(() => ({ id: serverId, label: hostLabel }), [hostLabel, serverId]);
@@ -76,6 +78,7 @@ function PluginTimelineItemBody({
     theme,
     host,
     layout,
+    navigation,
     timestamp: item.timestamp,
     item: {
       type: "plugin",

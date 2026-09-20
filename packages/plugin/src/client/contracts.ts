@@ -31,7 +31,7 @@ export interface PluginHostProps {
   };
 }
 
-interface PluginNavigableHostProps extends PluginHostProps {
+export interface PluginNavigableHostProps extends PluginHostProps {
   /** Client-owned navigation. Undefined on older hosts; hide dependent affordances when absent. */
   readonly navigation?: {
     /** Present only on Electron. The browser runs locally; serverId selects workspace ownership. */
@@ -152,6 +152,8 @@ export interface PluginClientContext extends PluginCommandCapabilities {
   addSettingsScreen(contribution: PluginSettingsScreenContribution): PluginCleanup;
   addSurface(id: string, Component: ComponentType<PluginSurfaceProps>): PluginCleanup;
   addSidebarItem(contribution: PluginSidebarContribution): PluginCleanup;
+  /** Set a sidebar item's count. Undefined on older hosts; the item still renders without it. */
+  setSidebarBadge?(id: string, badge: number | null): void;
   addWorkspacePanel(contribution: PluginWorkspacePanelContribution): PluginCleanup;
   addCommandCenterItem(contribution: PluginCommandCenterItemContribution): PluginCleanup;
   addSlashCommand(contribution: PluginClientSlashCommandContribution): PluginCleanup;
@@ -198,6 +200,8 @@ export interface PluginSidebarContribution {
   title: string;
   icon: string;
   surface: string;
+  /** Count beside the item. Zero and undefined render nothing. */
+  badge?: number;
 }
 
 export type PluginTimelineTransformerContribution<
@@ -215,7 +219,7 @@ export type PluginTimelineTransformerContribution<
     }
   : never;
 
-export interface PluginTimelineItemProps<Data = unknown> extends PluginHostProps {
+export interface PluginTimelineItemProps<Data = unknown> extends PluginNavigableHostProps {
   agentId: string;
   item: {
     type: "plugin";
@@ -233,8 +237,17 @@ export interface PluginTimelineRendererContribution<Schema extends ZodType = Zod
   Component: ComponentType<PluginTimelineItemProps<ZodOutput<Schema>>>;
 }
 
+export interface PluginNotifier {
+  /** Confirms an action the user just took. */
+  success(message: string): void;
+  info(message: string): void;
+  error(message: string): void;
+}
+
 export interface PluginCommandCapabilities {
   paseo: PaseoApi;
+  /** Transient app-level feedback. Undefined on older hosts; skip the message when absent. */
+  notify?: PluginNotifier;
   rpc<InputSchema extends ZodType, OutputSchema extends ZodType>(
     contract: PluginRpcContract<InputSchema, OutputSchema>,
     input: ZodInput<InputSchema>,
@@ -265,6 +278,12 @@ interface PluginCommandCenterItemBase {
   title: string;
   icon: string;
   keywords?: readonly string[];
+  /**
+   * Default keybinding, in Paseo's combo grammar: modifiers `Mod`, `Cmd`, `Ctrl`, `Alt`, `Shift`
+   * joined to one key with `+` ("Mod+Shift+T"), chords separated by a space. Ignored by hosts that
+   * do not support it, and by any host where a built-in shortcut already claims the keys.
+   */
+  shortcut?: string;
 }
 
 export type PluginCommandCenterItemContribution =
