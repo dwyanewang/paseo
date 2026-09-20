@@ -1,5 +1,6 @@
 export type {
   PluginHostProps,
+  PluginNavigableHostProps,
   PluginAgentLaunchRequest,
   PluginAgentLaunchEvent,
   PluginAgentLaunchOpenResult,
@@ -29,6 +30,7 @@ export type {
   PluginTimelineItemProps,
   PluginTimelineRendererContribution,
   PluginCommandCapabilities,
+  PluginNotifier,
   PluginGlobalCommandContext,
   PluginWorkspaceCommandContext,
   PluginAgentCommandContext,
