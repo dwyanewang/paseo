@@ -81,6 +81,13 @@ function isComponentType(value: unknown): boolean {
   );
 }
 
+/** Badges count things, so anything that is not a positive whole number means "no badge". */
+function normalizeSidebarBadge(badge: number | null | undefined): number | undefined {
+  if (typeof badge !== "number" || !Number.isFinite(badge)) return undefined;
+  const count = Math.floor(badge);
+  return count > 0 ? count : undefined;
+}
+
 function requireId(value: string, label: string): string {
   const id = value.trim();
   if (!CONTRIBUTION_ID.test(id)) throw new Error(`Invalid ${label}: ${value}`);
@@ -390,6 +397,7 @@ export function runPluginClientBundle(
         title: contribution.title.trim(),
         icon: contribution.icon.trim(),
         surface: requireId(contribution.surface, "sidebar surface id"),
+        badge: normalizeSidebarBadge(contribution.badge),
       };
       // Shares the header's ids: the sidebar orders both kinds of item under one key.
       const ids = sidebarItemIds.header;
@@ -397,6 +405,19 @@ export function runPluginClientBundle(
       if (!legacy.title) throw new Error(`Sidebar item ${normalizedId} has no title`);
       ids.add(normalizedId);
       return register(collector.legacySidebarItems, legacy, () => ids.delete(normalizedId));
+    },
+    setSidebarBadge(itemId: string, badge: number | null) {
+      if (stopped) return;
+      const item = collector.legacySidebarItems.find(
+        (candidate) => candidate.id === itemId.trim(),
+      );
+      if (!item) throw new Error(`Sidebar item is unavailable: ${itemId}`);
+      const next = normalizeSidebarBadge(badge);
+      if (item.badge === next) return;
+      // Mutated in place: `register` removes contributions by identity, so the array entry has to
+      // stay the same object. The registry republishes a fresh snapshot, which is what re-renders.
+      item.badge = next;
+      notifyChange();
     },
     addWorkspacePanel(contribution: PluginWorkspacePanelContribution) {
       const normalizedId = requireId(contribution.id, "workspace panel id");
