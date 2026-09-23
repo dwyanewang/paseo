@@ -4,6 +4,7 @@ import type { ProviderOptions, ToolPolicy } from "@getpaseo/protocol/agent-types
 import type {
   AgentClient,
   AgentCreateConfigUnattendedInput,
+  AgentResumeSessionOptions,
   AgentMode,
   AgentModelDefinition,
   AgentPersistenceHandle,
@@ -512,7 +513,7 @@ function wrapClientProvider(
           options,
         ),
       ),
-    resumeSession: async (handle, overrides, launchContext) =>
+    resumeSession: async (handle, overrides, launchContext, options?: AgentResumeSessionOptions) =>
       wrapSessionProvider(
         provider,
         await inner.resumeSession(
@@ -526,6 +527,7 @@ function wrapClientProvider(
             providerOptions: mergeProviderOptions(providerOptions, overrides?.providerOptions),
           },
           launchContext,
+          options,
         ),
       ),
     readSessionHistory: readSessionHistory
