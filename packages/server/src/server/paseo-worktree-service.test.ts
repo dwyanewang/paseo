@@ -1118,6 +1118,7 @@ function createDeps(options?: {
     projectRegistry,
     workspaceRegistry,
     workspaceGitService,
+    isDirectory: async () => true,
     logger: createTestLogger(),
   });
 
