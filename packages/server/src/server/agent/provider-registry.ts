@@ -5,6 +5,7 @@ import { z } from "zod";
 import type {
   AgentClient,
   AgentCreateConfigUnattendedInput,
+  AgentResumeSessionOptions,
   AgentMode,
   AgentModelDefinition,
   AgentPersistenceHandle,
@@ -503,7 +504,7 @@ function wrapClientProvider(
           launchContext,
         ),
       ),
-    resumeSession: async (handle, overrides, launchContext) =>
+    resumeSession: async (handle, overrides, launchContext, options?: AgentResumeSessionOptions) =>
       wrapSessionProvider(
         provider,
         await inner.resumeSession(
@@ -518,6 +519,7 @@ function wrapClientProvider(
               }
             : undefined,
           launchContext,
+          options,
         ),
       ),
     readSessionHistory: readSessionHistory
