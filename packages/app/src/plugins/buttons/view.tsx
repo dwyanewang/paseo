@@ -54,6 +54,8 @@ interface ButtonView {
 }
 
 const ROOT_PATH: readonly string[] = [];
+/** Room kept between a sized popover and the window edges. */
+const POPOVER_WINDOW_MARGIN = 16;
 
 const pluginThemeMapping = (theme: Theme) => ({ theme: toPluginTheme(theme) });
 const mutedIconMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
@@ -244,6 +246,17 @@ function buttonPages(
   });
 }
 
+/** A popover may drop the phone sheet's title and ask for an exact width on wide layouts. */
+function useSurfaceFrame(behavior: PluginButtonBehavior, title: string) {
+  const { width: windowWidth } = useWindowDimensions();
+  const popover = behavior.kind === "popover" ? behavior : null;
+  const sheetTitle = popover?.sheetTitle === false ? undefined : title;
+  if (!popover?.width) return { sheetTitle, minWidth: 280, maxWidth: 420 };
+  // Exact, but never wider than the window it opens in.
+  const width = Math.min(popover.width, windowWidth - POPOVER_WINDOW_MARGIN);
+  return { sheetTitle, minWidth: width, maxWidth: width };
+}
+
 function ButtonControl({ view }: { view: ButtonView }) {
   const { entry, props } = view;
   const { button } = entry;
@@ -319,6 +332,8 @@ function ButtonControl({ view }: { view: ButtonView }) {
     </Pressable>
   );
   const pages = useMemo(() => buttonPages(view, button.behavior), [view, button.behavior]);
+  const frame = useSurfaceFrame(button.behavior, button.title);
+  const frame = useSurfaceFrame(button.behavior, button.title);
   return (
     <MenuRoot compactMode="sheet" open={entry.open} onOpenChange={setOpen}>
       <Tooltip enabledOnMobile={false}>
@@ -329,10 +344,12 @@ function ButtonControl({ view }: { view: ButtonView }) {
       </Tooltip>
       {expanded ? (
         <PluginPopoverSurface
-          sheetTitle={button.title}
+          sheetTitle={frame.sheetTitle}
           side={composer ? "top" : "bottom"}
           align={composer ? "start" : "end"}
           offset={composer ? 12 : 4}
+          minWidth={frame.minWidth}
+          maxWidth={frame.maxWidth}
           pages={pages}
         >
           <ButtonSurfaceBody view={view} behavior={button.behavior} path={ROOT_PATH} />
