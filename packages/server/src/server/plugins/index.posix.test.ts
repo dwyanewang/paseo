@@ -498,7 +498,7 @@ describe("PluginService", () => {
 
     expect(forgeRegistry.has("acme")).toBe(false);
     expect(service.catalog()).toEqual([]);
-    expect(service.listPlugins()).toEqual([
+    expect(await service.listPlugins()).toMatchObject([
       { id: "forge", path: "/plugins/forge", enabled: false, status: "disabled" },
     ]);
     expect(snapshots).toEqual([[]]);
@@ -529,7 +529,7 @@ describe("PluginService", () => {
 
     expect(forgeRegistry.has("acme")).toBe(false);
     expect(service.catalog()).toEqual([]);
-    expect(service.listPlugins()).toEqual([]);
+    expect(await service.listPlugins()).toEqual([]);
     expect(snapshots).toEqual([[]]);
 
     paused.releaseStop();
@@ -564,7 +564,7 @@ describe("PluginService", () => {
     await service.start();
 
     expect(fake.running.has("forge")).toBe(false);
-    expect(service.listPlugins()).toEqual([
+    expect(await service.listPlugins()).toEqual([
       expect.objectContaining({
         id: "forge",
         status: "failed",
