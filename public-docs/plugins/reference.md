@@ -1001,6 +1001,30 @@ API is needed for OS Paste. Avoid DOM clipboard code in native plugins and the d
 The runnable [modal UI example](https://github.com/getpaseo/paseo/tree/main/plugin-examples/modal-ui)
 contains a padded form, full-width rows, a virtualized list, horizontal tabs, and a copy/paste input.
 
+### Pick images
+
+`pickImages(options?)` opens the photo library on iOS and Android and a file chooser on the web and
+desktop. It resolves the chosen images, or `[]` when the user cancels:
+
+```tsx
+import { pickImages } from "@getpaseo/plugin/client/react-native";
+
+const images = await pickImages({ multiple: true, limit: 4 });
+for (const image of images) await save(image.base64, image.mimeType);
+```
+
+| Option     | Type      | Default | Behavior                                      |
+| ---------- | --------- | ------- | --------------------------------------------- |
+| `multiple` | `boolean` | `false` | Allows choosing more than one image.          |
+| `limit`    | `number`  | —       | Most images one pick returns when `multiple`. |
+
+Each `PickedImage` has `uri` (a local file on iOS and Android, a `data:` URI on the web), `base64`
+bytes without a `data:` prefix, `mimeType`, `width`, `height`, `byteLength`, and `fileName` when the
+platform reports one. Plugin code cannot read a local file, so the bytes always come with it.
+Validate `mimeType` and `byteLength` yourself; the host does not resize or re-encode. On iOS and
+Android it rejects when the user has denied photo library access. Hosts that predate it do not
+export `pickImages`; check `typeof pickImages` first.
+
 ### Toasts
 
 `useToast()` returns two methods:

@@ -71,6 +71,27 @@ export interface OverlayProps {
   children: ReactNode;
 }
 
+export interface PickImagesOptions {
+  /** Default false. */
+  multiple?: boolean;
+  /** Most images one pick returns when `multiple` is true. */
+  limit?: number;
+}
+
+export interface PickedImage {
+  /** Displayable by `Image`: a local file on iOS and Android, a `data:` URI on the web. */
+  uri: string;
+  /** Base64-encoded bytes, without a `data:` prefix. */
+  base64: string;
+  mimeType: string;
+  /** Undefined when the platform does not report one. */
+  fileName?: string;
+  width: number;
+  height: number;
+  /** Decoded byte count of `base64`. */
+  byteLength: number;
+}
+
 export declare const Icon: ComponentType<PluginIconProps>;
 /**
  * A host-managed full-window layer. The host owns focus, Escape, Android Back, and stacking, so
@@ -91,6 +112,11 @@ export declare const ScrollView: ForwardRefExoticComponent<
 export declare function FlatList<Item>(
   props: FlatListProps<Item> & { ref?: Ref<NativeFlatList<Item>> },
 ): ReactElement;
+/**
+ * Opens the platform image picker: the photo library on iOS and Android, a file chooser on the
+ * web. Resolves `[]` when the user cancels. Undefined on older hosts.
+ */
+export declare function pickImages(options?: PickImagesOptions): Promise<PickedImage[]>;
 /** Copies text to this client's clipboard. Rejects when copying is unavailable or denied. */
 export declare function copyText(text: string): Promise<void>;
 
