@@ -1,6 +1,7 @@
 export type {
   PluginHostProps,
   PluginNavigableHostProps,
+  PluginSafeAreaInsets,
   PluginOverlayProps,
   PluginOverlayHandle,
   PluginAgentLaunchRequest,

@@ -33,6 +33,7 @@ import { useHostRuntimeClient, useHosts } from "@/runtime/host-runtime";
 import type { Theme } from "@/styles/theme";
 import { createPluginClientStateSource } from "../client-state/source";
 import { buildPluginHostNavigation } from "../host-navigation";
+import { usePluginLayout } from "../layout";
 import { Icon } from "../icons";
 import {
   PluginEnvironmentProvider,
@@ -44,7 +45,6 @@ import { SurfaceErrorBoundary } from "../surface-error-boundary";
 import { toPluginTheme } from "../theme";
 import { buttonMatches, type RegisteredPluginButton } from "./model";
 import { pluginButtonStore } from "./store";
-import { resolvePluginPlatform } from "../platform";
 
 interface ButtonView {
   entry: RegisteredPluginButton;
@@ -73,6 +73,8 @@ function headerButtonStyle(compact: boolean, state: IconButtonChromeState, disab
   ];
 }
 
+// These providers live inside the surface content as well as around its trigger. Native sheets
+// teleport their children, so providers around MenuRoot alone cannot reach the plugin body.
 function ButtonEnvironment({ view, children }: { view: ButtonView; children: ReactNode }) {
   return (
     <PluginEnvironmentProvider environment={view.environment}>{children}</PluginEnvironmentProvider>
@@ -333,7 +335,6 @@ function ButtonControl({ view }: { view: ButtonView }) {
   );
   const pages = useMemo(() => buttonPages(view, button.behavior), [view, button.behavior]);
   const frame = useSurfaceFrame(button.behavior, button.title);
-  const frame = useSurfaceFrame(button.behavior, button.title);
   return (
     <MenuRoot compactMode="sheet" open={entry.open} onOpenChange={setOpen}>
       <Tooltip enabledOnMobile={false}>
@@ -389,14 +390,14 @@ function createButtonView({
   entry,
   client,
   toast,
-  compact,
+  layout,
   hostLabel,
   theme,
 }: {
   entry: RegisteredPluginButton;
   client: ReturnType<typeof useHostRuntimeClient>;
   toast: ReturnType<typeof useToast>;
-  compact: boolean;
+  layout: PluginNavigableHostProps["layout"];
   hostLabel: string;
   theme: PluginTheme;
 }): ButtonView | null {
@@ -414,7 +415,7 @@ function createButtonView({
       theme,
       host: { id: entry.installation.serverId, label: hostLabel },
       navigation: buildPluginHostNavigation(entry.installation.serverId, entry.installation.id),
-      layout: { compact, platform: resolvePluginPlatform() },
+      layout,
     },
   };
 }
@@ -432,9 +433,10 @@ function PluginButtonHost({
 }) {
   const client = useHostRuntimeClient(entry.installation.serverId);
   const toast = useToast();
+  const layout = usePluginLayout(compact);
   const view = useMemo(
-    () => createButtonView({ entry, client, toast, compact, hostLabel, theme }),
-    [entry, client, toast, compact, hostLabel, theme],
+    () => createButtonView({ entry, client, toast, layout, hostLabel, theme }),
+    [entry, client, toast, layout, hostLabel, theme],
   );
   const renderError = useCallback(
     (error: string) => <BrokenButton title={entry.button.title} error={error} compact={compact} />,
@@ -486,11 +488,12 @@ function OverflowPages({
   // The header belongs to one host, but each button keeps its installation's query cache and RPCs.
   const client = useHostRuntimeClient(entries[0].installation.serverId);
   const toast = useToast();
+  const layout = usePluginLayout(compact);
   const menuContent = useMemo(() => {
     const pages: MenuPageDefinition[] = [];
     const rows: ReactNode[] = [];
     for (const entry of entries) {
-      const view = createButtonView({ entry, client, toast, compact, hostLabel, theme });
+      const view = createButtonView({ entry, client, toast, layout, hostLabel, theme });
       if (!view) continue;
       rows.push(
         <SurfaceErrorBoundary
@@ -517,7 +520,7 @@ function OverflowPages({
       );
     }
     return { pages, rows };
-  }, [entries, client, toast, theme, hostLabel, compact]);
+  }, [entries, client, toast, theme, hostLabel, layout]);
   const { t } = useTranslation();
   return (
     <PluginPopoverSurface
