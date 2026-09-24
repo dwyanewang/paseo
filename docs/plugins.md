@@ -190,6 +190,8 @@ set; an unknown name renders nothing so it cannot break the plugin surface.
 Its controlled modal keeps presentation metadata on `<Modal title="…" icon={…}>` and body UI in
 `<Modal.Content>`. Body layout, sheet-aware scrolling, overlays, and clipboard actions follow the
 [host UI contract](../public-docs/plugins/reference.md#host-ui).
+Every `layout` comes from `usePluginLayout` (`packages/app/src/plugins/layout.ts`), which is where
+the safe-area insets join it.
 Plugin UI runs on desktop and mobile across multiple themes: color every `Text` from
 `theme.colors.foreground` or `theme.colors.foregroundMuted`, and size layout from `layout.compact`.
 See `public-docs/plugins/reference.md`.

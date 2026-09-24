@@ -726,7 +726,7 @@ client.setSidebarBadge?.("main", pending.length);
 | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `theme`      | Typed `PluginTheme` color tokens for the active Paseo theme.                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | `host`       | Selected host `id` and display `label`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| `layout`     | `compact` and the `ios`, `android`, or `web` platform.                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `layout`     | `compact`, the `ios`, `android`, or `web` platform, and optional safe-area `insets` (`top`, `bottom`, `left`, `right`, in points).                                                                                                                                                                                                                                                                                                                                                                        |
 | `navigation` | Optional client navigation. `openAgent({ agentId, serverId? })` and `openWorkspace({ workspaceId, serverId? })` open targets on `serverId`, or on the selected host when omitted. `openBrowser({ url, workspaceId, serverId? })` is available only on Electron; see [links and browsers](#external-links-and-workspace-browsers). `openAgentLaunch` opens or restores a Host-owned native launch journal and composer flow. `openOverlay(Component)` mounts an [overlay](#overlay) over the current page. |
 
 Paseo owns the route, header, close action, host picker, error boundary, and query client. The plugin owns the surface body.
@@ -1148,10 +1148,13 @@ Recreate styles when `theme` or `layout.compact` changes.
 | `theme.colors.statusDanger`     | Failure copy               | Error messages and destructive text |
 | `layout.compact`                | Padding and stacking       | `true` on mobile and narrow windows |
 | `layout.platform`               | Platform-specific behavior | `ios`, `android`, or `web`          |
+| `layout.insets`                 | Full-window UI             | Status bar, notch, home indicator   |
 
 Do not hardcode `#000`, `#fff`, or React Native's default text color. Primary copy uses `foreground`. Labels use `foregroundMuted`. Tighten padding when `layout.compact` is true.
 
 Workspace and agent panels receive the same `theme`, `layout`, and optional `navigation` fields.
+`layout.insets` is optional on older hosts; keep a fallback for a box that starts under the status
+bar.
 
 ## Contribute a theme
 
