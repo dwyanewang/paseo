@@ -1,8 +1,6 @@
 import type { PluginTheme } from "@getpaseo/plugin";
 import { PluginClientStateProvider } from "@getpaseo/plugin/client/host";
-import type { PluginHostProps } from "@getpaseo/plugin/client";
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
-import { Platform } from "react-native";
 import { withUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useToast } from "@/contexts/toast-context";
@@ -10,6 +8,7 @@ import { useHostRuntimeClient, useHosts } from "@/runtime/host-runtime";
 import type { Theme } from "@/styles/theme";
 import { createPluginClientStateSource } from "../client-state/source";
 import { usePluginHostNavigation } from "../host-navigation";
+import { usePluginLayout } from "../layout";
 import { useInstalledPlugin } from "../registry";
 import { PluginRuntimeBoundary } from "../runtime-boundary";
 import { SurfaceErrorBoundary } from "../surface-error-boundary";
@@ -17,12 +16,6 @@ import { toPluginTheme } from "../theme";
 import { pluginOverlayStore, type PluginOverlayEntry } from "./store";
 
 const pluginThemeMapping = (theme: Theme) => ({ theme: toPluginTheme(theme) });
-
-function resolvePlatform(): PluginHostProps["layout"]["platform"] {
-  if (Platform.OS === "ios") return "ios";
-  if (Platform.OS === "android") return "android";
-  return "web";
-}
 
 /** A failed overlay has no surface to explain itself in, so it closes and says why. */
 function OverlayFailed({ error, close }: { error: string; close: () => void }) {
@@ -45,8 +38,7 @@ function DetachedOverlay({ entry, theme }: { entry: PluginOverlayEntry; theme: P
   const hosts = useHosts();
   const hostLabel = hosts.find((host) => host.serverId === serverId)?.label ?? serverId;
   const host = useMemo(() => ({ id: serverId, label: hostLabel }), [hostLabel, serverId]);
-  const compact = useIsCompactFormFactor();
-  const layout = useMemo(() => ({ compact, platform: resolvePlatform() }), [compact]);
+  const layout = usePluginLayout(useIsCompactFormFactor());
   const navigation = usePluginHostNavigation(serverId, pluginId);
   const state = useMemo(() => createPluginClientStateSource(serverId), [serverId]);
   const renderError = useCallback(

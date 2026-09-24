@@ -39,6 +39,7 @@ import type { Theme } from "@/styles/theme";
 import { createPluginClientStateSource } from "../client-state/source";
 import { pluginIconComponent } from "../icons";
 import { buildPluginHostNavigation } from "../host-navigation";
+import { usePluginLayout } from "../layout";
 import {
   PluginEnvironmentProvider,
   PluginPopoverContent,
@@ -49,7 +50,6 @@ import { SurfaceErrorBoundary } from "../surface-error-boundary";
 import { toPluginTheme } from "../theme";
 import { buttonMatches, type RegisteredPluginButton } from "./model";
 import { pluginButtonStore } from "./store";
-import { resolvePluginPlatform } from "../platform";
 
 interface ButtonView {
   entry: RegisteredPluginButton;
@@ -78,6 +78,8 @@ function headerButtonStyle(compact: boolean, state: IconButtonChromeState, disab
   ];
 }
 
+// These providers live inside the surface content as well as around its trigger. Native sheets
+// teleport their children, so providers around MenuRoot alone cannot reach the plugin body.
 function ButtonEnvironment({ view, children }: { view: ButtonView; children: ReactNode }) {
   return (
     <PluginEnvironmentProvider environment={view.environment}>{children}</PluginEnvironmentProvider>
@@ -392,14 +394,14 @@ function createButtonView({
   entry,
   client,
   toast,
-  compact,
+  layout,
   hostLabel,
   theme,
 }: {
   entry: RegisteredPluginButton;
   client: ReturnType<typeof useHostRuntimeClient>;
   toast: ReturnType<typeof useToast>;
-  compact: boolean;
+  layout: PluginNavigableHostProps["layout"];
   hostLabel: string;
   theme: PluginTheme;
 }): ButtonView | null {
@@ -417,7 +419,7 @@ function createButtonView({
       theme,
       host: { id: entry.installation.serverId, label: hostLabel },
       navigation: buildPluginHostNavigation(entry.installation.serverId, entry.installation.id),
-      layout: { compact, platform: resolvePluginPlatform() },
+      layout,
     },
   };
 }
@@ -435,9 +437,10 @@ function PluginButtonHost({
 }) {
   const client = useHostRuntimeClient(entry.installation.serverId);
   const toast = useToast();
+  const layout = usePluginLayout(compact);
   const view = useMemo(
-    () => createButtonView({ entry, client, toast, compact, hostLabel, theme }),
-    [entry, client, toast, compact, hostLabel, theme],
+    () => createButtonView({ entry, client, toast, layout, hostLabel, theme }),
+    [entry, client, toast, layout, hostLabel, theme],
   );
   const renderError = useCallback(
     (error: string) => <BrokenButton title={entry.button.title} error={error} compact={compact} />,
