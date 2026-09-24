@@ -28,7 +28,19 @@ export interface PluginHostProps {
   layout: {
     compact: boolean;
     platform: "ios" | "android" | "web";
+    /**
+     * Safe-area insets of the window, in points: the status bar, notch, and home indicator.
+     * Undefined on older hosts; fall back to your own constant when absent.
+     */
+    insets?: PluginSafeAreaInsets;
   };
+}
+
+export interface PluginSafeAreaInsets {
+  readonly top: number;
+  readonly bottom: number;
+  readonly left: number;
+  readonly right: number;
 }
 
 export interface PluginNavigableHostProps extends PluginHostProps {
