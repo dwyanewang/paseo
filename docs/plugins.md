@@ -432,6 +432,9 @@ Mounted surfaces and command invocations have shorter API lifetimes.
 Keep the client entry synchronous: return its cleanup function immediately and start asynchronous
 work inside it. See the maintained [composer pill example](../plugin-examples/local-plugin/client/main.tsx).
 
+A popover's `width` and `sheetTitle: false` apply to the button's own `MenuSurface` only. Overflow
+and menu pages share their parent surface's frame, so they keep the page title and width.
+
 ## Overlays
 
 `Overlay` (`packages/app/src/plugins/react-native/overlay*.tsx`) is the plugin's own full-window

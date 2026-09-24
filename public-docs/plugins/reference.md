@@ -1669,8 +1669,18 @@ These contracts are exported from `@getpaseo/plugin/client`.
 type PluginButtonBehavior =
   | { kind: "action"; onPress(): void | Promise<void> }
   | { kind: "menu"; items: readonly PluginButtonMenuEntry[] }
-  | { kind: "popover"; Content: React.ComponentType<PluginButtonContentProps> };
+  | {
+      kind: "popover";
+      Content: React.ComponentType<PluginButtonContentProps>;
+      sheetTitle?: false;
+      width?: number;
+    };
 ```
+
+A popover's `width` sets its exact width in points on wide layouts, capped by the window. Compact
+layouts always use a full-width sheet. `sheetTitle: false` drops the title row that sheet shows
+above `Content`, for content that labels itself. Hosts that predate these fields ignore them. Both
+apply to a button's own popover, not to a popover page inside a menu.
 
 An action runs on the client. Paseo marks the button busy until its promise settles, blocks repeated
 presses, and shows failures in a toast. A failed action can be retried. Use the client's `paseo` for
