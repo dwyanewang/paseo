@@ -9,6 +9,8 @@ export type {
   PluginFilePanelContribution,
   PluginFilePanelProps,
   PluginNavigableHostProps,
+  PluginOverlayProps,
+  PluginOverlayHandle,
   PluginAgentLaunchRequest,
   PluginAgentLaunchEvent,
   PluginAgentLaunchOpenResult,

@@ -51,6 +51,11 @@ export interface PluginNavigableHostProps extends PluginHostProps {
     readonly openAgentLaunch?: (
       request: PluginAgentLaunchRequest,
     ) => Promise<PluginAgentLaunchOpenResult>;
+    /**
+     * Mounts `Component` outside the caller, over the current page, so it outlives a closing
+     * popover or panel. Undefined on older hosts.
+     */
+    readonly openOverlay?: (Component: ComponentType<PluginOverlayProps>) => PluginOverlayHandle;
   };
 }
 
@@ -65,6 +70,20 @@ export interface PluginOpenScreenInput {
 export interface PluginScreenLocation {
   screenId: string;
   params: PluginScreenParams;
+}
+
+/**
+ * Props of a component opened with `openOverlay`. It renders an `Overlay` from
+ * `@getpaseo/plugin/client/react-native`; the host mounts nothing else.
+ */
+export interface PluginOverlayProps extends PluginNavigableHostProps {
+  /** Unmounts the component. Idempotent. */
+  close(): void;
+}
+
+export interface PluginOverlayHandle {
+  /** Unmounts the component. Idempotent. */
+  close(): void;
 }
 export interface PluginAgentLaunchRequest {
   launchId: string;
@@ -378,6 +397,11 @@ export interface PluginCommandCapabilities {
   /** @deprecated Use `openScreen`. */
   openSurface(id: string): void;
   openSettings(id: string): void;
+  /**
+   * Mounts `Component` over the page the user is on, without navigating. Undefined on older
+   * hosts. See `PluginOverlayProps`.
+   */
+  openOverlay?(Component: ComponentType<PluginOverlayProps>): PluginOverlayHandle;
 }
 
 export interface PluginGlobalCommandContext extends PluginCommandCapabilities {
