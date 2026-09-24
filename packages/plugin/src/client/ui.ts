@@ -210,3 +210,30 @@ export interface OverlayProps {
  * it without a focus fight. Undefined on older hosts.
  */
 export declare const Overlay: ComponentType<OverlayProps>;
+
+export interface PickImagesOptions {
+  /** Default false. */
+  multiple?: boolean;
+  /** Most images one pick returns when `multiple` is true. */
+  limit?: number;
+}
+
+export interface PickedImage {
+  /** Displayable by `Image`: a local file on iOS and Android, a `data:` URI on the web. */
+  uri: string;
+  /** Base64-encoded bytes, without a `data:` prefix. */
+  base64: string;
+  mimeType: string;
+  /** Undefined when the platform does not report one. */
+  fileName?: string;
+  width: number;
+  height: number;
+  /** Decoded byte count of `base64`. */
+  byteLength: number;
+}
+
+/**
+ * Opens the platform image picker: the photo library on iOS and Android, a file chooser on the
+ * web. Resolves `[]` when the user cancels. Undefined on older hosts.
+ */
+export declare function pickImages(options?: PickImagesOptions): Promise<PickedImage[]>;

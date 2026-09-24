@@ -30,3 +30,5 @@ export { StreamedText } from "./streamed-text";
 export { Markdown } from "./markdown";
 
 export { Overlay } from "./overlay";
+
+export { pickImages } from "./image-picker";
