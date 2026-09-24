@@ -9,6 +9,7 @@ import { openPluginAgentLaunch } from "./agent-launch";
 import { getIsElectron } from "@/constants/platform";
 import { createWorkspaceBrowser } from "@/desktop/browser/store";
 import { createPluginHostNavigation } from "./host-navigation-model";
+import { pluginOverlayStore } from "./overlays/store";
 
 /** Non-hook form. Header buttons and timeline items build one per plugin outside React. */
 export function buildPluginHostNavigation(
@@ -28,6 +29,7 @@ export function buildPluginHostNavigation(
         }),
     }),
     openAgentLaunch: (request) => openPluginAgentLaunch({ serverId, pluginId, request }),
+    openOverlay: (Component) => pluginOverlayStore.open({ serverId, pluginId, Component }),
   };
 }
 
