@@ -53,7 +53,31 @@ export interface ToastApi {
   error(message: string): void;
 }
 
+export interface OverlayProps {
+  open: boolean;
+  /**
+   * Escape, Android Back, and a press outside the content ask to close. Keep `open` true to
+   * refuse, or close a menu inside the overlay first.
+   */
+  onClose(): void;
+  /** `"dim"` (default) darkens the page; `"clear"` leaves it as it is, for anchored menus. */
+  backdrop?: "dim" | "clear";
+  /** Announced by screen readers when the overlay takes focus. */
+  accessibilityLabel?: string;
+  /**
+   * Laid out over the whole window, above every host surface. Position boxes and menus
+   * absolutely; the empty area passes presses through to the backdrop.
+   */
+  children: ReactNode;
+}
+
 export declare const Icon: ComponentType<PluginIconProps>;
+/**
+ * A host-managed full-window layer. The host owns focus, Escape, Android Back, and stacking, so
+ * an overlay opened inside another closes first, and Command Center or a host menu can open over
+ * it without a focus fight. Undefined on older hosts.
+ */
+export declare const Overlay: ComponentType<OverlayProps>;
 export declare const Modal: ModalComponent;
 export declare function useToast(): ToastApi;
 export declare function useRevealedText(text: string, phase: "streaming" | "complete"): string;

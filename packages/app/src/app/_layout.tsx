@@ -27,6 +27,7 @@ import { CommandCenterRootActions } from "@/command-center/root-registration";
 import { CommandCenterProvider } from "@/command-center/provider";
 import { CommandCenterWorkspaceActions } from "@/command-center/workspace-registration";
 import { PluginCommandCenterActions } from "@/plugins/command-center/registration";
+import { PluginOverlayHost } from "@/plugins/overlays/host";
 import { AddProjectFlowHost } from "@/components/add-project-flow-host";
 import { WorktreeSetupCalloutSource } from "@/components/worktree-setup-callout-source";
 import { DownloadToast } from "@/components/download-toast";
@@ -607,6 +608,7 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
         <WorkspacePinShortcutHandler />
         <WorkspaceRenameHost />
         <CommandCenter />
+        <PluginOverlayHost />
         <AddProjectFlowHost />
         <HostChooserModal />
         <HostConfirmationSheet />
