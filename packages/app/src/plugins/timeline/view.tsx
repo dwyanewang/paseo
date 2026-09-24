@@ -14,7 +14,7 @@ import { useInstalledPlugin } from "../registry";
 import { PluginInstallationProvider } from "../installation-provider";
 import { SurfaceErrorBoundary } from "../surface-error-boundary";
 import { toPluginTheme } from "../theme";
-import { resolvePluginPlatform } from "../platform";
+import { usePluginLayout } from "../layout";
 
 const pluginThemeMapping = (theme: Theme) => ({ theme: toPluginTheme(theme) });
 
@@ -60,7 +60,7 @@ function PluginTimelineItemBody({
   const hosts = useHosts();
   const hostLabel = hosts.find((host) => host.serverId === serverId)?.label ?? serverId;
   const host = useMemo(() => ({ id: serverId, label: hostLabel }), [hostLabel, serverId]);
-  const layout = useMemo(() => ({ compact, platform: resolvePluginPlatform() }), [compact]);
+  const layout = usePluginLayout(compact);
   const stateSource = useMemo(() => createPluginClientStateSource(serverId), [serverId]);
 
   if (!plugin || !renderer || !parsed || !client) {
