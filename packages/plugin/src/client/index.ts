@@ -1,6 +1,8 @@
 export type {
   PluginHostProps,
   PluginNavigableHostProps,
+  PluginOverlayProps,
+  PluginOverlayHandle,
   PluginAgentLaunchRequest,
   PluginAgentLaunchEvent,
   PluginAgentLaunchOpenResult,

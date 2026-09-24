@@ -722,12 +722,12 @@ client.setSidebarBadge?.("main", pending.length);
 
 `PluginSurfaceProps` contains:
 
-| Field        | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `theme`      | Typed `PluginTheme` color tokens for the active Paseo theme.                                                                                                                                                                                                                                                                                                                                                                |
-| `host`       | Selected host `id` and display `label`.                                                                                                                                                                                                                                                                                                                                                                                     |
-| `layout`     | `compact` and the `ios`, `android`, or `web` platform.                                                                                                                                                                                                                                                                                                                                                                      |
-| `navigation` | Optional client navigation. `openAgent({ agentId, serverId? })` and `openWorkspace({ workspaceId, serverId? })` open targets on `serverId`, or on the selected host when omitted. `openBrowser({ url, workspaceId, serverId? })` is available only on Electron; see [links and browsers](#external-links-and-workspace-browsers). `openAgentLaunch` opens or restores a Host-owned native launch journal and composer flow. |
+| Field        | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `theme`      | Typed `PluginTheme` color tokens for the active Paseo theme.                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `host`       | Selected host `id` and display `label`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `layout`     | `compact` and the `ios`, `android`, or `web` platform.                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `navigation` | Optional client navigation. `openAgent({ agentId, serverId? })` and `openWorkspace({ workspaceId, serverId? })` open targets on `serverId`, or on the selected host when omitted. `openBrowser({ url, workspaceId, serverId? })` is available only on Electron; see [links and browsers](#external-links-and-workspace-browsers). `openAgentLaunch` opens or restores a Host-owned native launch journal and composer flow. `openOverlay(Component)` mounts an [overlay](#overlay) over the current page. |
 
 Paseo owns the route, header, close action, host picker, error boundary, and query client. The plugin owns the surface body.
 
@@ -868,6 +868,67 @@ the modal. Dismissal calls `onOpenChange(false)`; the plugin must update `open` 
 
 Modal children keep the plugin runtime context. `usePaseo`, `useRpc`, `useWorkspace`, and
 `useAgent` work inside them.
+
+### Overlay
+
+`Overlay` is a bare full-window layer for UI the plugin draws itself: a box with no host title bar,
+a width of its choosing, or a menu anchored to its own button. Use `Modal` when the host's dialog
+and sheet presentation fit; use `Overlay` when they do not.
+
+```tsx
+import { Overlay } from "@getpaseo/plugin/client/react-native";
+
+<Overlay open={open} onClose={() => setOpen(false)} accessibilityLabel="New todo">
+  <View style={{ position: "absolute", top: insets.top + 12, left: 12, right: 12 }}>
+    {/* your box */}
+  </View>
+</Overlay>;
+```
+
+| Prop                 | Type                 | Default  | Behavior                                                             |
+| -------------------- | -------------------- | -------- | -------------------------------------------------------------------- |
+| `open`               | `boolean`            | Required | Shows the layer when `true`.                                         |
+| `onClose`            | `() => void`         | Required | Escape, Android Back, and a press outside the content ask to close.  |
+| `backdrop`           | `"dim"` or `"clear"` | `"dim"`  | `"clear"` leaves the page visible, for anchored menus.               |
+| `accessibilityLabel` | `string`             | —        | Announced when the layer takes focus.                                |
+| `children`           | `ReactNode`          | Required | Laid out over the whole window. Position boxes and menus absolutely. |
+
+The host owns focus, Escape, Android Back, and stacking. An `Overlay` rendered inside another
+paints above it and closes first, so a menu or confirmation inside a box needs no dismissal stack
+of its own. Command Center and host menus open above an overlay and take focus without a fight;
+closing them returns focus to it. `onClose` is a request: keep `open` true to refuse, for example
+to close an inner menu first. The children keep the plugin runtime context. Coordinates inside the
+layer are window coordinates, so `measureInWindow` results apply directly.
+
+Render the overlay from a component that stays mounted while it is open. A header popover, a
+command, or a panel that is closing cannot hold it, so they open it with `openOverlay` instead:
+
+```tsx
+import type { PluginOverlayProps } from "@getpaseo/plugin/client";
+
+function NewTodo({ close }: PluginOverlayProps) {
+  return (
+    <Overlay open onClose={close}>
+      {/* your box */}
+    </Overlay>
+  );
+}
+
+// Popover content, surfaces, panels, and timeline items:
+props.close();
+props.navigation?.openOverlay?.(NewTodo);
+
+// Command Center items and slash commands:
+context.openOverlay?.(NewTodo);
+```
+
+`openOverlay(Component)` mounts `Component` outside the caller, over whatever page the user is on,
+and returns a handle whose `close()` unmounts it. `Component` receives `theme`, `host`, `layout`,
+`navigation`, and `close()`, and renders its own `Overlay`. It closes when the plugin reloads, is
+disabled, or is removed.
+
+`Overlay` and `openOverlay` are absent on hosts that predate them. Check `typeof Overlay` and
+`openOverlay?.` before relying on them, or raise your [requirements](#requirements).
 
 ### Scrolling
 
@@ -1477,6 +1538,7 @@ Every callback receives:
 | `rpc(contract, input)`    | All                 | Typed call to this installation's daemon-side plugin handler.                                                   |
 | `notify`                  | All                 | Optional toast: `notify?.success(message)`, `notify?.info(message)`, `notify?.error(message)`.                  |
 | `openSurface(id)`         | All                 | Opens one of this plugin's registered global surfaces.                                                          |
+| `openOverlay(Component)`  | All                 | Optional. Mounts an [overlay](#overlay) over the current page without navigating.                               |
 | `workspace`               | Workspace and agent | Synchronous workspace snapshot.                                                                                 |
 | `agent`                   | Agent               | Synchronous matching agent snapshot.                                                                            |
 | `openPanel(id, options?)` | Workspace and agent | Opens a registered panel in the callback's current context. Pass `{ location: "explorer" }` to target Explorer. |
@@ -1514,7 +1576,8 @@ client.addSlashCommand({
 parsing to the plugin. Paseo owns the autocomplete row, input clearing, and the error toast. It
 does not wait for `onSubmit` or show a pending state; use a composer pill or panel for that.
 Confirm what the command did with `notify?.success("Captured")` — the composer is cleared by then,
-so a command that leaves no visible trace looks like it did nothing.
+so a command that leaves no visible trace looks like it did nothing. To ask for more input on the
+page the user is on, open a form with `openOverlay?.(Component)` instead of navigating.
 
 Precedence is built-in client commands, plugin commands, then provider commands. A lower-precedence
 collision is omitted. Built-in aliases also reserve their names. The first plugin in stable catalog
@@ -1658,7 +1721,9 @@ Render a React Native icon or indicator within the supplied size. Paseo bounds t
 owns all pointer interaction. The icon component can use plugin hooks.
 
 `PluginButtonContentProps` contains `theme`, `host`, `layout`, the target context, and `close()`.
-Render the body only; Paseo owns anchoring, scrolling, padding, and sheet presentation. Content can
+Render the body only; Paseo owns anchoring, scrolling, padding, and sheet presentation. The body
+unmounts when the popover closes. To continue in a larger form, call `close()` and then
+`navigation?.openOverlay?.(Form)`, which outlives the popover. Content can
 use `usePaseo`, `useRpc`, `useWorkspace`, `useAgent`, and the installation's React Query cache.
 
 The target context is one of:

@@ -188,7 +188,7 @@ Shared files import contract helpers and types from `@getpaseo/plugin`. Server h
 `@getpaseo/plugin/client/react-native`. Its `Icon` resolves a Lucide name using the client's installed icon
 set; an unknown name renders nothing so it cannot break the plugin surface.
 Its controlled modal keeps presentation metadata on `<Modal title="…" icon={…}>` and body UI in
-`<Modal.Content>`. Body layout, sheet-aware scrolling, and clipboard actions follow the
+`<Modal.Content>`. Body layout, sheet-aware scrolling, overlays, and clipboard actions follow the
 [host UI contract](../public-docs/plugins/reference.md#host-ui).
 Plugin UI runs on desktop and mobile across multiple themes: color every `Text` from
 `theme.colors.foreground` or `theme.colors.foregroundMuted`, and size layout from `layout.compact`.
@@ -431,6 +431,31 @@ Mounted surfaces and command invocations have shorter API lifetimes.
 
 Keep the client entry synchronous: return its cleanup function immediately and start asynchronous
 work inside it. See the maintained [composer pill example](../plugin-examples/local-plugin/client/main.tsx).
+
+## Overlays
+
+`Overlay` (`packages/app/src/plugins/react-native/overlay*.tsx`) is the plugin's own full-window
+layer. Plugins used to draw one with React Native's `Modal`; on the web that renders a browser
+dialog with its own focus trap, which fought Command Center and host menus for focus until the page
+hung. The web overlay registers with `useWebOverlayRegistration` in the shared overlay root instead,
+so the [relative layer model](floating-panels.md#gotcha-1--android-touch-hit-test-by-parent-bounds)
+decides who gets Escape and focus, and an overlay rendered inside another inherits its layer.
+
+On iOS and Android it stays a native `Modal`: a `@gorhom/portal` host would render the plugin's
+children without the providers above them, and the plugin's own contexts cannot be bridged. The
+modal window also settles Android Back. Android delivers Back to the topmost modal window, never to
+`BackHandler`, so an overlay does not join the sheet back-press chain in
+`components/ui/isolated-bottom-sheet-modal/back-press.ts` and needs no listener of its own. The cost
+is the one every native modal pays: a host sheet opened from inside an overlay renders in the app
+window, under it. Plugins nest another `Overlay` instead of opening `Modal` from one.
+
+`openOverlay` exists because the opener is often on its way out: a popover that closed itself, a
+Command Center row, a slash command whose composer just cleared. The store in
+`packages/app/src/plugins/overlays/` holds the component and `PluginOverlayHost` mounts it at the
+app root under a fresh runtime boundary, since the opener's surface runtime is disposed with it.
+Mounting waits a frame, and on iOS the menu engine's teardown grace, for the same reasons
+`WorkspaceRenameHost` and `selectItem` wait. An overlay closes when its installation changes, because
+its component belongs to the bundle that opened it.
 
 ## Contribute timeline items
 
