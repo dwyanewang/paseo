@@ -60,6 +60,8 @@ export interface PluginNavigableHostProps extends PluginHostProps {
     readonly openAgentLaunch?: (
       request: PluginAgentLaunchRequest,
     ) => Promise<PluginAgentLaunchOpenResult>;
+    /** Opens one of this plugin's registered surfaces. Undefined on older hosts. */
+    readonly openSurface?: (id: string) => void;
     /**
      * Mounts `Component` outside the caller, over the current page, so it outlives a closing
      * popover or panel. Undefined on older hosts.
