@@ -1114,12 +1114,12 @@ test("temporarily merges a local branch without synchronization and restores rw-
 
     const commandLog = readFileSync(fixture.commandLog, "utf8");
     assertOrdered(commandLog, [
+      "npm|run format:check",
+      "npm|run lint",
       "npm|run build --workspace=@getpaseo/relay",
       "npm|run build:client",
       "npm|run build:plugin",
-      "npm|run format:check",
       "npm|run typecheck",
-      "npm|run lint",
       "profile|windows-artifacts",
     ]);
     assert.equal(git(fixture.buildRoot, "branch", "--show-current"), "rw-main");

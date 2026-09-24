@@ -834,7 +834,7 @@ test("failed readiness keeps stage logs and the real exit code, but not a ready 
     assert.match(log, /readiness:build-server:end exit=0/);
     assert.match(log, /readiness:typecheck:end exit=7/);
     assert.match(log, /preflight:end exit=7/);
-    assert.doesNotMatch(log, /readiness:lint:start/);
+    assert.doesNotMatch(log, /readiness:stamp-write:start/);
     assert.equal(existsSync(fixture.stateFile), false);
     assert.equal(git(fixture.controlRoot, "rev-parse", "rw-base"), base);
     assert.equal(git(fixture.controlRoot, "rev-parse", "rw-main"), target);

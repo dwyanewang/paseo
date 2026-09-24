@@ -668,6 +668,12 @@ prepare_local_overlay() {
   [[ -z "$(git -C "$build_root" status --porcelain)" ]] ||
     fail "local overlay dependency preparation left tracked or untracked changes"
 
+  stage "local-overlay: run format and lint before builds"
+  (
+    cd "$build_root"
+    npm run format:check
+    npm run lint
+  )
   stage "local-overlay: refresh generated workspace declarations"
   (
     cd "$build_root"
@@ -676,12 +682,10 @@ prepare_local_overlay() {
     npm run build:client
     npm run build:plugin
   )
-  stage "local-overlay: run format, typecheck, and lint readiness checks"
+  stage "local-overlay: run typecheck readiness check"
   (
     cd "$build_root"
-    npm run format:check
     npm run typecheck
-    npm run lint
   )
   [[ -z "$(git -C "$build_root" status --porcelain)" ]] ||
     fail "local overlay readiness checks left tracked or untracked changes"

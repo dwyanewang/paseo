@@ -2081,8 +2081,14 @@ if paseo_verify_build_stamp "$build_root" "$server_build_stamp" tree readiness H
     "$(git rev-parse --short HEAD^{tree})"
 else
   paseo_build_stage "readiness:stamp-check:end exit=1 reason=${PASEO_BUILD_STAMP_MISS_REASON:-unknown} elapsed=$((SECONDS - stamp_check_started))s"
-  printf 'Readiness stamp miss (%s); refreshing generated workspace declarations...\n' \
+  printf 'Readiness stamp miss (%s); running format and lint before builds...\n' \
     "${PASEO_BUILD_STAMP_MISS_REASON:-unknown}"
+  # Neither check reads build output (oxlint is not type-aware and generated files are
+  # Git-ignored), so they run first and fail in seconds instead of after the builds.
+  paseo_build_timed readiness:format-check npm run format:check
+  paseo_build_timed readiness:lint npm run lint
+
+  printf '%s\n' 'Refreshing generated workspace declarations...'
   paseo_build_timed readiness:build-server-deps npm run build:server-deps
   paseo_build_timed readiness:build-app-audio-dep \
     npm run build --workspace=@getpaseo/expo-two-way-audio
@@ -2093,10 +2099,8 @@ else
   paseo_build_timed readiness:build-cli \
     npm run build --workspace=@getpaseo/cli
 
-  printf '%s\n' 'Running repository checks...'
-  paseo_build_timed readiness:format-check npm run format:check
+  printf '%s\n' 'Running repository typecheck...'
   paseo_build_timed readiness:typecheck npm run typecheck
-  paseo_build_timed readiness:lint npm run lint
 fi
 [[ -z "$(git status --porcelain)" ]] || fail "repository checks left tracked or untracked changes"
 if paseo_build_timed readiness:stamp-write paseo_write_build_stamp "$build_root" "$server_build_stamp" readiness HEAD; then

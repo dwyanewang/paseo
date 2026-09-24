@@ -407,6 +407,9 @@ fi
 if [[ "$*" == 'run typecheck --workspace=@getpaseo/app' && -n "\${PASEO_TEST_APP_TYPECHECK_EXIT:-}" ]]; then
   exit "$PASEO_TEST_APP_TYPECHECK_EXIT"
 fi
+if [[ "$*" == 'run lint' && -n "\${PASEO_TEST_LINT_EXIT:-}" ]]; then
+  exit "$PASEO_TEST_LINT_EXIT"
+fi
 if [[ "\${1:-}" == exec && -n "\${PASEO_TEST_CAPABILITY_EXIT:-}" ]]; then
   exit "$PASEO_TEST_CAPABILITY_EXIT"
 fi
@@ -3222,7 +3225,7 @@ for (const [interruption, exitCode] of [
   }, 60_000);
 }
 
-test("rebuild refreshes workspace declarations before repository checks", () => {
+test("rebuild runs format and lint before builds and typecheck after refreshed declarations", () => {
   withFixture({ advanceMain: false }, (fixture) => {
     const result = run(
       fixture.root,
@@ -3234,16 +3237,37 @@ test("rebuild refreshes workspace declarations before repository checks", () => 
     assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
     assert.deepEqual(readFileSync(fixture.npmCallLog, "utf8").trim().split("\n"), [
       "install",
+      "run format:check",
+      "run lint",
       "run build:server-deps",
       "run build --workspace=@getpaseo/expo-two-way-audio",
       "run typecheck --workspace=@getpaseo/app",
       "run build --workspace=@getpaseo/server",
       "run build --workspace=@getpaseo/cli",
-      "run format:check",
       "run typecheck",
-      "run lint",
       "--version",
     ]);
+  });
+}, 15_000);
+
+test("rebuild fails lint before starting any workspace build", () => {
+  withFixture({ advanceMain: false }, (fixture) => {
+    fixture.env.PASEO_TEST_LINT_EXIT = "9";
+    const result = run(
+      fixture.root,
+      "bash",
+      ["dwyanewang/rebuild-rw-main.sh", "--build-root", fixture.root, "--dry-run"],
+      fixture.env,
+    );
+
+    assert.equal(result.status, 9, `${result.stdout}\n${result.stderr}`);
+    assert.deepEqual(readFileSync(fixture.npmCallLog, "utf8").trim().split("\n"), [
+      "install",
+      "run format:check",
+      "run lint",
+    ]);
+    assert.match(result.stdout, /readiness:lint:end exit=9/);
+    assert.doesNotMatch(result.stdout, /readiness:build-server-deps:start/);
   });
 }, 15_000);
 
@@ -3260,6 +3284,8 @@ test("rebuild fails app typecheck before starting the server and CLI builds", ()
     assert.equal(result.status, 7, `${result.stdout}\n${result.stderr}`);
     assert.deepEqual(readFileSync(fixture.npmCallLog, "utf8").trim().split("\n"), [
       "install",
+      "run format:check",
+      "run lint",
       "run build:server-deps",
       "run build --workspace=@getpaseo/expo-two-way-audio",
       "run typecheck --workspace=@getpaseo/app",
