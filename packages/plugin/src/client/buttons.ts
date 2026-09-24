@@ -19,7 +19,18 @@ export type PluginButtonIcon = PluginIcon<PluginButtonIconProps>;
 export type PluginButtonBehavior<Text extends PluginText = string> =
   | { kind: "action"; onPress(): void | Promise<void> }
   | { kind: "menu"; items: readonly PluginButtonMenuEntry<Text>[] }
-  | { kind: "popover"; Content: ComponentType<PluginButtonContentProps> };
+  | {
+      kind: "popover";
+      Content: ComponentType<PluginButtonContentProps>;
+      /**
+       * `false` drops the title row the phone sheet otherwise shows above `Content`. Hosts that do
+       * not support it keep the title.
+       */
+      sheetTitle?: false;
+      /** Popover width in points on wide layouts. Phones always use a full-width sheet. */
+      width?: number;
+    };
+
 export type PluginButtonMenuEntry<Text extends PluginText = string> =
   | { kind: "separator"; id: string }
   | {
