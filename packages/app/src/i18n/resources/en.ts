@@ -335,6 +335,9 @@ export const en = {
     attachments: {
       dismissImage: "Dismiss image",
       closeImage: "Close image",
+      previousImage: "Previous image",
+      nextImage: "Next image",
+      imagePosition: "{{current}} / {{total}}",
       imageLoadFailed: "Couldn't load image",
       imageUnavailable: "Image unavailable",
       imagePreviewUnavailable: "Image preview unavailable.",

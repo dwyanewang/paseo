@@ -339,6 +339,9 @@ export const ko: TranslationResources = {
     attachments: {
       dismissImage: "이미지 닫기",
       closeImage: "이미지 닫기",
+      previousImage: "이전 이미지",
+      nextImage: "다음 이미지",
+      imagePosition: "{{current}} / {{total}}",
       imageLoadFailed: "이미지를 불러올 수 없습니다",
       imageUnavailable: "이미지를 사용할 수 없습니다",
       imagePreviewUnavailable: "이미지 미리보기를 사용할 수 없습니다.",
