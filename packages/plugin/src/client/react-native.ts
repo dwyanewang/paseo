@@ -92,6 +92,26 @@ export interface PickedImage {
   byteLength: number;
 }
 
+export interface PickFilesOptions {
+  /** Default false. */
+  multiple?: boolean;
+}
+
+export interface PickedFile {
+  fileName: string;
+  /**
+   * Inferred from the name when the platform does not report one; `application/octet-stream`
+   * as a last resort.
+   */
+  mimeType: string;
+  byteLength: number;
+  /**
+   * Base64 of up to `length` bytes starting at `offset`, fewer at the end of the file and empty
+   * past it. Rejects when the file can no longer be read.
+   */
+  readBase64(offset: number, length: number): Promise<string>;
+}
+
 export declare const Icon: ComponentType<PluginIconProps>;
 /**
  * A host-managed full-window layer. The host owns focus, Escape, Android Back, and stacking, so
@@ -117,6 +137,13 @@ export declare function FlatList<Item>(
  * web. Resolves `[]` when the user cancels. Undefined on older hosts.
  */
 export declare function pickImages(options?: PickImagesOptions): Promise<PickedImage[]>;
+/**
+ * Opens the platform file chooser for any kind of file: the document picker on iOS and Android,
+ * a file chooser on the web and desktop. Files come as readers rather than bytes, so a plugin
+ * reads a large file a chunk at a time. Resolves `[]` when the user cancels. Undefined on older
+ * hosts.
+ */
+export declare function pickFiles(options?: PickFilesOptions): Promise<PickedFile[]>;
 /** Copies text to this client's clipboard. Rejects when copying is unavailable or denied. */
 export declare function copyText(text: string): Promise<void>;
 
