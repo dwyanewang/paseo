@@ -289,6 +289,24 @@ await server.secrets.delete("api-token");
 Keys match `^[a-z0-9][a-z0-9._-]*$`. To collect a token from a settings screen, expose your own
 write-only RPC and a status RPC that returns whether a value exists, never the value.
 
+### Client presence
+
+`server.presence()` returns the daemon's view of connected apps, built from their heartbeats.
+`userPresent` is true when any app reported user activity in the last three minutes. Paseo uses the
+same rule to send an in-app notification instead of a push notification, so a plugin that notifies
+through another channel should skip the notification when `userPresent` is true.
+
+```ts
+const { userPresent, clients } = await server.presence();
+// clients: [{ deviceType: "mobile", appVisible: true, focusedAgentId: "…", lastActivityAt: "…" }]
+if (!userPresent) await sendToChat(message);
+```
+
+Only apps send heartbeats; CLI, MCP, and plugin sessions never appear in `clients`. Read presence
+when you are about to notify, not when the triggering event arrives: the user may have left or come
+back in between. A host without this API has no `server.presence`, so check for it before calling
+when your plugin supports older hosts.
+
 ### Providers
 
 Follow [Build a provider plugin](/docs/plugins/providers) for direct and ACP implementations,

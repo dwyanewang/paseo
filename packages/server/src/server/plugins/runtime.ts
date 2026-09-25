@@ -1,4 +1,8 @@
-import type { PluginBeforeRequests, PluginLifecycleEvents } from "@getpaseo/plugin/server";
+import type {
+  PluginBeforeRequests,
+  PluginLifecycleEvents,
+  PluginPresence,
+} from "@getpaseo/plugin/server";
 import { validateBeforeRequest, validateBeforeResult } from "./lifecycle/index.js";
 import { fork } from "node:child_process";
 import { stat } from "node:fs/promises";
@@ -215,6 +219,7 @@ export interface PluginPaseoSessionHost {
     pluginId: string,
     socket: PluginSessionSocket,
   ): Promise<{ closed: Promise<void> }>;
+  getClientPresence(): PluginPresence;
 }
 
 function resolveWorkerUrl(): URL {
@@ -797,6 +802,13 @@ export class PluginRuntime {
               });
             } else if (message.type === "paseo_close") {
               session.socket.peerClosed();
+            } else if (message.type === "presence.request") {
+              // Answered before `ready` too, so a contribution can read presence while it starts.
+              void send(child, {
+                type: "presence.result",
+                requestId: message.requestId,
+                presence: sessionHost.getClientPresence(),
+              }).catch(() => undefined);
             } else if (message.type === "ready") {
               if (settled) return;
               try {
