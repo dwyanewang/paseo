@@ -112,6 +112,19 @@ export interface PickedFile {
   readBase64(offset: number, length: number): Promise<string>;
 }
 
+export interface ImagePreviewItem {
+  /** Anything `Image` can show; plugins pass `data:` URIs. */
+  uri: string;
+  /** Shown under the image. */
+  name?: string;
+}
+
+export interface ImagePreviewOptions {
+  images: readonly ImagePreviewItem[];
+  /** Which image opens first. Default 0. */
+  index?: number;
+}
+
 export declare const Icon: ComponentType<PluginIconProps>;
 /**
  * A host-managed full-window layer. The host owns focus, Escape, Android Back, and stacking, so
@@ -144,6 +157,12 @@ export declare function pickImages(options?: PickImagesOptions): Promise<PickedI
  * hosts.
  */
 export declare function pickFiles(options?: PickFilesOptions): Promise<PickedFile[]>;
+/**
+ * Opens the host's zoomable image viewer over everything, including the plugin's own `Overlay`,
+ * with previous/next paging when there is more than one image. Throws when `images` is empty.
+ * Undefined on older hosts.
+ */
+export declare function openImagePreview(options: ImagePreviewOptions): void;
 /** Copies text to this client's clipboard. Rejects when copying is unavailable or denied. */
 export declare function copyText(text: string): Promise<void>;
 

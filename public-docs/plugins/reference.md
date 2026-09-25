@@ -1055,6 +1055,31 @@ picker copies the file into the app cache, which the OS may clear; on the web th
 the original file, which the user may have changed or removed. Hosts that predate it do not
 export `pickFiles`; check `typeof pickFiles` first.
 
+### Preview images
+
+`openImagePreview({ images, index? })` opens the host's image viewer over everything on screen,
+including the plugin's own `Overlay`: pinch and wheel zoom, a close button, and previous/next
+paging when there is more than one image.
+
+```tsx
+import { openImagePreview } from "@getpaseo/plugin/client/react-native";
+
+openImagePreview({
+  images: attachments.map((a) => ({ uri: `data:${a.mimeType};base64,${a.base64}`, name: a.name })),
+  index: 2,
+});
+```
+
+| Option   | Type                               | Default  | Behavior                                          |
+| -------- | ---------------------------------- | -------- | ------------------------------------------------- |
+| `images` | `{ uri: string; name?: string }[]` | Required | Anything `Image` can show, `data:` URIs included. |
+| `index`  | `number`                           | `0`      | Which image opens first, clamped to the list.     |
+
+`name` and the position ("2 / 3") show under the image. Escape, Android Back, the close button,
+and a press outside the image close the viewer alone; an `Overlay` under it stays open. On the
+web, `←` and `→` page. A second call replaces the open viewer. It throws when `images` is empty.
+Hosts that predate it do not export `openImagePreview`; check `typeof openImagePreview` first.
+
 ### Toasts
 
 `useToast()` returns two methods:

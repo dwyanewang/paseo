@@ -344,6 +344,9 @@ export const fr: TranslationResources = {
     attachments: {
       dismissImage: "Ignorer l'image",
       closeImage: "Fermer l'image",
+      previousImage: "Image précédente",
+      nextImage: "Image suivante",
+      imagePosition: "{{current}} / {{total}}",
       imageLoadFailed: "Impossible de charger l'image",
       imageUnavailable: "Image indisponible",
       imagePreviewUnavailable: "Aperçu de l'image indisponible.",

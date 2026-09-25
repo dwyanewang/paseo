@@ -343,6 +343,9 @@ export const es: TranslationResources = {
     attachments: {
       dismissImage: "Descartar imagen",
       closeImage: "Cerrar imagen",
+      previousImage: "Imagen anterior",
+      nextImage: "Imagen siguiente",
+      imagePosition: "{{current}} / {{total}}",
       imageLoadFailed: "No se pudo cargar la imagen",
       imageUnavailable: "Imagen no disponible",
       imagePreviewUnavailable: "Vista previa de la imagen no disponible.",

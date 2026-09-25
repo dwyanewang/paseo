@@ -188,8 +188,9 @@ Shared files import contract helpers and types from `@getpaseo/plugin`. Server h
 `@getpaseo/plugin/client/react-native`. Its `Icon` resolves a Lucide name using the client's installed icon
 set; an unknown name renders nothing so it cannot break the plugin surface.
 Its controlled modal keeps presentation metadata on `<Modal title="…" icon={…}>` and body UI in
-`<Modal.Content>`. Body layout, sheet-aware scrolling, overlays, image and file picking, and
-clipboard actions follow the [host UI contract](../public-docs/plugins/reference.md#host-ui).
+`<Modal.Content>`. Body layout, sheet-aware scrolling, overlays, image and file picking, image
+preview, and clipboard actions follow the
+[host UI contract](../public-docs/plugins/reference.md#host-ui).
 `pickImages` hands back base64 bytes with every image because plugin code has no file API to read
 the picker's local `uri`. `pickFiles` hands back a `readBase64(offset, length)` reader instead:
 a document can be tens of megabytes, and plugins upload through their own RPC in chunks, so one
@@ -465,6 +466,14 @@ app root under a fresh runtime boundary, since the opener's surface runtime is d
 Mounting waits a frame, and on iOS the menu engine's teardown grace, for the same reasons
 `WorkspaceRenameHost` and `selectItem` wait. An overlay closes when its installation changes, because
 its component belongs to the bundle that opened it.
+
+`openImagePreview` follows the same shape with the host's own viewer instead of a plugin
+component: `packages/app/src/plugins/image-preview/` keeps the images and the current index, and
+`PluginImagePreviewHost` renders `AttachmentLightbox` at the app root. A plugin used to draw its
+own preview, which had no zoom and, inside an `Overlay`, no layer of its own. The lightbox is a
+native `Modal` and a global web overlay layer, so it lands above whatever the plugin has open,
+and Escape or Android Back closes the preview alone. The store holds URIs, not components, so the
+preview needs no runtime boundary and survives a plugin reload.
 
 ## Contribute timeline items
 
