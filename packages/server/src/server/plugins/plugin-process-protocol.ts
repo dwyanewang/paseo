@@ -3,6 +3,7 @@ import type {
   PluginForgeSerializedError,
   PluginForgeServerProviderDescriptor,
   PluginForgeServiceMethod,
+  PluginPresence,
 } from "@getpaseo/plugin/server";
 import { PLUGIN_FORGE_SERVICE_METHODS } from "@getpaseo/plugin/server";
 import type {
@@ -83,6 +84,7 @@ export type PluginProcessRequest =
       input: unknown;
     }
   | { type: "shutdown" }
+  | { type: "presence.result"; requestId: string; presence: PluginPresence }
   | { type: "paseo_frame"; data: string | Uint8Array; isBinary: boolean }
   | { type: "paseo_close" };
 
@@ -118,6 +120,7 @@ export type PluginProcessMessage =
     }
   | { type: "provider.event"; connectionId: string; event: ProviderEvent }
   | { type: "provider.closed"; connectionId: string; error?: string }
+  | { type: "presence.request"; requestId: string }
   | { type: "paseo_frame"; data: string | Uint8Array; isBinary: boolean }
   | { type: "paseo_close" };
 
@@ -159,6 +162,21 @@ const forgeSerializedErrorSchema = z
     exitCode: z.number().nullable().optional(),
     brand: z.string().optional(),
     binary: z.string().optional(),
+  })
+  .strict();
+const presenceSchema = z
+  .object({
+    userPresent: z.boolean(),
+    clients: z.array(
+      z
+        .object({
+          deviceType: z.enum(["web", "mobile"]),
+          appVisible: z.boolean(),
+          focusedAgentId: z.string().nullable(),
+          lastActivityAt: z.string().nullable(),
+        })
+        .strict(),
+    ),
   })
   .strict();
 const frameFields = {
@@ -272,6 +290,13 @@ export const PluginProcessRequestSchema: z.ZodType<PluginProcessRequest> = z.dis
       })
       .strict(),
     z.object({ type: z.literal("shutdown") }).strict(),
+    z
+      .object({
+        type: z.literal("presence.result"),
+        requestId: z.string().min(1),
+        presence: presenceSchema,
+      })
+      .strict(),
     z.object({ type: z.literal("paseo_frame"), ...frameFields }).strict(),
     z.object({ type: z.literal("paseo_close") }).strict(),
   ],
@@ -357,6 +382,7 @@ export const PluginProcessMessageSchema: z.ZodType<PluginProcessMessage> = z.dis
         error: z.string().optional(),
       })
       .strict(),
+    z.object({ type: z.literal("presence.request"), requestId: z.string().min(1) }).strict(),
     z.object({ type: z.literal("paseo_frame"), ...frameFields }).strict(),
     z.object({ type: z.literal("paseo_close") }).strict(),
   ],

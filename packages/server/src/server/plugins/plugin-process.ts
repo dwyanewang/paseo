@@ -15,8 +15,10 @@ import {
   type PluginForgeServerService,
   type PluginForgeServiceMethod,
   type PluginHandlerContext,
+  type PluginPresence,
   type PluginServerContribution,
 } from "@getpaseo/plugin/server";
+import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import type { ZodType } from "zod";
 import {
@@ -114,6 +116,20 @@ export function createPluginWorker(options: {
     set: (key: string, value: string) => requireSecretStore().set(key, value),
     delete: (key: string) => requireSecretStore().delete(key),
   };
+
+  const pendingPresence = new Map<
+    string,
+    { resolve: (presence: PluginPresence) => void; reject: (error: Error) => void }
+  >();
+
+  // Presence lives in the daemon's WebSocket server, so the worker asks for it over its channel.
+  function presence(): Promise<PluginPresence> {
+    const requestId = randomUUID();
+    return new Promise((resolve, reject) => {
+      pendingPresence.set(requestId, { resolve, reject });
+      send({ type: "presence.request", requestId });
+    });
+  }
 
   function requireSecretStore(): PluginSecretStore {
     if (!secretStore) throw new Error("Plugin secret storage is unavailable");
@@ -399,6 +415,7 @@ export function createPluginWorker(options: {
     const contributedCleanup = contribute({
       paseo,
       secrets,
+      presence,
       handle: (contract, handler) =>
         register(contract, (input, context) => handler(contract.input.parse(input), context)),
       registerProvider,
@@ -467,6 +484,8 @@ export function createPluginWorker(options: {
     await sendAndWait({ type: "paseo_close" });
     daemonClient = null;
     paseo = null;
+    for (const pending of pendingPresence.values()) pending.reject(new Error("Plugin stopped"));
+    pendingPresence.clear();
     channel.disconnect();
   }
 
@@ -578,6 +597,12 @@ export function createPluginWorker(options: {
       return;
     }
     const message = parsed.data;
+    // Cleanup may still be waiting on presence, so answers are delivered while stopping too.
+    if (message.type === "presence.result") {
+      pendingPresence.get(message.requestId)?.resolve(message.presence);
+      pendingPresence.delete(message.requestId);
+      return;
+    }
     if (message.type === "initialize") {
       void initialize(message).catch(async (error) => {
         send({ type: "fatal", error: describeError(error) });
