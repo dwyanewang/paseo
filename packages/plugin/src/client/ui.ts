@@ -265,3 +265,23 @@ export interface PickedFile {
  * hosts.
  */
 export declare function pickFiles(options?: PickFilesOptions): Promise<PickedFile[]>;
+
+export interface ImagePreviewItem {
+  /** Anything `Image` can show; plugins pass `data:` URIs. */
+  uri: string;
+  /** Shown under the image. */
+  name?: string;
+}
+
+export interface ImagePreviewOptions {
+  images: readonly ImagePreviewItem[];
+  /** Which image opens first. Default 0. */
+  index?: number;
+}
+
+/**
+ * Opens the host's zoomable image viewer over everything, including the plugin's own `Overlay`,
+ * with previous/next paging when there is more than one image. Throws when `images` is empty.
+ * Undefined on older hosts.
+ */
+export declare function openImagePreview(options: ImagePreviewOptions): void;

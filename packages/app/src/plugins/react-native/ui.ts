@@ -34,3 +34,5 @@ export { Overlay } from "./overlay";
 export { pickImages } from "./image-picker";
 
 export { pickFiles } from "./file-picker";
+
+export { openImagePreview } from "./image-preview";
