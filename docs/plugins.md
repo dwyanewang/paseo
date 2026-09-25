@@ -188,11 +188,14 @@ Shared files import contract helpers and types from `@getpaseo/plugin`. Server h
 `@getpaseo/plugin/client/react-native`. Its `Icon` resolves a Lucide name using the client's installed icon
 set; an unknown name renders nothing so it cannot break the plugin surface.
 Its controlled modal keeps presentation metadata on `<Modal title="…" icon={…}>` and body UI in
-`<Modal.Content>`. Body layout, sheet-aware scrolling, overlays, image picking, and clipboard
-actions follow the [host UI contract](../public-docs/plugins/reference.md#host-ui).
+`<Modal.Content>`. Body layout, sheet-aware scrolling, overlays, image and file picking, and
+clipboard actions follow the [host UI contract](../public-docs/plugins/reference.md#host-ui).
 `pickImages` hands back base64 bytes with every image because plugin code has no file API to read
-the picker's local `uri`. Every `layout` comes from `usePluginLayout`
-(`packages/app/src/plugins/layout.ts`), which is where the safe-area insets join it.
+the picker's local `uri`. `pickFiles` hands back a `readBase64(offset, length)` reader instead:
+a document can be tens of megabytes, and plugins upload through their own RPC in chunks, so one
+base64 string of the whole file would only be split again. Every `layout` comes from
+`usePluginLayout` (`packages/app/src/plugins/layout.ts`), which is where the safe-area insets
+join it.
 Plugin UI runs on desktop and mobile across multiple themes: color every `Text` from
 `theme.colors.foreground` or `theme.colors.foregroundMuted`, and size layout from `layout.compact`.
 See `public-docs/plugins/reference.md`.

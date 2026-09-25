@@ -1025,6 +1025,36 @@ Validate `mimeType` and `byteLength` yourself; the host does not resize or re-en
 Android it rejects when the user has denied photo library access. Hosts that predate it do not
 export `pickImages`; check `typeof pickImages` first.
 
+### Pick files
+
+`pickFiles(options?)` opens the document picker on iOS and Android and a file chooser on the web
+and desktop, for any kind of file. It resolves the chosen files, or `[]` when the user cancels:
+
+```tsx
+import { pickFiles } from "@getpaseo/plugin/client/react-native";
+
+const CHUNK = 256 * 1024;
+for (const file of await pickFiles({ multiple: true })) {
+  for (let offset = 0; offset < file.byteLength; offset += CHUNK) {
+    await uploadChunk(file.fileName, offset, await file.readBase64(offset, CHUNK));
+  }
+}
+```
+
+| Option     | Type      | Default | Behavior                            |
+| ---------- | --------- | ------- | ----------------------------------- |
+| `multiple` | `boolean` | `false` | Allows choosing more than one file. |
+
+Each `PickedFile` has `fileName`, `mimeType`, `byteLength`, and `readBase64(offset, length)`,
+which resolves the base64 of up to `length` bytes from `offset`: fewer at the end of the file,
+and an empty string past it. A file can be tens of megabytes, so the bytes stay behind the reader
+and a plugin uploads them a chunk at a time instead of holding one base64 string. `mimeType` is
+inferred from the name when the platform reports none, and is `application/octet-stream` when
+nothing matches. `readBase64` rejects when the file can no longer be read: on iOS and Android the
+picker copies the file into the app cache, which the OS may clear; on the web the browser reads
+the original file, which the user may have changed or removed. Hosts that predate it do not
+export `pickFiles`; check `typeof pickFiles` first.
+
 ### Toasts
 
 `useToast()` returns two methods:

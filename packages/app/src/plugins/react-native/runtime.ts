@@ -4,6 +4,7 @@ import { Overlay } from "./overlay";
 import { ScrollView, FlatList } from "./scroll-view";
 import { TextInput } from "./text-input";
 import { copyText } from "./clipboard";
+import { pickFiles } from "./file-picker";
 import { pickImages } from "./image-picker";
 import { useToast } from "./toast";
 import { useRevealedText } from "@/hooks/use-revealed-text";
@@ -16,6 +17,7 @@ export const pluginReactNativeRuntime = {
   FlatList,
   TextInput,
   copyText,
+  pickFiles,
   pickImages,
   useRevealedText,
   useToast,
