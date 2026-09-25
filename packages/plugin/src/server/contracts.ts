@@ -74,9 +74,31 @@ export interface PluginSecretStore {
   delete(key: string): Promise<void>;
 }
 
+/** One connected app client, as its latest heartbeat described it. */
+export interface PluginClientPresence {
+  readonly deviceType: "web" | "mobile";
+  readonly appVisible: boolean;
+  /** The agent open in the foreground of that client, or null. */
+  readonly focusedAgentId: string | null;
+  /** The user's last interaction with that client as an ISO timestamp, or null when unparseable. */
+  readonly lastActivityAt: string | null;
+}
+
+export interface PluginPresence {
+  /**
+   * Whether some client reported user activity recently enough that Paseo sends in-app
+   * notifications instead of push notifications. A plugin that pushes to another channel reads
+   * this to follow the same rule.
+   */
+  readonly userPresent: boolean;
+  readonly clients: readonly PluginClientPresence[];
+}
+
 export interface PluginServerContext extends PluginLifecycleRegistration {
   readonly paseo: PaseoApi;
   readonly secrets: PluginSecretStore;
+  /** The daemon's current view of connected app clients. */
+  presence(): Promise<PluginPresence>;
   registerSettings<Schema extends ZodType>(
     definition: SettingsDefinition<Schema>,
   ): PluginSettings<Schema>;

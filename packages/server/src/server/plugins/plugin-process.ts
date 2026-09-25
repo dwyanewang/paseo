@@ -4,6 +4,7 @@ import {
   type PluginProcessMessage,
   type PluginProcessRequest,
 } from "./plugin-process-protocol.js";
+import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import * as pluginSharedRuntime from "@getpaseo/plugin";
 import * as pluginServerRuntime from "@getpaseo/plugin/server";
@@ -19,6 +20,7 @@ import {
   type PluginForgeServerService,
   type PluginForgeServiceMethod,
   type PluginHandlerContext,
+  type PluginPresence,
 } from "@getpaseo/plugin/server";
 import type { ZodType } from "zod";
 import {
@@ -48,6 +50,20 @@ const secrets = {
   set: (key: string, value: string) => requireSecretStore().set(key, value),
   delete: (key: string) => requireSecretStore().delete(key),
 };
+
+const pendingPresence = new Map<
+  string,
+  { resolve: (presence: PluginPresence) => void; reject: (error: Error) => void }
+>();
+
+// Client presence lives in the daemon's WebSocket server, so the child asks for it over IPC.
+function presence(): Promise<PluginPresence> {
+  const requestId = randomUUID();
+  return new Promise((resolve, reject) => {
+    pendingPresence.set(requestId, { resolve, reject });
+    send({ type: "presence.request", requestId });
+  });
+}
 
 function requireSecretStore(): PluginSecretStore {
   if (!secretStore) throw new Error("Plugin secret storage is unavailable");
@@ -365,6 +381,7 @@ function evaluateBundle(bundle: string): void {
   const contributedCleanup = setup({
     paseo,
     secrets,
+    presence,
     handle: register,
     registerProvider,
     registerSettings,
@@ -448,6 +465,8 @@ async function shutdown(): Promise<void> {
   await sendAndWait({ type: "paseo_close" });
   daemonClient = null;
   paseo = null;
+  for (const pending of pendingPresence.values()) pending.reject(new Error("Plugin stopped"));
+  pendingPresence.clear();
   process.disconnect();
 }
 
@@ -532,6 +551,12 @@ process.on("message", (rawMessage: unknown) => {
     return;
   }
   const message = parsed.data;
+  // Cleanup may still be waiting on presence, so answers are delivered while stopping too.
+  if (message.type === "presence.result") {
+    pendingPresence.get(message.requestId)?.resolve(message.presence);
+    pendingPresence.delete(message.requestId);
+    return;
+  }
   if (message.type === "initialize") {
     void initialize(message).catch(async (error) => {
       send({ type: "fatal", error: describeError(error) });

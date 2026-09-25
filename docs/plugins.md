@@ -685,6 +685,16 @@ server.handle(tokenStatusRpc, async () => ({ configured: await server.secrets.ha
 
 Settings then hold only the non-secret half: base URL, self-hosted host, which account to use.
 
+## Read client presence
+
+`server.presence()` travels over the plugin process IPC channel (`presence.request` /
+`presence.result`), not the WebSocket session protocol. Presence is per-client heartbeat state held
+by `VoiceAssistantWebSocketServer`; putting it on the session protocol would let any connected client
+read what the others are doing. The runtime answers before `ready`, so a contribution can read it
+during startup. `userPresent` comes from `isClientPresent` in
+`packages/server/src/server/agent-attention-policy.ts`, the predicate that also holds back push
+notifications; change the rule there and both follow.
+
 ## Contribute a theme
 
 `addTheme` takes a small light or dark palette and a display name. Paseo expands it through the

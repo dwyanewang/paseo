@@ -59,6 +59,7 @@ function createService(
 
 function bindTestSessionHost(service: PluginService): PluginService {
   service.bindPaseoSessionHost({
+    getClientPresence: () => ({ userPresent: false, clients: [] }),
     async attachPluginSocket(_pluginId, socket) {
       const closed = new Promise<void>((resolve) => socket.once("close", resolve));
       socket.on("message", (data) => {
