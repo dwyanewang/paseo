@@ -16,6 +16,8 @@ import type { PluginSessionSocket } from "./session-socket.js";
 
 const temporaryDirectories: string[] = [];
 
+const noClientPresence = () => ({ userPresent: false, clients: [] });
+
 function hasCompletedAgentTurn(events: readonly AgentStreamEvent[]): boolean {
   return events.some((event) => event.type === "turn_completed");
 }
@@ -118,6 +120,7 @@ function createTestRuntime(
   return new PluginRuntime(logger, version, {
     ...dependencies,
     sessionHost: dependencies.sessionHost ?? {
+      getClientPresence: noClientPresence,
       async attachPluginSocket(_pluginId, socket) {
         const closed = new Promise<void>((resolve) => socket.once("close", resolve));
         socket.on("message", (data) => {
@@ -171,6 +174,7 @@ function createTrackedSessionHost() {
       });
     },
     host: {
+      getClientPresence: noClientPresence,
       async attachPluginSocket(_pluginId: string, socket: PluginSessionSocket) {
         const closed = new Promise<void>((resolve) => socket.once("close", resolve));
         active.add(socket);
@@ -1663,6 +1667,54 @@ export default function contribute(server: PluginServerContext) {
     await runtime.stopAll();
   });
 
+  it("answers presence reads from the session host, including during contribution", async () => {
+    const directory = await createPlugin(
+      "presence-reader",
+      `import { defineRpc } from "@getpaseo/plugin";
+import type { PluginServerContext } from "@getpaseo/plugin/server";
+import { z } from "zod";
+
+const read = defineRpc({
+  name: "presence.read",
+  input: z.object({}),
+  output: z.object({ atStart: z.unknown(), now: z.unknown() }),
+});
+
+export default function contribute(server: PluginServerContext) {
+  const atStart = server.presence();
+  server.handle(read, async () => ({ atStart: await atStart, now: await server.presence() }));
+  return () => {};
+}`,
+    );
+    const clients = [
+      {
+        deviceType: "mobile" as const,
+        appVisible: true,
+        focusedAgentId: "agent-1",
+        lastActivityAt: "2026-09-25T04:00:00.000Z",
+      },
+    ];
+    let reads = 0;
+    const tracked = createTrackedSessionHost();
+    const runtime = createTestRuntime({
+      sessionHost: {
+        ...tracked.host,
+        getClientPresence: () => {
+          reads += 1;
+          return { userPresent: reads > 1, clients };
+        },
+      },
+    });
+
+    await runtime.startPlugin("presence-reader", directory);
+
+    await expect(runtime.invoke("presence-reader", "presence.read", {})).resolves.toEqual({
+      atStart: { userPresent: false, clients },
+      now: { userPresent: true, clients },
+    });
+    await runtime.stopAll();
+  });
+
   it("keeps client and server modules in their target runtime", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-"));
     temporaryDirectories.push(directory);
@@ -2264,6 +2316,7 @@ export default function contribute(plugin: any) {
     const runtime = createTestRuntime({
       spawnChild: () => child,
       sessionHost: {
+        getClientPresence: noClientPresence,
         async attachPluginSocket(pluginId, socket) {
           const attachment = await sessions.host.attachPluginSocket(pluginId, socket);
           attachments += 1;
