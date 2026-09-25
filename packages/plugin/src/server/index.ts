@@ -6,7 +6,9 @@ export type {
   UsageDetail,
 } from "./usage.js";
 export type {
+  PluginClientPresence,
   PluginHandlerContext,
+  PluginPresence,
   PluginSecretStore,
   PluginServerContext,
   PluginServerContribution,
