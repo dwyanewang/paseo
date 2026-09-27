@@ -209,3 +209,58 @@ test.each([
   },
   10000,
 );
+
+test("registered OpenCode clients read archived history", async () => {
+  const { buildProviderRegistry } = await import("../../provider-registry.js");
+  const { createTestLogger } = await import("../../../../test-utils/test-logger.js");
+  const logger = createTestLogger();
+  const client = buildProviderRegistry(logger).opencode.createClient(logger);
+  try {
+    expect(client.readSessionHistory).toBeTypeOf("function");
+  } finally {
+    await client.shutdown?.();
+  }
+});
+
+test("reads v2 history through a history resume and closes it", async () => {
+  const { withOpenCodeRuntimeNotice } = await import("./runtime-notice.js");
+  const { readResumedSessionHistory } = await import("./runtime-client.js");
+  const { V2Harness } = await import("./test-utils/v2-harness.js");
+  const { OpenCodeV2AgentClient } = await import("./v2/agent.js");
+  const { createTestLogger } = await import("../../../../test-utils/test-logger.js");
+  const harness = new V2Harness();
+  harness.history.push({ id: "old", type: "user", text: "Earlier prompt", time: { created: 1 } });
+  const client = new OpenCodeV2AgentClient({
+    logger: createTestLogger(),
+    runtime: harness.runtime,
+  });
+  const handle = { provider: "opencode", sessionId: "session", metadata: { cwd: "/tmp/project" } };
+  try {
+    const session = withOpenCodeRuntimeNotice(
+      await client.resumeSession(handle, undefined, undefined, { purpose: "history" }),
+      2,
+      handle,
+    );
+    let closed = false;
+    const close = session.close.bind(session);
+    session.close = async () => {
+      closed = true;
+      await close();
+    };
+    const result = await readResumedSessionHistory(session);
+    expect(result.coverage).toEqual({ kind: "complete" });
+    expect(result.events).toEqual([
+      expect.objectContaining({
+        type: "timeline",
+        item: { type: "user_message", text: "Earlier prompt", messageId: "old" },
+      }),
+      expect.objectContaining({
+        type: "timeline",
+        item: { type: "notification", level: "info", message: "This chat uses OpenCode v2." },
+      }),
+    ]);
+    expect(closed).toBe(true);
+  } finally {
+    await client.shutdown();
+  }
+});
