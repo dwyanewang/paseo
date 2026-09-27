@@ -5,6 +5,11 @@ import type {
   AgentLaunchContext,
   AgentCreateSessionOptions,
   AgentPersistenceHandle,
+  AgentResumeSessionOptions,
+  AgentHistoryReadContext,
+  AgentHistoryReadResult,
+  AgentSession,
+  AgentStreamEvent,
   FetchCatalogOptions,
   ProviderRefreshContext,
   ListImportableSessionsOptions,
@@ -42,6 +47,20 @@ export function openCodeMajorVersion(output: string): 1 | 2 {
   throw new Error(
     `Unsupported OpenCode major version ${version[1]}; supported versions are 1 and 2`,
   );
+}
+
+// OpenCode v2 has no dedicated history reader yet, so its history comes from a
+// history-purpose resume that is closed before the read resolves.
+export async function readResumedSessionHistory(
+  session: AgentSession,
+): Promise<AgentHistoryReadResult> {
+  try {
+    const events: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) events.push(event);
+    return { events, coverage: { kind: "complete" } };
+  } finally {
+    await session.close();
+  }
 }
 
 export type OpenCodeRuntimeClientOptions = NonNullable<
@@ -124,10 +143,24 @@ export class OpenCodeRuntimeClient implements AgentClient {
     handle: AgentPersistenceHandle,
     config?: Partial<AgentSessionConfig>,
     launch?: AgentLaunchContext,
+    options?: AgentResumeSessionOptions,
   ) {
-    const client = await this.client();
-    const session = await client.resumeSession(handle, config, launch);
+    const client: AgentClient = await this.client();
+    const session = await client.resumeSession(handle, config, launch, options);
     return client === this.legacy ? session : withOpenCodeRuntimeNotice(session, 2, handle);
+  }
+  async readSessionHistory(handle: AgentPersistenceHandle, context?: AgentHistoryReadContext) {
+    const client = await this.client();
+    if (client === this.legacy) return this.legacy.readSessionHistory(handle, context);
+    const launch: AgentLaunchContext = {
+      ...(context?.agentId ? { agentId: context.agentId } : {}),
+      ...(context?.env ? { env: context.env } : {}),
+    };
+    return readResumedSessionHistory(
+      await this.resumeSession(handle, context ? { cwd: context.cwd } : undefined, launch, {
+        purpose: "history",
+      }),
+    );
   }
   async fetchCatalog(options: FetchCatalogOptions, context?: ProviderRefreshContext) {
     return (await this.client()).fetchCatalog(options, context);
