@@ -25,17 +25,24 @@ export function sessionAgentCommandsQueryKey(input: { serverId: string; agentId:
   return [...agentCommandsQueryRoot(input.serverId), "session", input.agentId] as const;
 }
 
+function draftAgentCommandsCheckoutScope(input: { serverId: string; cwd: string }) {
+  return [
+    ...agentCommandsQueryRoot(input.serverId),
+    "draft",
+    "cwd",
+    normalizeAgentCommandsCwd(input.cwd),
+  ] as const;
+}
+
 export function draftAgentCommandsQueryKey(input: {
   serverId: string;
   draftConfig: AgentCommandsDraftConfig;
 }) {
   const { draftConfig } = input;
   return [
-    ...agentCommandsQueryRoot(input.serverId),
-    "draft",
+    ...draftAgentCommandsCheckoutScope({ serverId: input.serverId, cwd: draftConfig.cwd }),
+    "provider",
     draftConfig.provider,
-    "cwd",
-    normalizeAgentCommandsCwd(draftConfig.cwd),
     "mode",
     draftConfig.modeId ?? null,
     "model",
@@ -54,7 +61,7 @@ export function isDraftAgentCommandsQueryForCwd(input: {
 }): boolean {
   return (
     isDraftAgentCommandsQueryForServer(input) &&
-    input.queryKey[5] === normalizeAgentCommandsCwd(input.cwd)
+    input.queryKey[4] === normalizeAgentCommandsCwd(input.cwd)
   );
 }
 

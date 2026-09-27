@@ -300,6 +300,24 @@ describe("applyCheckoutStatusUpdateFromEvent", () => {
     expect(queryClient.getQueryState(draftCommandsKey)?.isInvalidated).toBe(true);
   });
 
+  it("keeps the checkout's draft slash commands when a push leaves its branch unchanged", () => {
+    const queryClient = createQueryClient();
+    queryClient.setQueryData(checkoutStatusQueryKey(serverId, cwd), checkoutStatus());
+    const thisCheckout = draftAgentCommandsQueryKey({
+      serverId,
+      draftConfig: { provider: "claude", cwd, model: "haiku" },
+    });
+    queryClient.setQueryData(thisCheckout, [{ name: "build-paseo" }]);
+
+    applyCheckoutStatusUpdateFromEvent({
+      queryClient,
+      serverId,
+      message: checkoutStatusUpdate(checkoutStatus({ isDirty: true })),
+    });
+
+    expect(queryClient.getQueryData(thisCheckout)).toEqual([{ name: "build-paseo" }]);
+  });
+
   it("does not rediscover commands in an open menu on a working-tree status update", async () => {
     const queryClient = createQueryClient();
     const menu = mountCommandMenu(queryClient);
