@@ -562,7 +562,34 @@ try {
   result = run(refresh, "check-install-log", "--log", failedLog);
   assert.equal(result.status, 0, result.stderr);
 
-  console.log("prepare-patched-dependencies: 16 checks passed");
+  const lockfileRoot = createFixture("[]");
+  const lockfile = { name: "fixture", packages: { "node_modules/b": {}, "node_modules/a": {} } };
+  const lockfilePath = path.join(lockfileRoot, "package-lock.json");
+  const committedLockfile = `${JSON.stringify(lockfile, null, 2)}\n`;
+  writeFileSync(lockfilePath, committedLockfile);
+  git(lockfileRoot, "init", "--quiet");
+  git(lockfileRoot, "add", ".");
+  git(lockfileRoot, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "--quiet", "-m", "init");
+  const reordered = { name: "fixture", packages: { "node_modules/a": {}, "node_modules/b": {} } };
+  writeFileSync(lockfilePath, `${JSON.stringify(reordered, null, 2)}\n`);
+  result = run(lockfileRoot, "restore-reordered-lockfile", "--root", lockfileRoot);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(readFileSync(lockfilePath, "utf8"), committedLockfile);
+  assert.equal(git(lockfileRoot, "status", "--porcelain"), "");
+
+  const changedLockfile = `${JSON.stringify({ ...reordered, lockfileVersion: 3 }, null, 2)}\n`;
+  writeFileSync(lockfilePath, changedLockfile);
+  result = run(lockfileRoot, "restore-reordered-lockfile", "--root", lockfileRoot);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(readFileSync(lockfilePath, "utf8"), changedLockfile);
+
+  writeFileSync(lockfilePath, `${JSON.stringify(reordered, null, 2)}\n`);
+  writeFileSync(path.join(lockfileRoot, "stray.txt"), "untracked\n");
+  result = run(lockfileRoot, "restore-reordered-lockfile", "--root", lockfileRoot);
+  assert.equal(result.status, 0, result.stderr);
+  assert.notEqual(readFileSync(lockfilePath, "utf8"), committedLockfile);
+
+  console.log("prepare-patched-dependencies: 19 checks passed");
 } finally {
   for (const fixture of fixtures) {
     rmSync(fixture, { recursive: true, force: true });

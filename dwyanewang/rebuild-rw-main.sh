@@ -1416,6 +1416,7 @@ install_dependencies() {
   node "$patched_dependencies_helper" verify \
     --root "$build_root" \
     --state-file "$refresh_state"
+  node "$patched_dependencies_helper" restore-reordered-lockfile --root "$build_root"
   [[ -z "$(git status --porcelain)" ]] ||
     fail "npm install left tracked or untracked changes in the build worktree"
 }

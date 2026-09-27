@@ -634,6 +634,7 @@ install_local_overlay_dependencies() {
   node "$patched_dependencies_helper" verify \
     --root "$build_root" \
     --state-file "$refresh_state"
+  node "$patched_dependencies_helper" restore-reordered-lockfile --root "$build_root"
   patched_dependencies_verified=1
 }
 

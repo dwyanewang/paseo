@@ -24,7 +24,8 @@ function usage() {
     --old-ref REF --new-ref REF --state-file PATH
   node dwyanewang/prepare-patched-dependencies.mjs verify --root PATH \\
     [--state-file PATH]
-  node dwyanewang/prepare-patched-dependencies.mjs check-install-log --log PATH`);
+  node dwyanewang/prepare-patched-dependencies.mjs check-install-log --log PATH
+  node dwyanewang/prepare-patched-dependencies.mjs restore-reordered-lockfile --root PATH`);
 }
 
 class LiteralParser {
@@ -556,6 +557,42 @@ function checkInstallLog(logPath) {
   }
 }
 
+function canonicalJson(value) {
+  if (Array.isArray(value)) return value.map(canonicalJson);
+  if (value === null || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.keys(value)
+      .sort()
+      .map((key) => [key, canonicalJson(value[key])]),
+  );
+}
+
+// npm majors sort lockfile keys differently, so installing an upstream lockfile written by
+// another npm can rewrite it with the same content in a new order. Only that exact case is
+// restored; any other install change is left for the caller's clean-worktree gate.
+function restoreReorderedLockfile(root) {
+  const status = spawnSync("git", ["status", "--porcelain=v1", "-z"], {
+    cwd: root,
+    encoding: "utf8",
+  });
+  if (status.status !== 0) throw new Error(`git status failed: ${status.stderr.trim()}`);
+  if (status.stdout !== " M package-lock.json\0") return;
+  const committed = spawnSync("git", ["show", "HEAD:package-lock.json"], {
+    cwd: root,
+    encoding: "utf8",
+    maxBuffer: 256 * 1024 * 1024,
+  });
+  if (committed.status !== 0) throw new Error(`git show failed: ${committed.stderr.trim()}`);
+  const lockfilePath = path.join(root, "package-lock.json");
+  const installed = readFileSync(lockfilePath, "utf8");
+  const same =
+    JSON.stringify(canonicalJson(JSON.parse(committed.stdout))) ===
+    JSON.stringify(canonicalJson(JSON.parse(installed)));
+  if (!same) return;
+  writeFileSync(lockfilePath, committed.stdout);
+  console.log("Restored package-lock.json: npm install changed only its key order.");
+}
+
 function parseArguments(argv) {
   const [command, ...rest] = argv;
   if (!command || command === "--help" || command === "-h") {
@@ -599,6 +636,11 @@ try {
     }
     if (Object.keys(values).length !== 4) fail("prepare received unknown arguments");
     prepare(root, values["--old-ref"], values["--new-ref"], values["--state-file"]);
+  } else if (command === "restore-reordered-lockfile") {
+    if (Object.keys(values).length !== 1) {
+      fail("restore-reordered-lockfile requires only --root PATH");
+    }
+    restoreReorderedLockfile(root);
   } else if (command === "verify") {
     if (Object.keys(values).some((flag) => !["--root", "--state-file"].includes(flag))) {
       fail("verify received unknown arguments");
