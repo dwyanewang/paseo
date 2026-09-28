@@ -14,6 +14,7 @@ describe("plugin host navigation", () => {
       resolveWorkspace: ({ serverId, workspaceId }) =>
         workspaces.has(`${serverId}:${workspaceId}`) ? workspaceId : null,
       openAgent: (input) => destinations.push(input),
+      withdrawPendingAgentMessage: (input) => destinations.push({ withdraw: input }),
       openWorkspace: (input) => destinations.push(input),
       createBrowser: ({ initialUrl }) => {
         browsers.push(initialUrl);
@@ -98,5 +99,37 @@ describe("plugin host navigation", () => {
     surfaces.delete("board");
     expect(() => navigation.openSurface!("board")).toThrow("Plugin surface is unavailable");
     expect(destinations).toEqual([{ surfaceId: "board" }]);
+  });
+
+  it("withdraws a pending first message on the selected or explicit host", () => {
+    const { navigation, destinations } = setup();
+    navigation.withdrawPendingAgentMessage!({ agentId: "agent-1", clientMessageId: "message-1" });
+    navigation.withdrawPendingAgentMessage!({
+      agentId: "agent-2",
+      clientMessageId: "message-2",
+      serverId: "remote",
+    });
+    expect(destinations).toEqual([
+      { withdraw: { serverId: "selected", agentId: "agent-1", clientMessageId: "message-1" } },
+      { withdraw: { serverId: "remote", agentId: "agent-2", clientMessageId: "message-2" } },
+    ]);
+  });
+
+  it("carries a created agent's pending first message to the agent it opens", () => {
+    const { navigation, destinations } = setup();
+    navigation.openAgent({ agentId: "agent-1" });
+    navigation.openAgent({
+      agentId: "agent-2",
+      serverId: "remote",
+      pendingMessage: { clientMessageId: "message-1", text: "Do the work" },
+    });
+    expect(destinations).toEqual([
+      { serverId: "selected", agentId: "agent-1" },
+      {
+        serverId: "remote",
+        agentId: "agent-2",
+        pendingMessage: { clientMessageId: "message-1", text: "Do the work" },
+      },
+    ]);
   });
 });

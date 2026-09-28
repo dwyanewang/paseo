@@ -52,7 +52,25 @@ export interface PluginNavigableHostProps extends PluginHostProps {
       readonly workspaceId: string;
       readonly serverId?: string;
     }) => void;
-    readonly openAgent: (input: { readonly agentId: string; readonly serverId?: string }) => void;
+    readonly openAgent: (input: {
+      readonly agentId: string;
+      readonly serverId?: string;
+      /**
+       * The first message of an agent the plugin just created, which the daemon sends once the
+       * agent's first turn starts. The host shows it right away, as sending, until the daemon's
+       * copy with the same `clientMessageId` arrives. Older hosts ignore it.
+       */
+      readonly pendingMessage?: PluginPendingAgentMessage;
+    }) => void;
+    /**
+     * Withdraws a `pendingMessage` the daemon will not send, such as a launch that failed after
+     * `openAgent`. A message the daemon already recorded stays. Undefined on older hosts.
+     */
+    readonly withdrawPendingAgentMessage?: (input: {
+      readonly agentId: string;
+      readonly clientMessageId: string;
+      readonly serverId?: string;
+    }) => void;
     readonly openWorkspace: (input: {
       readonly workspaceId: string;
       readonly serverId?: string;
@@ -68,6 +86,23 @@ export interface PluginNavigableHostProps extends PluginHostProps {
      */
     readonly openOverlay?: (Component: ComponentType<PluginOverlayProps>) => PluginOverlayHandle;
   };
+}
+
+/** What `openAgent` shows of a created agent's first message before the daemon records it. */
+export interface PluginPendingAgentMessage {
+  readonly clientMessageId: string;
+  readonly text: string;
+  /** Images sent inline with the prompt: base64 without a data-URL prefix. */
+  readonly images?: readonly { readonly data: string; readonly mimeType: string }[];
+  /** Files on the daemon host sent with the prompt, shown as file pills. */
+  readonly attachments?: readonly {
+    readonly type: "uploaded_file";
+    readonly id: string;
+    readonly fileName: string;
+    readonly mimeType: string;
+    readonly size: number;
+    readonly path: string;
+  }[];
 }
 
 /**
