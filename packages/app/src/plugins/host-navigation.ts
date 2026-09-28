@@ -21,7 +21,8 @@ export function buildPluginHostNavigation(
   return {
     ...createPluginHostNavigation(serverId, {
       browserAvailable: getIsElectron(),
-      openAgent: navigateToAgent,
+      // Pinned like the agent history list, so an archived agent keeps the tab it was opened in.
+      openAgent: (input) => navigateToAgent({ ...input, pin: true }),
       openWorkspace: navigateToWorkspace,
       createBrowser: createWorkspaceBrowser,
       resolveWorkspace: ({ serverId: targetServerId, workspaceId }) =>
