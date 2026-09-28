@@ -3,4 +3,4 @@
 # Each entry records the main/head pair last semantically reviewed.
 
 refactor/provider-history-read # PR #4473 # reviewed-main:30178c4f58b67f8472901356e1484022bd835de0 # reviewed-head:e2157a526820612865af60458d6860a47e0d41ec
-feat/plugin-host-infrastructure # Temporary personal overlay # reviewed-main:30178c4f58b67f8472901356e1484022bd835de0 # reviewed-head:29cf178a4c720a6b0d67df031daf13736ac48baa
+feat/plugin-host-infrastructure # Temporary personal overlay # reviewed-main:30178c4f58b67f8472901356e1484022bd835de0 # reviewed-head:cd32df43912915e62dd876799255a1bda5351834
