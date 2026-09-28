@@ -57,13 +57,17 @@ describe("usePluginHostNavigation", () => {
     });
   });
 
-  it("opens agents and workspaces on the rendering host", () => {
+  it("opens agents (pinned, so archived ones stay open) and workspaces on the rendering host", () => {
     const { result } = renderHook(() => usePluginHostNavigation("host-1", "plugin-1"));
 
     act(() => result.current.openAgent({ agentId: "agent-1" }));
     act(() => result.current.openWorkspace({ workspaceId: "workspace-1" }));
 
-    expect(navigateToAgentMock).toHaveBeenCalledWith({ serverId: "host-1", agentId: "agent-1" });
+    expect(navigateToAgentMock).toHaveBeenCalledWith({
+      serverId: "host-1",
+      agentId: "agent-1",
+      pin: true,
+    });
     expect(navigateToWorkspaceMock).toHaveBeenCalledWith({
       serverId: "host-1",
       workspaceId: "workspace-1",
@@ -87,7 +91,11 @@ describe("usePluginHostNavigation", () => {
 
     act(() => result.current.openAgent({ agentId: "agent-2" }));
     act(() => result.current.openWorkspace({ workspaceId: "workspace-2" }));
-    expect(navigateToAgentMock).toHaveBeenCalledWith({ serverId: "host-2", agentId: "agent-2" });
+    expect(navigateToAgentMock).toHaveBeenCalledWith({
+      serverId: "host-2",
+      agentId: "agent-2",
+      pin: true,
+    });
     expect(navigateToWorkspaceMock).toHaveBeenCalledWith({
       serverId: "host-2",
       workspaceId: "workspace-2",
