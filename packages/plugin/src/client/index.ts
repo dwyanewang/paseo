@@ -15,6 +15,7 @@ export type {
   PluginAgentLaunchRequest,
   PluginAgentLaunchEvent,
   PluginAgentLaunchOpenResult,
+  PluginPendingAgentMessage,
   PluginSurfaceProps,
   PluginScreenProps,
   PluginPopoverProps,
