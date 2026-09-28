@@ -1,10 +1,19 @@
-import type { PluginSurfaceProps } from "@getpaseo/plugin/client";
+import type { PluginPendingAgentMessage, PluginSurfaceProps } from "@getpaseo/plugin/client";
 import type { NavigateToWorkspaceInput } from "@/stores/navigation-active-workspace-store";
 import { isHttpUrl } from "@/utils/http-url";
 
 interface HostNavigationOwner {
   browserAvailable: boolean;
-  openAgent(input: { serverId: string; agentId: string }): void;
+  openAgent(input: {
+    serverId: string;
+    agentId: string;
+    pendingMessage?: PluginPendingAgentMessage;
+  }): void;
+  withdrawPendingAgentMessage(input: {
+    serverId: string;
+    agentId: string;
+    clientMessageId: string;
+  }): void;
   openWorkspace(input: NavigateToWorkspaceInput): void;
   resolveWorkspace(input: { serverId: string; workspaceId: string }): string | null;
   createBrowser(input: { initialUrl: string }): { browserId: string };
@@ -18,8 +27,18 @@ export function createPluginHostNavigation(
   owner: HostNavigationOwner,
 ): NonNullable<PluginSurfaceProps["navigation"]> {
   return {
-    openAgent: ({ agentId, serverId: targetServerId }) =>
-      owner.openAgent({ serverId: targetServerId ?? serverId, agentId }),
+    openAgent: ({ agentId, serverId: targetServerId, pendingMessage }) =>
+      owner.openAgent({
+        serverId: targetServerId ?? serverId,
+        agentId,
+        ...(pendingMessage ? { pendingMessage } : {}),
+      }),
+    withdrawPendingAgentMessage: ({ agentId, clientMessageId, serverId: targetServerId }) =>
+      owner.withdrawPendingAgentMessage({
+        serverId: targetServerId ?? serverId,
+        agentId,
+        clientMessageId,
+      }),
     openWorkspace: ({ workspaceId, serverId: targetServerId }) =>
       owner.openWorkspace({ serverId: targetServerId ?? serverId, workspaceId }),
     openSurface: (id) => {
