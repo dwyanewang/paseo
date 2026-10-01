@@ -7,9 +7,6 @@ import type {
   AgentPersistenceHandle,
   AgentResumeSessionOptions,
   AgentHistoryReadContext,
-  AgentHistoryReadResult,
-  AgentSession,
-  AgentStreamEvent,
   FetchCatalogOptions,
   ProviderRefreshContext,
   ListImportableSessionsOptions,
@@ -24,7 +21,7 @@ import {
 import { execCommand } from "../../../../utils/spawn.js";
 import { OpenCodeAgentClient } from "../opencode-agent.js";
 import type { OpenCodeV2AgentClient } from "./v2/agent.js";
-import { withOpenCodeRuntimeNotice } from "./runtime-notice.js";
+import { withOpenCodeRuntimeNotice, withOpenCodeRuntimeNoticeEvents } from "./runtime-notice.js";
 
 // Keep the minimum aligned with the SDK and binary exercised by CI.
 const MINIMUM_V2: readonly [number, number] = [0, 10];
@@ -47,20 +44,6 @@ export function openCodeMajorVersion(output: string): 1 | 2 {
   throw new Error(
     `Unsupported OpenCode major version ${version[1]}; supported versions are 1 and 2`,
   );
-}
-
-// OpenCode v2 has no dedicated history reader yet, so its history comes from a
-// history-purpose resume that is closed before the read resolves.
-export async function readResumedSessionHistory(
-  session: AgentSession,
-): Promise<AgentHistoryReadResult> {
-  try {
-    const events: AgentStreamEvent[] = [];
-    for await (const event of session.streamHistory()) events.push(event);
-    return { events, coverage: { kind: "complete" } };
-  } finally {
-    await session.close();
-  }
 }
 
 export type OpenCodeRuntimeClientOptions = NonNullable<
@@ -150,17 +133,17 @@ export class OpenCodeRuntimeClient implements AgentClient {
     return client === this.legacy ? session : withOpenCodeRuntimeNotice(session, 2, handle);
   }
   async readSessionHistory(handle: AgentPersistenceHandle, context?: AgentHistoryReadContext) {
-    const client = await this.client();
-    if (client === this.legacy) return this.legacy.readSessionHistory(handle, context);
-    const launch: AgentLaunchContext = {
-      ...(context?.agentId ? { agentId: context.agentId } : {}),
-      ...(context?.env ? { env: context.env } : {}),
+    const client: AgentClient = await this.client();
+    if (!client.readSessionHistory)
+      throw new Error("OpenCode runtime client does not support reading session history");
+    // Both v1 and v2 expose a dedicated read-only reader, so history never goes
+    // through an interactive resume.
+    const result = await client.readSessionHistory(handle, context);
+    if (client === this.legacy) return result;
+    return {
+      ...result,
+      events: withOpenCodeRuntimeNoticeEvents(result.events, 2, handle),
     };
-    return readResumedSessionHistory(
-      await this.resumeSession(handle, context ? { cwd: context.cwd } : undefined, launch, {
-        purpose: "history",
-      }),
-    );
   }
   async fetchCatalog(options: FetchCatalogOptions, context?: ProviderRefreshContext) {
     return (await this.client()).fetchCatalog(options, context);
