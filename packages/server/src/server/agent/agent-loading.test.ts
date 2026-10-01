@@ -294,6 +294,14 @@ async function runConcurrentUnarchiveScenario(
     agentId = "00000000-0000-4000-8000-000000000308";
   }
   await harness.createArchived(agentId, scenarioOptions);
+  const attentionTimestamp = "2026-08-22T03:04:05.000Z";
+  const archivedRecord = await harness.requireRecord(agentId);
+  await harness.storage.upsert({
+    ...archivedRecord,
+    requiresAttention: true,
+    attentionReason: "finished",
+    attentionTimestamp,
+  });
 
   const archivedLoad = harness.load(agentId);
   await historyStarted.promise;
@@ -307,6 +315,22 @@ async function runConcurrentUnarchiveScenario(
   expect(harness.manager.getAgent(agentId)?.lifecycle).toBe("idle");
   expect(harness.calls.history).toHaveLength(1);
   expect(harness.calls.resumeSessionIds).toHaveLength(1);
+  const expectedAttention = {
+    requiresAttention: true,
+    attentionReason: "finished",
+    attentionTimestamp: new Date(attentionTimestamp),
+  };
+  expect(first.attention).toEqual(expectedAttention);
+  expect(second.attention).toEqual(expectedAttention);
+  expect(harness.manager.getAgent(agentId)?.attention).toEqual(expectedAttention);
+  await harness.manager.flush();
+  await harness.storage.flush();
+  expect(await harness.requireRecord(agentId)).toMatchObject({
+    archivedAt: null,
+    requiresAttention: true,
+    attentionReason: "finished",
+    attentionTimestamp,
+  });
   return { harness, agentId };
 }
 

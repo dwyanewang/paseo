@@ -182,7 +182,7 @@ export async function ensureAgentLoaded(
         handle,
         buildConfigOverrides(latestRecord),
         agentId,
-        extractTimestamps(latestRecord),
+        { ...extractTimestamps(latestRecord), attention: extractAttention(latestRecord) },
       );
       deps.logger.info(
         { agentId, provider: latestRecord.provider },
