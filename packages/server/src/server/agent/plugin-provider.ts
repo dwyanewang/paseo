@@ -31,6 +31,8 @@ import type {
   AgentClient,
   AgentCreateSessionOptions,
   AgentFeature,
+  AgentHistoryReadContext,
+  AgentHistoryReadResult,
   AgentLaunchContext,
   AgentMode,
   AgentModelDefinition,
@@ -945,6 +947,34 @@ class PluginAgentClient implements AgentClient {
       history: "replay",
       persist: true,
     });
+  }
+
+  async readSessionHistory(
+    handle: AgentPersistenceHandle,
+    context?: AgentHistoryReadContext,
+  ): Promise<AgentHistoryReadResult> {
+    const cwd = context?.cwd ?? handle.metadata?.cwd;
+    if (typeof cwd !== "string") {
+      throw new Error(
+        `Plugin provider '${this.provider}' requires cwd to read a session's history`,
+      );
+    }
+    // Replay-only: the session is opened with persist disabled and closed before the
+    // read resolves, so an archived agent is never persisted or mutated by a read.
+    const session = await this.openSession({
+      config: { provider: this.provider, cwd },
+      launchContext: context?.env ? { env: context.env } : undefined,
+      persistence: decodePersistence(handle),
+      history: "replay",
+      persist: false,
+    });
+    try {
+      const events: AgentStreamEvent[] = [];
+      for await (const event of session.streamHistory()) events.push(event);
+      return { events, coverage: { kind: "complete" } };
+    } finally {
+      await session.close();
+    }
   }
 
   async fetchCatalog(
