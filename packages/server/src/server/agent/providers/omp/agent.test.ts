@@ -1036,7 +1036,7 @@ describe("OMP agent client and session", () => {
     });
   });
 
-  test("reads OMP history with a temporary runtime but no interactive session setup", async () => {
+  test("reads OMP history from the session file without launching a runtime", async () => {
     const omp = new OmpHarness();
 
     const history = await omp.readPersistedHistory(
@@ -1044,8 +1044,7 @@ describe("OMP agent client and session", () => {
         user: { id: "user-history", text: "continue the audit" },
         assistant: { id: "assistant-history", text: "audit context restored" },
       },
-      { cwd: "/workspace/resumed", modeId: "ask", thinkingOptionId: "high" },
-      createToolCatalog(),
+      { cwd: "/workspace/resumed" },
     );
 
     expect(history.flatMap((event) => (event.type === "timeline" ? [event.item] : []))).toEqual([
@@ -1056,36 +1055,19 @@ describe("OMP agent client and session", () => {
         messageId: "assistant-history",
       },
     ]);
-    expect(omp.launchConfiguration()).toMatchObject({
-      cwd: "/workspace/resumed",
-      protocolMode: "rpc-ui",
-      session: expect.stringMatching(/[\\/]paseo-omp-resume-.*[\\/]session\.jsonl$/),
-    });
-    const historyLaunch = omp.launchConfiguration();
-    expect(historyLaunch.modeId).toBeUndefined();
-    expect(historyLaunch.argv).not.toContain("--approval-mode");
-    expect(historyLaunch.argv).not.toContain("--model");
-    expect(historyLaunch.argv).not.toContain("--thinking");
-    expect(historyLaunch.argv).not.toContain("--append-system-prompt");
-    expect(omp.registeredHostTools()).toEqual([]);
-    expect(omp.subagentSubscriptionRequests()).toEqual([]);
-    expect(omp.runtimeClosed()).toBe(true);
+    // A dedicated history read replays the transcript off disk, so it must never
+    // start an OMP runtime against the archived session.
+    expect(omp.runtimeLaunches()).toEqual([]);
   });
 
-  test("closes the temporary OMP runtime when history state loading fails", async () => {
+  test("rejects an OMP history read without a native session file", async () => {
     const omp = new OmpHarness();
-    omp.failNextHistoryStateRead(new Error("OMP history state unavailable"));
 
     await expect(
-      omp.readPersistedHistory({
-        user: { id: "user-history", text: "continue the audit" },
-        assistant: { id: "assistant-history", text: "audit context restored" },
-      }),
-    ).rejects.toThrow("OMP history state unavailable");
+      omp.readHistoryHandle({ provider: "omp", sessionId: "omp-session-history" }),
+    ).rejects.toThrow("OMP history read requires a native session file handle");
 
-    expect(omp.runtimeClosed()).toBe(true);
-    expect(omp.registeredHostTools()).toEqual([]);
-    expect(omp.subagentSubscriptionRequests()).toEqual([]);
+    expect(omp.runtimeLaunches()).toEqual([]);
   });
 
   test("resumes an OMP session and replays its history", async () => {
