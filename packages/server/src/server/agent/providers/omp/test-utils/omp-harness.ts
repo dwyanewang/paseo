@@ -94,12 +94,6 @@ export class OmpHarness {
     this.omp.failNextSubagentSubscription("events", error);
   }
 
-  failNextHistoryStateRead(error: Error): void {
-    this.omp.queueSessionSetup((session) => {
-      session.getStateError = error;
-    });
-  }
-
   async start(
     config: Partial<AgentSessionConfig> = {},
     paseoTools?: PaseoToolCatalog,
@@ -119,7 +113,6 @@ export class OmpHarness {
   async readPersistedHistory(
     history: OmpResumeHistory,
     overrides: Partial<AgentSessionConfig> = {},
-    _paseoTools?: PaseoToolCatalog,
   ): Promise<AgentStreamEvent[]> {
     const sessionFile = await writeOmpHistory(history);
     const result = await this.client.readSessionHistory(
@@ -131,6 +124,16 @@ export class OmpHarness {
       },
       { cwd: overrides.cwd ?? CWD },
     );
+    return result.events;
+  }
+
+  async readHistoryHandle(
+    handle: AgentPersistenceHandle,
+    overrides: Partial<AgentSessionConfig> = {},
+  ): Promise<AgentStreamEvent[]> {
+    const result = await this.client.readSessionHistory(handle, {
+      cwd: overrides.cwd ?? CWD,
+    });
     return result.events;
   }
 
