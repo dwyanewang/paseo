@@ -181,8 +181,8 @@ async function readHistoryNode(
           root: false,
         }),
       );
-    } catch {
-      // A deleted child must not make its readable parent history unavailable.
+    } catch (error) {
+      if (!isMissingSessionError(error)) throw error;
     }
   }
   return {
@@ -250,6 +250,10 @@ function historyChildReference(item: ProviderTimelineItem): HistoryChildReferenc
     toolCallId: item.callId,
     ...(item.detail.description ? { description: item.detail.description } : {}),
   };
+}
+
+function isMissingSessionError(error: unknown): boolean {
+  return error instanceof MuseError && error.kind === "sessionNotFound";
 }
 
 async function foldHistoryPage(
