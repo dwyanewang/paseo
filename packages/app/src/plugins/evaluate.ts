@@ -408,9 +408,7 @@ export function runPluginClientBundle(
     },
     setSidebarBadge(itemId: string, badge: number | null) {
       if (stopped) return;
-      const item = collector.legacySidebarItems.find(
-        (candidate) => candidate.id === itemId.trim(),
-      );
+      const item = collector.legacySidebarItems.find((candidate) => candidate.id === itemId.trim());
       if (!item) throw new Error(`Sidebar item is unavailable: ${itemId}`);
       const next = normalizeSidebarBadge(badge);
       if (item.badge === next) return;
