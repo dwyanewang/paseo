@@ -6,6 +6,7 @@ import { z } from "zod";
 import {
   PROVIDER_CAPABILITIES,
   PROVIDER_PROTOCOL_VERSION,
+  ProviderHistoryReadResultSchema,
   ProviderEventSchema,
   ProviderInputSchema,
   ProviderStatusSchema,
@@ -18,6 +19,7 @@ import {
   type ProviderConnection,
   type ProviderError,
   type ProviderEvent,
+  type ProviderHistoryReadResult,
   type ProviderInput,
   type ProviderPersistence,
   type ProviderPrompt,
@@ -219,6 +221,24 @@ class ProviderRuntime {
     if (event.type !== "sessions")
       throw new Error("Provider returned an invalid sessions response");
     return event.sessions;
+  }
+
+  async readSessionHistory(
+    persistence: ProviderPersistence,
+    context: { cwd: string; env?: Readonly<Record<string, string>> },
+  ): Promise<ProviderHistoryReadResult> {
+    const reader = this.registration.readSessionHistory;
+    if (!reader) {
+      throw new Error(`Plugin provider '${this.registration.id}' does not support history reads`);
+    }
+    return ProviderHistoryReadResultSchema.parse(
+      await reader({
+        persistence,
+        cwd: context.cwd,
+        env: context.env,
+        launch: await this.resolveLaunch(),
+      }),
+    );
   }
 
   onSessionOpened(
@@ -959,22 +979,23 @@ class PluginAgentClient implements AgentClient {
         `Plugin provider '${this.provider}' requires cwd to read a session's history`,
       );
     }
-    // Replay-only: the session is opened with persist disabled and closed before the
-    // read resolves, so an archived agent is never persisted or mutated by a read.
-    const session = await this.openSession({
-      config: { provider: this.provider, cwd },
-      launchContext: context?.env ? { env: context.env } : undefined,
-      persistence: decodePersistence(handle),
-      history: "replay",
-      persist: false,
+    const result = await this.runtime.readSessionHistory(decodePersistence(handle), {
+      cwd,
+      env: context?.env,
     });
-    try {
-      const events: AgentStreamEvent[] = [];
-      for await (const event of session.streamHistory()) events.push(event);
-      return { events, coverage: { kind: "complete" } };
-    } finally {
-      await session.close();
+    const snapshots = new Map<string, ProviderTimelineItem>();
+    const events: AgentStreamEvent[] = [];
+    for (const entry of result.items) {
+      const item = mapTimelineItem(entry.item, snapshots);
+      if (!item) continue;
+      events.push({
+        type: "timeline",
+        provider: this.provider,
+        item,
+        timestamp: entry.timestamp,
+      });
     }
+    return { events, coverage: result.coverage };
   }
 
   async fetchCatalog(
