@@ -3,6 +3,8 @@ import {
   requireProviderCapabilities,
   type ProviderConnection,
   type ProviderEvent,
+  type ProviderHistoryReadRequest,
+  type ProviderHistoryReadResult,
   type ProviderInput,
   type ProviderLaunch,
   type ProviderRegistration,
@@ -16,7 +18,15 @@ import { MspConnection } from "./connection.js";
 import { MuseError, actionableError } from "./errors.js";
 import { Sessions } from "./sessions.js";
 import { Session } from "./session.js";
-import { accountSchema } from "./wire.js";
+import {
+  accountSchema,
+  deltaSchema,
+  itemNotificationSchema,
+  pageSchema,
+  persistenceSchema,
+  sessionSchema,
+} from "./wire.js";
+import { Timeline } from "./timeline.js";
 
 const capabilities = [
   "prompt.message",
@@ -44,6 +54,60 @@ export function createMuseProvider(usage: Usage): ProviderRegistration {
       usage.remember(launch);
       return status(launch);
     },
+    async readSessionHistory(
+      request: ProviderHistoryReadRequest,
+    ): Promise<ProviderHistoryReadResult> {
+      const saved = persistenceSchema.parse(request.persistence.data);
+      const host = new MspConnection({
+        launch: {
+          ...requireLaunch(request.launch),
+          env: { ...requireLaunch(request.launch).env, ...request.env },
+        },
+        cwd: request.cwd,
+        serveArgs: [],
+      });
+      const items: ProviderHistoryReadResult["items"] = [];
+      try {
+        await host.initialize();
+        const response = await host.request(
+          "session/read",
+          { sessionId: saved.sessionId, excludeItems: false },
+          sessionSchema,
+        );
+        const timeline = new Timeline(host, response.session.sessionId, "history-read", (event) => {
+          if (event.type === "timeline.item") {
+            items.push({
+              item: event.item,
+              ...(event.timestamp ? { timestamp: event.timestamp } : {}),
+            });
+          }
+        });
+        if (response.history?.mode === "inline" && response.history.items) {
+          for (const item of response.history.items) await timeline.fold(item);
+        } else {
+          let cursor: string | undefined;
+          let nextCursor: string | null;
+          do {
+            const page = await host.request(
+              "view/page",
+              {
+                sessionId: response.session.sessionId,
+                ...(cursor ? { cursor } : {}),
+                direction: "forward",
+                limit: 1000,
+              },
+              pageSchema,
+            );
+            await foldHistoryPage(timeline, page.events);
+            nextCursor = page.nextCursor;
+            cursor = nextCursor ?? undefined;
+          } while (nextCursor !== null);
+        }
+        return { items, coverage: { kind: "complete" } };
+      } finally {
+        await host.close();
+      }
+    },
     async connect(request) {
       if (!request.versions.includes(1))
         throw new MuseError("protocol", "Provider protocol version 1 is required");
@@ -56,6 +120,24 @@ export function createMuseProvider(usage: Usage): ProviderRegistration {
     },
   };
 }
+
+async function foldHistoryPage(
+  timeline: Timeline,
+  events: ReadonlyArray<{ method: string; params: Record<string, unknown> }>,
+): Promise<void> {
+  for (const event of events) {
+    if (
+      event.method === "item/started" ||
+      event.method === "item/updated" ||
+      event.method === "item/completed"
+    ) {
+      await timeline.fold(itemNotificationSchema.parse(event.params).item);
+    } else if (event.method === "item/delta") {
+      timeline.delta(deltaSchema.parse(event.params));
+    }
+  }
+}
+
 function requireLaunch(launch: ProviderLaunch | undefined): ProviderLaunch {
   if (!launch) throw new MuseError("missingLaunch", "Muse requires a daemon-resolved executable");
   return launch;

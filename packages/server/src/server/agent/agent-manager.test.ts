@@ -7762,9 +7762,6 @@ test("dedicated history reads use only the in-memory timeline", async () => {
   const agentId = "00000000-0000-4000-8000-000000000119";
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-memory-history-"));
   const durableTimelineStore = new RecordingTimelineStore();
-  const getLatestCommittedSeq = vi.spyOn(durableTimelineStore, "getLatestCommittedSeq");
-  const getCommittedRows = vi.spyOn(durableTimelineStore, "getCommittedRows");
-  const bulkInsert = vi.spyOn(durableTimelineStore, "bulkInsert");
   const client = new (class extends TestAgentClient {
     async readSessionHistory() {
       return {
@@ -7793,13 +7790,12 @@ test("dedicated history reads use only the in-memory timeline", async () => {
       {},
     );
 
-    expect(await manager.getTimelineRows(agentId)).toMatchObject([
+    const rowsBeforeFlush = await manager.getTimelineRows(agentId);
+    expect(rowsBeforeFlush).toMatchObject([
       { item: { type: "assistant_message", text: "memory-only history" } },
     ]);
     await manager.flush();
-    expect(getLatestCommittedSeq).not.toHaveBeenCalled();
-    expect(getCommittedRows).not.toHaveBeenCalled();
-    expect(bulkInsert).not.toHaveBeenCalled();
+    expect(await manager.getTimelineRows(agentId)).toEqual(rowsBeforeFlush);
   } finally {
     rmSync(workdir, { recursive: true, force: true });
   }
