@@ -169,17 +169,21 @@ async function readHistoryNode(
   for (const reference of references.values()) {
     if (options.seen.has(reference.sessionId)) continue;
     options.seen.add(reference.sessionId);
-    children.push(
-      await readHistoryNode(host, {
-        sessionId: reference.sessionId,
-        cwd: workspaceRoot ?? options.cwd,
-        parentSessionId: options.root ? null : sessionId,
-        toolCallId: reference.toolCallId,
-        description: reference.description,
-        seen: options.seen,
-        root: false,
-      }),
-    );
+    try {
+      children.push(
+        await readHistoryNode(host, {
+          sessionId: reference.sessionId,
+          cwd: workspaceRoot ?? options.cwd,
+          parentSessionId: options.root ? null : sessionId,
+          toolCallId: reference.toolCallId,
+          description: reference.description,
+          seen: options.seen,
+          root: false,
+        }),
+      );
+    } catch {
+      // A deleted child must not make its readable parent history unavailable.
+    }
   }
   return {
     sessionId,
