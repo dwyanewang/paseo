@@ -50,6 +50,23 @@ interface SidebarHeaderRowProps {
   badge?: number | null;
 }
 
+function resolveSidebarTrailing(input: {
+  trailing?: ReactNode;
+  badge: number | null;
+  shortcutKeys: ShortcutKey[][] | null;
+  isHovered: boolean;
+}): ReactNode {
+  const { trailing, badge, shortcutKeys, isHovered } = input;
+  if (trailing !== undefined && trailing !== null) return trailing;
+  if (!badge && !(shortcutKeys && isHovered)) return null;
+  return (
+    <>
+      {badge ? <Text style={styles.badge}>{badge > 99 ? "99+" : badge}</Text> : null}
+      {shortcutKeys && isHovered ? <Shortcut chord={shortcutKeys} /> : null}
+    </>
+  );
+}
+
 export function SidebarHeaderRow({
   icon: Icon,
   label,
@@ -71,14 +88,7 @@ export function SidebarHeaderRow({
   const isHighlighted = isHovered || isActive;
   const iconSize = variant === "header" ? ICON_SIZE.md : ICON_SIZE.sm;
 
-  let right = trailing ?? null;
-  const extras = (
-    <>
-      {badge ? <Text style={styles.badge}>{badge > 99 ? "99+" : badge}</Text> : null}
-      {shortcutKeys && isHovered ? <Shortcut chord={shortcutKeys} /> : null}
-    </>
-  );
-  if (right === null && (badge || (shortcutKeys && isHovered))) right = extras;
+  const right = resolveSidebarTrailing({ trailing, badge, shortcutKeys, isHovered });
 
   return (
     <View ref={rowRef} collapsable={false} style={getContainerStyle(variant)}>
