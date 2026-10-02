@@ -229,7 +229,6 @@ describe("plugin Command Center contributions", () => {
     });
     const common = {
       plugins: [installed],
-      runtime: createRuntime,
       state: stateSource(),
       navigation: {
         openSettings() {},
@@ -271,7 +270,6 @@ describe("plugin Command Center contributions", () => {
     const installed = plugin(() => undefined);
     const common = {
       plugins: [installed],
-      runtime: createRuntime,
       state: stateSource(),
       workspaceId: workspace.id,
       agentId: agent.id,

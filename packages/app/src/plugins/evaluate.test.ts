@@ -324,17 +324,17 @@ describe("evaluatePluginClientBundle", () => {
       setSidebarBadge(id: string, badge: number | null): void;
     };
 
-    expect(plugin.sidebarItems[0].badge).toBe(2);
+    expect(plugin.legacySidebarItems[0]?.badge).toBe(2);
 
     client.setSidebarBadge("main", 5);
-    expect(plugin.sidebarItems[0].badge).toBe(5);
+    expect(plugin.legacySidebarItems[0]?.badge).toBe(5);
     expect(changes).toBe(1);
 
     client.setSidebarBadge("main", 5);
     expect(changes).toBe(1);
 
     client.setSidebarBadge("main", 0);
-    expect(plugin.sidebarItems[0].badge).toBeUndefined();
+    expect(plugin.legacySidebarItems[0]?.badge).toBeUndefined();
     expect(changes).toBe(2);
 
     client.setSidebarBadge("main", null);
