@@ -7,10 +7,10 @@ import { useToast } from "@/contexts/toast-context";
 import { useHostRuntimeClient, useHosts } from "@/runtime/host-runtime";
 import type { Theme } from "@/styles/theme";
 import { createPluginClientStateSource } from "../client-state/source";
+import { PluginInstallationProvider } from "../installation-provider";
 import { usePluginHostNavigation } from "../host-navigation";
 import { usePluginLayout } from "../layout";
 import { useInstalledPlugin } from "../registry";
-import { PluginRuntimeBoundary } from "../runtime-boundary";
 import { SurfaceErrorBoundary } from "../surface-error-boundary";
 import { toPluginTheme } from "../theme";
 import { pluginOverlayStore, type PluginOverlayEntry } from "./store";
@@ -53,7 +53,7 @@ function DetachedOverlay({ entry, theme }: { entry: PluginOverlayEntry; theme: P
   if (isStale || !client) return null;
   return (
     <SurfaceErrorBoundary installation={plugin} Surface={Component} renderError={renderError}>
-      <PluginRuntimeBoundary plugin={plugin} client={client}>
+      <PluginInstallationProvider plugin={plugin}>
         <PluginClientStateProvider source={state}>
           <Component
             theme={theme}
@@ -63,7 +63,7 @@ function DetachedOverlay({ entry, theme }: { entry: PluginOverlayEntry; theme: P
             close={close}
           />
         </PluginClientStateProvider>
-      </PluginRuntimeBoundary>
+      </PluginInstallationProvider>
     </SurfaceErrorBoundary>
   );
 }
