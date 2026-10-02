@@ -339,6 +339,9 @@ export const ar: TranslationResources = {
     attachments: {
       dismissImage: "تجاهل الصورة",
       closeImage: "إغلاق الصورة",
+      previousImage: "الصورة السابقة",
+      nextImage: "الصورة التالية",
+      imagePosition: "{{current}} / {{total}}",
       imageLoadFailed: "تعذر تحميل الصورة",
       imageUnavailable: "الصورة غير متاحة",
       imagePreviewUnavailable: "معاينة الصورة غير متاحة.",
@@ -1032,6 +1035,7 @@ export const ar: TranslationResources = {
         installCli: "ثبّت واجهة سطر الأوامر {{cli}} لاستخدام ميزات {{brand}}.",
         signIn: "نفّذ {{command}} لاستخدام ميزات {{brand}}.",
         generic: "قم بإعداد {{brand}} على هذا المضيف لاستخدام ميزاته.",
+        openSettings: "افتح إعدادات {{brand}} لإكمال الإعداد.",
       },
     },
   },
