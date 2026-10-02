@@ -155,6 +155,10 @@ function historyReadResponse(frame) {
     rpcError(frame, -32020, "sessionNotFound", "missing");
     return true;
   }
+  if (process.env.MUSE_TEST_HISTORY_CHILD_ERROR && frame.params.sessionId === "fixture-child") {
+    rpcError(frame, -32001, "overloaded", "busy");
+    return true;
+  }
   const source = child ? readFixture("phase3-child-read") : rows;
   const result = responseFor(source, child ? "session/read" : "session/resume");
   result.session.sessionId = frame.params.sessionId;
