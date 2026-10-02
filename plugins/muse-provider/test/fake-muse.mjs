@@ -89,20 +89,7 @@ function controlResponse(frame) {
   return false;
 }
 function parityResponse(frame) {
-  if (frame.method === "session/read" && process.env.MUSE_TEST_HISTORY_READ) {
-    const source = process.env.MUSE_TEST_HISTORY_CHILD ? readFixture("phase3-child-read") : rows;
-    const result = responseFor(
-      source,
-      process.env.MUSE_TEST_HISTORY_CHILD ? "session/read" : "session/resume",
-    );
-    result.session.sessionId = frame.params.sessionId;
-    if (process.env.MUSE_TEST_HISTORY_CHILD && frame.params.sessionId === "fixture-child") {
-      result.session.title = "History child";
-      result.session.workspaceRoot = "/tmp/muse-phase0/child";
-    }
-    respond(frame, result);
-    return true;
-  }
+  if (historyReadResponse(frame)) return true;
   if (workflowResponse(frame)) return true;
   if (frame.method === "view/page") return historyPageResponse(frame);
   if (frame.method === "session/read") {
@@ -159,6 +146,24 @@ function parityResponse(frame) {
   }
   if (skillResponse(frame)) return true;
   return false;
+}
+
+function historyReadResponse(frame) {
+  if (frame.method !== "session/read" || !process.env.MUSE_TEST_HISTORY_READ) return false;
+  const child = process.env.MUSE_TEST_HISTORY_CHILD;
+  if (process.env.MUSE_TEST_HISTORY_CHILD_MISSING && frame.params.sessionId === "fixture-child") {
+    rpcError(frame, -32020, "sessionNotFound", "missing");
+    return true;
+  }
+  const source = child ? readFixture("phase3-child-read") : rows;
+  const result = responseFor(source, child ? "session/read" : "session/resume");
+  result.session.sessionId = frame.params.sessionId;
+  if (child && frame.params.sessionId === "fixture-child") {
+    result.session.title = "History child";
+    result.session.workspaceRoot = "/tmp/muse-phase0/child";
+  }
+  respond(frame, result);
+  return true;
 }
 
 function historyPageResponse(frame) {
