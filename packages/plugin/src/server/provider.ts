@@ -563,8 +563,19 @@ export interface ProviderHistoryItem {
   timestamp?: string;
 }
 
+export interface ProviderHistoryChild {
+  sessionId: string;
+  parentSessionId: string | null;
+  toolCallId?: string | null;
+  title?: string | null;
+  description?: string | null;
+  cwd: string;
+  items: ProviderHistoryItem[];
+}
+
 export interface ProviderHistoryReadResult {
   items: ProviderHistoryItem[];
+  children?: ProviderHistoryChild[];
   coverage: { kind: "complete" };
 }
 
@@ -1277,9 +1288,21 @@ const timelineItemSchema: z.ZodType<ProviderTimelineItem> = z.union([
 const historyItemSchema: z.ZodType<ProviderHistoryItem> = z
   .object({ item: timelineItemSchema, timestamp: z.string().optional() })
   .strip();
+const historyChildSchema: z.ZodType<ProviderHistoryChild> = z
+  .object({
+    sessionId: idSchema,
+    parentSessionId: idSchema.nullable(),
+    toolCallId: idSchema.nullable().optional(),
+    title: z.string().nullable().optional(),
+    description: z.string().nullable().optional(),
+    cwd: z.string(),
+    items: z.array(historyItemSchema),
+  })
+  .strip();
 export const ProviderHistoryReadResultSchema: z.ZodType<ProviderHistoryReadResult> = z
   .object({
     items: z.array(historyItemSchema),
+    children: z.array(historyChildSchema).optional(),
     coverage: z.object({ kind: z.literal("complete") }).strict(),
   })
   .strip();
