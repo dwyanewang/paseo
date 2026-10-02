@@ -516,6 +516,21 @@ test("dedicated history keeps the parent when a Muse child is unavailable", asyn
   expect((await h.recorded()).filter((frame) => frame.method === "session/read")).toHaveLength(2);
 });
 
+test("dedicated history propagates non-missing Muse child read failures", async () => {
+  const h = await harness("phase3-child-read", {
+    MUSE_TEST_HISTORY_READ: "1",
+    MUSE_TEST_HISTORY_CHILD: "1",
+    MUSE_TEST_HISTORY_CHILD_ERROR: "1",
+  });
+  await expect(
+    h.provider.readSessionHistory!({
+      persistence: { version: 1, data: { sessionId: "fixture-parent" } },
+      cwd: h.root,
+      launch: h.launch,
+    }),
+  ).rejects.toMatchObject({ kind: "overloaded", message: "busy" });
+});
+
 test("steer sends ifBusy steer and joins the running turn", async () => {
   const h = await harness("steer");
   await h.open();
