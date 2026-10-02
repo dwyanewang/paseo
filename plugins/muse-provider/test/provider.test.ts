@@ -465,6 +465,35 @@ test("dedicated history reads all Muse history pages when inline items are unava
   expect(methods).toEqual(["initialize", "initialized", "session/read", "view/page", "view/page"]);
 });
 
+test("dedicated history reads Muse child transcripts without opening them interactively", async () => {
+  const h = await harness("phase3-child-read", {
+    MUSE_TEST_HISTORY_READ: "1",
+    MUSE_TEST_HISTORY_CHILD: "1",
+  });
+  const result = await h.provider.readSessionHistory!({
+    persistence: { version: 1, data: { sessionId: "fixture-parent" } },
+    cwd: h.root,
+    launch: h.launch,
+  });
+  expect(result.children).toEqual([
+    expect.objectContaining({
+      sessionId: "fixture-child",
+      parentSessionId: null,
+      toolCallId: expect.any(String),
+      title: "History child",
+      cwd: "/tmp/muse-phase0/child",
+      items: expect.arrayContaining([
+        expect.objectContaining({
+          item: expect.objectContaining({ type: "assistant_message", text: "SUBAGENT_PHASE0_OK" }),
+        }),
+      ]),
+    }),
+  ]);
+  expect((await h.recorded()).filter((frame) => frame.method === "session/open")).toEqual([]);
+  expect((await h.recorded()).filter((frame) => frame.method === "session/read")).toHaveLength(2);
+  expect((await h.recorded()).filter((frame) => frame.method === "view/page")).toHaveLength(2);
+});
+
 test("steer sends ifBusy steer and joins the running turn", async () => {
   const h = await harness("steer");
   await h.open();
