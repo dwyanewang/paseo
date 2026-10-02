@@ -1,16 +1,88 @@
+import { tmpdir } from "node:os";
+import { randomUUID } from "node:crypto";
+import path from "node:path";
+import type { Page } from "@playwright/test";
 import type { UsageReportEntry } from "@getpaseo/protocol/messages";
 import { expect, test } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
+import { addConnectedHostAndReload } from "../support/helpers/hosts";
+import { startIsolatedHostDaemon } from "../support/helpers/isolated-host-daemon";
 import { getServerId } from "../support/helpers/server-id";
-import { installUsageReportsFixture } from "../support/helpers/usage-reports";
+import {
+  installUsageReportsFixture,
+  type UsageListRequest,
+  type UsageReportsFixture,
+} from "../support/helpers/usage-reports";
+import {
+  installLoginUsage,
+  openUsage,
+  refreshLoginUsage,
+  hoverUsageWindow,
+} from "../support/helpers/usage-login";
+import { expectPinnedUsage, togglePin, usageItem } from "../support/helpers/usage-sidebar-item";
+
+const emptyHome = path.join(tmpdir(), `paseo-usage-empty-${randomUUID()}`);
+test.use({
+  e2eDaemonEnvironment: {
+    HOME: emptyHome,
+    USERPROFILE: emptyHome,
+    CODEX_HOME: emptyHome,
+    CLAUDE_CONFIG_DIR: emptyHome,
+    XDG_DATA_HOME: emptyHome,
+    PI_CODING_AGENT_DIR: emptyHome,
+    COPILOT_TOKEN: "",
+    GITHUB_TOKEN: "",
+    GITHUB_PAT: "",
+    CURSOR_ACCESS_TOKEN: "",
+    CURSOR_TOKEN: "",
+    GROK_API_KEY: "",
+    GROK_TOKEN: "",
+    KIMI_TOKEN: "",
+    KIMI_API_KEY: "",
+    KIMI_CODE_HOME: emptyHome,
+    MINIMAX_API_KEY: "",
+    ZAI_API_KEY: "",
+    GLM_API_KEY: "",
+  },
+});
+
+function forcedRefreshes(usage: UsageReportsFixture): UsageListRequest[] {
+  return usage.listRequests().filter((request) => request.forceRefresh);
+}
 
 // Two hours reads "2h ago" for an hour, so the assertion cannot race the clock.
 function twoHoursAgo(): string {
   return new Date(Date.now() - 2 * 60 * 60_000).toISOString();
 }
 
+/** Set PASEO_QA_SCREENSHOT_DIR to keep a QA screenshot. */
+async function qaScreenshot(page: Page, name: string) {
+  const directory = process.env.PASEO_QA_SCREENSHOT_DIR;
+  if (!directory) return;
+  await page.waitForTimeout(600);
+  await page.addStyleTag({ content: ".__expo_fast_refresh { display: none !important; }" });
+  await page.screenshot({ path: path.join(directory, `${name}.png`) });
+}
+
+function hostFilter(page: Page) {
+  return page.locator('[data-testid="usage-host-filter-trigger"]:visible');
+}
+
+function weeklyReport(sourceId: string, usedPct: number): UsageReportEntry {
+  return {
+    id: `${sourceId}:a`,
+    account: {},
+    fetchedAt: twoHoursAgo(),
+    sourceId,
+    sourceLabel: `${sourceId} plan`,
+    report: { status: "available", windows: [{ id: "weekly", label: "Weekly", usedPct }] },
+  };
+}
+
 test.describe("usage screen", () => {
-  test("opens from the sidebar and groups reports under their host", async ({ page }) => {
+  test("opens from the sidebar on the host's reports, with no host filter for one host", async ({
+    page,
+  }) => {
     test.setTimeout(120_000);
     const serverId = getServerId();
     const usage = await installUsageReportsFixture(page, {
@@ -24,7 +96,7 @@ test.describe("usage screen", () => {
             sourceLabel: "Alpha plan",
             report: {
               status: "available",
-              windows: [{ id: "weekly", label: "Weekly", usedPct: 31, headline: true }],
+              windows: [{ id: "weekly", label: "Weekly", usedPct: 31 }],
             },
           },
           {
@@ -33,7 +105,10 @@ test.describe("usage screen", () => {
             fetchedAt: "2026-01-01T00:00:00.000Z",
             sourceId: "beta",
             sourceLabel: "Beta plan",
-            report: { status: "unavailable", windows: [] },
+            report: {
+              status: "unavailable",
+              problem: { kind: "no_quota", detail: "No active coding plan" },
+            },
           },
         ],
       ],
@@ -46,6 +121,8 @@ test.describe("usage screen", () => {
 
     const group = page.getByTestId(`usage-host-${serverId}`);
     await expect(group.getByText("Alpha plan", { exact: true })).toBeVisible({ timeout: 10_000 });
+    await expect(hostFilter(page)).toHaveCount(0);
+    await qaScreenshot(page, "phase7-usage-screen-one-host");
     await expect(group.getByText("31%")).toBeVisible();
     await expect(group.getByText("Beta plan", { exact: true })).toBeVisible();
     await expect(group.getByText("Unavailable", { exact: true })).toBeVisible();
@@ -66,7 +143,7 @@ test.describe("usage screen", () => {
       sourceLabel: "Beta plan",
       report: {
         status: "available",
-        windows: [{ id: "weekly", label: "Weekly", usedPct: 12, headline: true }],
+        windows: [{ id: "weekly", label: "Weekly", usedPct: 12 }],
       },
     };
     const alpha = (usedPct: number, fetchedAt: string): UsageReportEntry => ({
@@ -77,16 +154,16 @@ test.describe("usage screen", () => {
       sourceLabel: "Alpha plan",
       report: {
         status: "available",
-        windows: [{ id: "weekly", label: "Weekly", usedPct, headline: true }],
+        windows: [{ id: "weekly", label: "Weekly", usedPct }],
       },
     });
+    // The sidebar summary and the screen each load reports; only a card's Refresh forces one.
     const usage = await installUsageReportsFixture(page, {
       lists: [
-        [alpha(31, twoHoursAgo()), beta],
-        () => [
-          alpha(58, new Date().toISOString()),
-          { ...beta, fetchedAt: new Date().toISOString() },
-        ],
+        (request) =>
+          request.forceRefresh
+            ? [alpha(58, new Date().toISOString())]
+            : [alpha(31, twoHoursAgo()), beta],
       ],
     });
 
@@ -97,11 +174,9 @@ test.describe("usage screen", () => {
 
     const alphaRefresh = group.getByTestId("usage-refresh").first();
     await alphaRefresh.click();
-    await usage.waitForListRequests(2);
-    expect(usage.listRequests()).toEqual([
-      { forceRefresh: false, reportIds: undefined },
-      { forceRefresh: true, reportIds: ["alpha:a"] },
-    ]);
+    await expect
+      .poll(() => forcedRefreshes(usage))
+      .toEqual([{ forceRefresh: true, reportIds: ["alpha:a"] }]);
     await expect(group.getByText("58%")).toBeVisible();
     await expect(group.getByText("12%")).toBeVisible();
 
@@ -138,19 +213,146 @@ test.describe("usage screen", () => {
     await expect(group.getByTestId("usage-freshness")).toHaveText("Updated 2h ago");
   });
 
-  test("tells the user to update a host without usage sources", async ({ page }) => {
+  test("tells the user to update a host without usage support", async ({ page }) => {
     test.setTimeout(120_000);
     const serverId = getServerId();
-    const usage = await installUsageReportsFixture(page, { usageSources: false });
+    const usage = await installUsageReportsFixture(page, { usageSupported: false });
 
     await gotoAppShell(page);
-    await page.locator('[data-testid="sidebar-usage"]:visible').first().click();
+    // Without reports the footer has no Usage item; its Usage icon opens the screen.
+    await page.locator('[data-testid="sidebar-usage-icon"]:visible').first().click();
 
     await expect(
-      page.getByTestId(`usage-host-${serverId}`).getByText("Update the host to see usage", {
-        exact: true,
-      }),
+      page.getByTestId(`usage-host-${serverId}`).getByText(/^Update .+ to see usage$/),
     ).toBeVisible({ timeout: 10_000 });
+    await qaScreenshot(page, "phase7-usage-update-host");
     expect(usage.listRequests()).toHaveLength(0);
   });
+
+  test("a host picked on the Usage screen is the sidebar's host too, after a reload", async ({
+    page,
+  }) => {
+    test.setTimeout(420_000);
+    const primaryServerId = getServerId();
+    const secondary = await startIsolatedHostDaemon(
+      `srv_usage_${randomUUID().replaceAll("-", "").slice(0, 12)}`,
+    );
+    try {
+      await installUsageReportsFixture(page, { lists: [[weeklyReport("alpha", 31)]] });
+      await installUsageReportsFixture(page, {
+        port: secondary.port,
+        lists: [[weeklyReport("beta", 12)]],
+      });
+      await gotoAppShell(page);
+      await addConnectedHostAndReload(page, {
+        serverId: secondary.serverId,
+        label: "Secondary box",
+        port: secondary.port,
+      });
+
+      // Nothing picked and no workspace open: the first host.
+      await expectPinnedUsage(page, ["31% Weekly"]);
+      await usageItem(page).click();
+      await expect(page.getByTestId(`usage-host-${primaryServerId}`)).toBeVisible();
+
+      await hostFilter(page).click();
+      await page.getByTestId(`usage-host-filter-item-${secondary.serverId}`).click();
+      await expect(
+        page.getByTestId(`usage-host-${secondary.serverId}`).getByText("12%"),
+      ).toBeVisible({ timeout: 30_000 });
+      await expect(hostFilter(page)).toContainText("Secondary box");
+      await qaScreenshot(page, "usage-screen-picked-host");
+      await expectPinnedUsage(page, ["12% Weekly"]);
+
+      // The e2e seed resets the host list on every load, so reopening re-adds the second host.
+      await addConnectedHostAndReload(page, {
+        serverId: secondary.serverId,
+        label: "Secondary box",
+        port: secondary.port,
+      });
+      await expectPinnedUsage(page, ["12% Weekly"]);
+      await expect(
+        page.getByTestId(`usage-host-${secondary.serverId}`).getByText("12%"),
+      ).toBeVisible({ timeout: 30_000 });
+    } finally {
+      await secondary.close().catch(() => undefined);
+    }
+  });
+});
+
+const loginWindows: UsageReportEntry["report"] = {
+  status: "available",
+  windows: [
+    { id: "five_hour", label: "Session", shortLabel: "5h", summary: true, usedPct: 31 },
+    { id: "weekly", label: "Weekly", shortLabel: "wk", summary: true, usedPct: 54 },
+  ],
+};
+
+test("expired login refreshes to windows with visible pin toggles", async ({ page }) => {
+  const fixture = await installLoginUsage({
+    status: "unavailable",
+    problem: {
+      kind: "expired",
+      expiresAt: new Date(Date.now() - 3_600_000).toISOString(),
+      refreshedBy: "claude",
+    },
+  });
+  try {
+    await gotoAppShell(page);
+    await openUsage(page);
+    await expect(
+      page.getByText("Login expired 1h ago. Run claude to refresh it.", { exact: true }),
+    ).toBeVisible();
+    await expect(page.getByText("Unavailable", { exact: true })).toBeVisible();
+    await qaScreenshot(page, "usage-expired-login");
+    await fixture.setReport(loginWindows);
+    await refreshLoginUsage(page);
+    await expect(
+      page.getByText("Login expired 1h ago. Run claude to refresh it.", { exact: true }),
+    ).toHaveCount(0);
+    await expectPinnedUsage(page, ["31% 5h", "54% wk"]);
+    const row = page.getByRole("checkbox", { name: /^Pin Claude Weekly, / });
+    await expect(row.getByTestId("usage-pin-glyph-unpinned")).toHaveCSS("opacity", "0");
+    await hoverUsageWindow(page, "Weekly");
+    await expect(page.getByText("Pin", { exact: true })).toBeVisible();
+    await expect(row.getByTestId("usage-pin-glyph-unpinned")).toHaveCSS("opacity", "1");
+    await expect(row.getByTestId("usage-pin-glyph-unpinned").locator("svg")).toHaveAttribute(
+      "fill",
+      "none",
+    );
+    await qaScreenshot(page, "usage-pin-hover");
+    await togglePin(page.getByTestId("usage-report-login-journey:account"), "Claude", "Weekly");
+    await expect(row.getByTestId("usage-pin-glyph-pinned")).toHaveCSS("opacity", "1");
+    await expect(row.getByTestId("usage-pin-glyph-pinned").locator("svg")).not.toHaveAttribute(
+      "fill",
+      "none",
+    );
+    await expectPinnedUsage(page, ["54% wk"]);
+    await qaScreenshot(page, "usage-pin-selected");
+    await togglePin(page.getByTestId("usage-report-login-journey:account"), "Claude", "Weekly");
+    await expect(row.getByTestId("usage-pin-glyph-unpinned")).toHaveCSS("opacity", "1");
+    await expect(row.getByTestId("usage-pin-glyph-unpinned").locator("svg")).toHaveAttribute(
+      "fill",
+      "none",
+    );
+    await expectPinnedUsage(page, ["31% 5h", "54% wk"]);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("compact usage rows always show the pin glyph", async ({ page }) => {
+  const fixture = await installLoginUsage(loginWindows);
+  try {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await gotoAppShell(page);
+    await openUsage(page);
+    const card = page.getByTestId("usage-report-login-journey:account");
+    await expect(card.getByTestId("usage-pin-glyph-unpinned")).toHaveCount(2);
+    await expect(card.getByTestId("usage-pin-glyph-unpinned").nth(0)).toHaveCSS("opacity", "1");
+    await expect(card.getByTestId("usage-pin-glyph-unpinned").nth(1)).toHaveCSS("opacity", "1");
+    await qaScreenshot(page, "usage-pin-compact");
+  } finally {
+    await fixture.cleanup();
+  }
 });
