@@ -19,6 +19,7 @@ import {
   type ProviderConnection,
   type ProviderError,
   type ProviderEvent,
+  type ProviderHistoryChild,
   type ProviderHistoryReadResult,
   type ProviderInput,
   type ProviderPersistence,
@@ -995,6 +996,23 @@ class PluginAgentClient implements AgentClient {
         timestamp: entry.timestamp,
       });
     }
+    for (const child of result.children ?? []) {
+      events.push({
+        type: "provider_subagent",
+        provider: this.provider,
+        event: historyChildUpsert(child),
+      });
+      const childSnapshots = new Map<string, ProviderTimelineItem>();
+      for (const entry of child.items) {
+        const item = mapTimelineItem(entry.item, childSnapshots);
+        if (!item) continue;
+        events.push({
+          type: "provider_subagent",
+          provider: this.provider,
+          event: { type: "timeline", id: child.sessionId, item, timestamp: entry.timestamp },
+        });
+      }
+    }
     return { events, coverage: result.coverage };
   }
 
@@ -1717,6 +1735,19 @@ function mapPromptInput(
 function mapPromptContent(prompt: AgentPromptInput): ProviderContent[] {
   const content = typeof prompt === "string" ? [{ type: "text" as const, text: prompt }] : prompt;
   return toJsonValue(content, "prompt content") as ProviderContent[];
+}
+
+function historyChildUpsert(child: ProviderHistoryChild) {
+  return {
+    type: "upsert" as const,
+    id: child.sessionId,
+    parentSubagentId: child.parentSessionId,
+    toolCallId: child.toolCallId ?? null,
+    title: child.title ?? null,
+    description: child.description ?? null,
+    status: "completed" as const,
+    cwd: child.cwd,
+  };
 }
 
 function mapTimelineItem(

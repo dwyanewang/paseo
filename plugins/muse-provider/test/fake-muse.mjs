@@ -90,7 +90,17 @@ function controlResponse(frame) {
 }
 function parityResponse(frame) {
   if (frame.method === "session/read" && process.env.MUSE_TEST_HISTORY_READ) {
-    respond(frame, responseFor(rows, "session/resume"));
+    const source = process.env.MUSE_TEST_HISTORY_CHILD ? readFixture("phase3-child-read") : rows;
+    const result = responseFor(
+      source,
+      process.env.MUSE_TEST_HISTORY_CHILD ? "session/read" : "session/resume",
+    );
+    result.session.sessionId = frame.params.sessionId;
+    if (process.env.MUSE_TEST_HISTORY_CHILD && frame.params.sessionId === "fixture-child") {
+      result.session.title = "History child";
+      result.session.workspaceRoot = "/tmp/muse-phase0/child";
+    }
+    respond(frame, result);
     return true;
   }
   if (workflowResponse(frame)) return true;
@@ -173,11 +183,30 @@ function historyPageResponse(frame) {
     result = replace(
       responseFor(
         readFixture(
-          frame.params.sessionId === "fixture-child" ? "phase3-child-read" : "phase3-controls",
+          frame.params.sessionId === "fixture-child" || process.env.MUSE_TEST_HISTORY_CHILD
+            ? "phase3-child-read"
+            : "phase3-controls",
         ),
         "view/page",
       ),
     );
+    if (process.env.MUSE_TEST_HISTORY_CHILD && frame.params.sessionId !== "fixture-child") {
+      const childItems = readFixture("subagent")
+        .filter(
+          (row) =>
+            row.dir === "in" &&
+            (row.msg.method === "item/started" || row.msg.method === "item/completed") &&
+            row.msg.params?.item?.tool === "subagent_spawn",
+        )
+        .map((row) => ({
+          method: row.msg.method,
+          params: {
+            ...row.msg.params,
+            item: { ...row.msg.params.item, childSessionId: "fixture-child" },
+          },
+        }));
+      result.events.push(...childItems);
+    }
     for (const event of result.events) event.params.sessionId = frame.params.sessionId;
   }
   if (process.env.MUSE_TEST_HISTORY_PAGE_SIZE) {
