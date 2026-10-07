@@ -95,7 +95,9 @@ function WorkspaceHoverCardContent({
           {workspace.name}
         </Text>
       </View>
-      {prHint ? <PrBadge hint={prHint} serverId={workspace.serverId} style={styles.cardInfoRow} /> : null}
+      {prHint ? (
+        <PrBadge hint={prHint} serverId={workspace.serverId} style={styles.cardInfoRow} />
+      ) : null}
       {workspace.diffStat ? (
         <View style={styles.cardInfoRow}>
           <ThemedFileDiff size={12} uniProps={foregroundMutedColorMapping} />
@@ -127,7 +129,12 @@ function WorkspaceHoverCardContent({
       {prHint?.checks && prHint.checks.length > 0 ? (
         <>
           <View style={styles.separator} />
-          <ChecksSummaryPressable checks={prHint.checks} url={prHint.url} forge={prHint.forge} serverId={workspace.serverId} />
+          <ChecksSummaryPressable
+            checks={prHint.checks}
+            url={prHint.url}
+            forge={prHint.forge}
+            serverId={workspace.serverId}
+          />
         </>
       ) : null}
     </>
