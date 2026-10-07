@@ -2609,7 +2609,16 @@ describe("PiRpcAgentClient", () => {
           parentId: "entry-assistant-1",
           customType: "extension-output",
           content: "persisted extension output",
+          details: { source: "persisted-extension" },
           display: true,
+        }),
+        JSON.stringify({
+          type: "custom_message",
+          id: "entry-hidden-custom-1",
+          parentId: "entry-custom-1",
+          customType: "hidden-extension-output",
+          content: "hidden persisted extension output",
+          display: false,
         }),
         JSON.stringify({
           type: "session_info",
@@ -2649,7 +2658,19 @@ describe("PiRpcAgentClient", () => {
         {
           type: "timeline",
           provider: "pi",
-          item: { type: "assistant_message", text: "persisted extension output" },
+          item: {
+            type: "tool_call",
+            callId: "pi-custom-1",
+            name: "extension-output",
+            status: "completed",
+            detail: { type: "plain_text", text: "persisted extension output" },
+            metadata: {
+              synthetic: true,
+              customType: "extension-output",
+              details: { source: "persisted-extension" },
+            },
+            error: null,
+          },
         },
       ],
       coverage: { kind: "complete" },

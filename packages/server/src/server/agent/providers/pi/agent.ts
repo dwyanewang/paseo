@@ -489,6 +489,9 @@ function buildResumeConfig(
 }
 
 interface PiPersistedSessionEntry {
+  customType?: unknown;
+  details?: unknown;
+  display?: unknown;
   type?: string;
   id?: string;
   parentId?: string | null;
@@ -542,7 +545,13 @@ async function readPersistedPiHistory(sessionFile: string): Promise<{
     if (entry.type === "message" && isPiAgentMessage(entry.message)) {
       message = entry.message;
     } else if (entry.type === "custom_message" && isPiCustomMessageContent(entry.content)) {
-      message = { role: "custom", content: entry.content };
+      message = {
+        role: "custom",
+        content: entry.content,
+        customType: typeof entry.customType === "string" ? entry.customType : undefined,
+        details: entry.details,
+        display: typeof entry.display === "boolean" ? entry.display : undefined,
+      };
     }
     if (!message) {
       continue;
