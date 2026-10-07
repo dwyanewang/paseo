@@ -60,7 +60,6 @@ export class FakeOmp implements OmpRuntime {
   private nextStartError: Error | null = null;
   private nextSessionId = 0;
   private readonly sessionIdsByFile = new Map<string, string>();
-  private readonly queuedSessionSetups: Array<(session: FakeOmpSession) => void> = [];
   private readonly queuedSubagentSubscriptionErrors = new Map<
     FakeOmpSubagentSubscriptionLevel,
     Error
@@ -88,7 +87,6 @@ export class FakeOmp implements OmpRuntime {
     const session = new FakeOmpSession(launch, sessionId, this.removedModels);
     if (!launch.noSession) this.sessionIdsByFile.set(session.state.sessionFile, sessionId);
     session.commands = this.queuedCommands.shift() ?? [];
-    this.queuedSessionSetups.shift()?.(session);
     for (const [level, error] of this.queuedSubagentSubscriptionErrors) {
       session.subagentSubscriptionErrors.set(level, error);
     }
@@ -113,10 +111,6 @@ export class FakeOmp implements OmpRuntime {
 
   failNextStart(error: Error): void {
     this.nextStartError = error;
-  }
-
-  queueSessionSetup(setup: (session: FakeOmpSession) => void): void {
-    this.queuedSessionSetups.push(setup);
   }
 
   failNextSubagentSubscription(level: FakeOmpSubagentSubscriptionLevel, error: Error): void {
