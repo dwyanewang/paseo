@@ -4185,6 +4185,177 @@ describe("OpenCode persisted sessions", () => {
     };
   }
 
+  function createChildHistoryHarness(failure?: "children" | "messages" | "status") {
+    const harness = createHistoryHarness();
+    harness.sdkClient.sessionMessagesResponse = { data: [] };
+    harness.sdkClient.sessionChildrenResponses = [
+      {
+        data: [
+          {
+            id: "ses_child",
+            parentID: "ses_history",
+            title: "Inspect the repository",
+            agent: "explore",
+            directory: "/workspace/child",
+            revert: { messageID: "msg_child_03" },
+          },
+          { id: "ses_failed", parentID: "ses_history", title: "Failed task" },
+        ],
+      },
+      { data: [{ id: "ses_grandchild", parentID: "ses_child", title: "Nested task" }] },
+      { data: [] },
+      { data: [] },
+    ];
+    const message = (sessionID: string, id: string, text: string, failed = false) => ({
+      info: {
+        id,
+        sessionID,
+        role: "assistant",
+        time: { created: 1, completed: 2 },
+        ...(failed ? { error: { name: "UnknownError", data: { message: "failed" } } } : {}),
+      },
+      parts: [{ id: `prt_${id}`, sessionID, messageID: id, type: "text", text }],
+    });
+    const histories = [
+      { data: [] },
+      {
+        data: [
+          message("ses_child", "msg_child_01", "Child result"),
+          message("ses_child", "msg_child_03", "Reverted result"),
+        ],
+      },
+      { data: [message("ses_failed", "msg_failed", "Failed result", true)] },
+      { data: [message("ses_grandchild", "msg_grandchild", "Grandchild result")] },
+    ];
+    harness.sdkClient.sessionMessagesImplementation = async () => histories.shift() ?? { data: [] };
+    harness.sdkClient.sessionStatusResponse = { data: { ses_child: { type: "busy" } } };
+    if (failure === "children") {
+      harness.sdkClient.sessionChildrenResponses[1] = {
+        error: { message: "child listing unavailable" },
+      };
+    }
+    if (failure === "messages") {
+      harness.sdkClient.sessionMessagesImplementation = async () => {
+        if (harness.sdkClient.calls.sessionMessages.length === 4) {
+          return { error: { message: "grandchild messages unavailable" } };
+        }
+        return histories.shift() ?? { data: [] };
+      };
+    }
+    if (failure === "status") {
+      harness.sdkClient.sessionStatusResponse = { error: { message: "child status unavailable" } };
+    }
+    return harness;
+  }
+
+  test("reads saved children and nested timelines without an interactive session", async () => {
+    const { runtime, sdkClient, read } = createChildHistoryHarness();
+
+    await expect(read()).resolves.toEqual({
+      events: [
+        {
+          type: "provider_subagent",
+          provider: "opencode",
+          event: {
+            type: "upsert",
+            id: "ses_child",
+            parentSubagentId: null,
+            title: "explore",
+            description: "Inspect the repository",
+            status: "running",
+            cwd: "/workspace/child",
+            subtitle: "explore",
+          },
+        },
+        {
+          type: "provider_subagent",
+          provider: "opencode",
+          event: {
+            type: "timeline",
+            id: "ses_child",
+            item: { type: "assistant_message", text: "Child result", messageId: "msg_child_01" },
+            timestamp: "1970-01-01T00:00:01.000Z",
+          },
+        },
+        {
+          type: "provider_subagent",
+          provider: "opencode",
+          event: {
+            type: "upsert",
+            id: "ses_failed",
+            parentSubagentId: null,
+            description: "Failed task",
+            status: "failed",
+            cwd: "/workspace/repo",
+          },
+        },
+        {
+          type: "provider_subagent",
+          provider: "opencode",
+          event: {
+            type: "timeline",
+            id: "ses_failed",
+            item: { type: "assistant_message", text: "Failed result", messageId: "msg_failed" },
+            timestamp: "1970-01-01T00:00:01.000Z",
+          },
+        },
+        {
+          type: "provider_subagent",
+          provider: "opencode",
+          event: {
+            type: "upsert",
+            id: "ses_grandchild",
+            parentSubagentId: "ses_child",
+            description: "Nested task",
+            status: "completed",
+            cwd: "/workspace/child",
+          },
+        },
+        {
+          type: "provider_subagent",
+          provider: "opencode",
+          event: {
+            type: "timeline",
+            id: "ses_grandchild",
+            item: {
+              type: "assistant_message",
+              text: "Grandchild result",
+              messageId: "msg_grandchild",
+            },
+            timestamp: "1970-01-01T00:00:01.000Z",
+          },
+        },
+      ],
+      coverage: { kind: "complete" },
+    });
+    expect(sdkClient.calls.sessionChildren).toEqual([
+      { sessionID: "ses_history", directory: "/workspace/repo" },
+      { sessionID: "ses_child", directory: "/workspace/child" },
+      { sessionID: "ses_failed", directory: "/workspace/repo" },
+      { sessionID: "ses_grandchild", directory: "/workspace/child" },
+    ]);
+    expect(sdkClient.calls.globalEvent).toEqual([]);
+    expect(sdkClient.calls.eventSubscribe).toEqual([]);
+    expect(sdkClient.calls.sessionAbort).toEqual([]);
+    expect(sdkClient.calls.sessionUpdate).toEqual([]);
+    expect(sdkClient.calls.permissionList).toEqual([]);
+    expect(runtime.acquisitions).toEqual([{ kind: "current", releaseCount: 1 }]);
+  });
+
+  test.each([
+    ["children", "child listing unavailable"],
+    ["messages", "grandchild messages unavailable"],
+    ["status", "child status unavailable"],
+  ] as const)(
+    "releases the history server when reading child %s fails",
+    async (failure, message) => {
+      const { runtime, read } = createChildHistoryHarness(failure);
+
+      await expect(read()).rejects.toThrow(message);
+      expect(runtime.acquisitions).toEqual([{ kind: "current", releaseCount: 1 }]);
+    },
+  );
+
   test("reads history without starting an event stream or aborting the native session", async () => {
     const { runtime, sdkClient, read } = createHistoryHarness();
     sdkClient.sessionGetResponse = {

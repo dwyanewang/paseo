@@ -61,6 +61,7 @@ import {
   type ToolCallTimelineItem,
 } from "../agent-sdk-types.js";
 import { importSessionFromPersistence } from "../provider-session-import.js";
+import type { ProviderSubagentStatus } from "../provider-subagents/store.js";
 import {
   raceProviderRefreshAbort,
   runProviderRefreshActivity,
@@ -1664,24 +1665,16 @@ export class OpenCodeAgentClient implements AgentClient {
         }
         throw new Error(`Failed to read OpenCode session metadata: ${detail}`);
       }
-      const messagesResponse = await client.session.messages({
-        sessionID: handle.sessionId,
+      const messages = await readOpenCodeHistoryMessages(client, {
+        id: handle.sessionId,
         directory: cwd,
+        revert: sessionResponse.data.revert,
       });
-      if (messagesResponse.error || !messagesResponse.data) {
-        let detail = "response did not include session messages";
-        if (messagesResponse.error) {
-          detail = toDiagnosticErrorMessage(messagesResponse.error);
-        }
-        throw new Error(`Failed to read OpenCode session messages: ${detail}`);
-      }
-
-      const messages = filterOpenCodeRevertedMessages(
-        messagesResponse.data,
-        sessionResponse.data.revert,
-      );
       return {
-        events: messages.flatMap(buildOpenCodeReplayTimelineEvents),
+        events: [
+          ...messages.flatMap(buildOpenCodeReplayTimelineEvents),
+          ...(await readOpenCodeChildHistory(client, handle.sessionId, cwd)),
+        ],
         coverage: { kind: "complete" },
       };
     } finally {
@@ -2529,6 +2522,16 @@ function appendOpenCodeChildSessionDetected(
 
   knownChildSessionIds.add(child.id);
   const presentation = getOpenCodeSubagentPresentationState(child.id, state);
+  events.push(buildOpenCodeChildSessionUpsert(child, state.sessionId, presentation, status));
+  return true;
+}
+
+function buildOpenCodeChildSessionUpsert(
+  child: OpenCodeChildSessionInfo,
+  rootSessionId: string,
+  presentation: OpenCodeSubagentPresentationState,
+  status: ProviderSubagentStatus | null,
+): Extract<AgentStreamEvent, { type: "provider_subagent" }> {
   const subtitle = foldOpenCodeSubagentPresentation(presentation, {
     ...(child.agent ? { agentName: child.agent } : {}),
     ...(child.model?.id ? { modelId: child.model.id } : {}),
@@ -2537,21 +2540,42 @@ function appendOpenCodeChildSessionDetected(
   const title = claimOpenCodeSubagentFallbackTitle(presentation, child.agent);
   // The row label contract: `description` carries the task (session title fallback), `title`
   // carries the subagent type. Neither gets a placeholder — absent facts render as nothing.
-  events.push({
+  return {
     type: "provider_subagent",
     provider: "opencode",
     event: {
       type: "upsert",
       id: child.id,
-      parentSubagentId: child.parentSessionId === state.sessionId ? null : child.parentSessionId,
+      parentSubagentId: child.parentSessionId === rootSessionId ? null : child.parentSessionId,
       ...(title ? { title } : {}),
       ...(child.title && !presentation.descriptionFromLink ? { description: child.title } : {}),
       ...(status ? { status } : {}),
       ...(child.directory ? { cwd: child.directory } : {}),
       ...(subtitle ? { subtitle } : {}),
     },
-  });
-  return true;
+  };
+}
+
+function buildOpenCodeChildAssistantPresentation(
+  childId: string,
+  info: OpenCodeAssistantMessage,
+  presentation: OpenCodeSubagentPresentationState,
+): Extract<AgentStreamEvent, { type: "provider_subagent" }> | null {
+  const facts = readOpenCodeAssistantPresentationFacts(info);
+  if (!facts) return null;
+  const subtitle = foldOpenCodeSubagentPresentation(presentation, facts);
+  const title = claimOpenCodeSubagentFallbackTitle(presentation, facts.agentName);
+  if (!subtitle && !title) return null;
+  return {
+    type: "provider_subagent",
+    provider: "opencode",
+    event: {
+      type: "upsert",
+      id: childId,
+      ...(title ? { title } : {}),
+      ...(subtitle ? { subtitle } : {}),
+    },
+  };
 }
 
 function getOpenCodeSubAgentState(
@@ -3419,6 +3443,92 @@ async function listOpenCodeChildSessions(
     { signal },
   );
   return readOpenCodeChildSessionInfosFromResponse(sessionIdResponse) ?? [];
+}
+
+async function readOpenCodeHistoryMessages(
+  client: OpencodeClient,
+  session: Pick<OpenCodePersistedSession, "id" | "directory" | "revert">,
+): Promise<OpenCodeSessionMessage[]> {
+  const response = await client.session.messages({
+    sessionID: session.id,
+    directory: session.directory,
+  });
+  if (response.error || !response.data) {
+    const detail = response.error
+      ? toDiagnosticErrorMessage(response.error)
+      : "response did not include session messages";
+    throw new Error(`Failed to read OpenCode session messages: ${detail}`);
+  }
+  return filterOpenCodeRevertedMessages(response.data, session.revert);
+}
+
+async function readOpenCodeChildHistory(
+  client: OpencodeClient,
+  sessionId: string,
+  directory: string,
+): Promise<AgentStreamEvent[]> {
+  const events: AgentStreamEvent[] = [];
+  const queue = [{ id: sessionId, directory }];
+  const visited = new Set([sessionId]);
+  const statusesByDirectory = new Map<string, Record<string, unknown>>();
+  for (const parent of queue) {
+    const response = await client.session.children({
+      sessionID: parent.id,
+      directory: parent.directory,
+    });
+    const children = readOpenCodeChildSessionInfosFromResponse(response);
+    if (!children) {
+      const detail = response.error
+        ? toDiagnosticErrorMessage(response.error)
+        : "response did not include session children";
+      throw new Error(`Failed to read OpenCode session children: ${detail}`);
+    }
+    for (const savedChild of children) {
+      if (visited.has(savedChild.id)) continue;
+      visited.add(savedChild.id);
+      const child = { ...savedChild, directory: savedChild.directory ?? parent.directory };
+      queue.push(child);
+      const messages = await readOpenCodeHistoryMessages(client, child);
+      let statuses = statusesByDirectory.get(child.directory);
+      if (!statuses) {
+        const statusResponse = await client.session.status({ directory: child.directory });
+        if (statusResponse.error || !statusResponse.data) {
+          const detail = statusResponse.error
+            ? toDiagnosticErrorMessage(statusResponse.error)
+            : "response did not include session statuses";
+          throw new Error(`Failed to read OpenCode session statuses: ${detail}`);
+        }
+        statuses = statusResponse.data;
+        statusesByDirectory.set(child.directory, statuses);
+      }
+      const assistant = messages.findLast(
+        (message): message is OpenCodeSessionMessage & { info: OpenCodeAssistantMessage } =>
+          message.info.role === "assistant",
+      );
+      const status = readOpenCodeRecord(statuses[child.id]);
+      const presentation: OpenCodeSubagentPresentationState = { facts: {} };
+      events.push(
+        buildOpenCodeChildSessionUpsert(
+          child,
+          sessionId,
+          presentation,
+          recoverChildStatus(true, status?.type, assistant) ?? "completed",
+        ),
+      );
+      for (const event of messages.flatMap(buildOpenCodeReplayTimelineEvents)) {
+        events.push({
+          type: "provider_subagent",
+          provider: "opencode",
+          event: { type: "timeline", id: child.id, item: event.item, timestamp: event.timestamp },
+        });
+      }
+      const assistantPresentation =
+        assistant &&
+        buildOpenCodeChildAssistantPresentation(child.id, assistant.info, presentation);
+      if (assistantPresentation) events.push(assistantPresentation);
+    }
+  }
+  return events;
 }
 
 /** One OpenCode server generation a session talks to. */
@@ -4401,29 +4511,16 @@ class OpenCodeAgentSession implements AgentSession {
     if (!lastAssistant) {
       return;
     }
-    const facts = readOpenCodeAssistantPresentationFacts(lastAssistant.info);
-    if (!facts) {
-      return;
-    }
     const presentation = getOpenCodeSubagentPresentationState(
       child.id,
       this.getChildTranslationState(child.id),
     );
-    const subtitle = foldOpenCodeSubagentPresentation(presentation, facts);
-    const title = claimOpenCodeSubagentFallbackTitle(presentation, facts.agentName);
-    if (!subtitle && !title) {
-      return;
-    }
-    const event: AgentStreamEvent = {
-      type: "provider_subagent",
-      provider: "opencode",
-      event: {
-        type: "upsert",
-        id: child.id,
-        ...(title ? { title } : {}),
-        ...(subtitle ? { subtitle } : {}),
-      },
-    };
+    const event = buildOpenCodeChildAssistantPresentation(
+      child.id,
+      lastAssistant.info,
+      presentation,
+    );
+    if (!event) return;
     this.recordProviderInternalEvent(event);
     this.notifySubscribers(event, null);
   }

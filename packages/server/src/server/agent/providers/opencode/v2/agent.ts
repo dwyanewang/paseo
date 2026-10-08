@@ -8,6 +8,7 @@ import {
 } from "./configuration.js";
 import { commands } from "./commands.js";
 import { messages } from "./history.js";
+import { readSessionChildrenHistory } from "./children.js";
 import { V2Timeline } from "./timeline.js";
 
 import { waitForLocationReady, awaitPaseoPlugin } from "./readiness.js";
@@ -173,7 +174,10 @@ export class OpenCodeV2AgentClient implements AgentClient {
       const info = await connection.client.session.get({ sessionID });
       const timeline = new V2Timeline(false);
       return {
-        events: timeline.messages(await messages(connection.client, info.id)),
+        events: [
+          ...timeline.messages(await messages(connection.client, info.id)),
+          ...(await readSessionChildrenHistory(connection.client, info.id)),
+        ],
         coverage: { kind: "complete" },
       };
     } finally {
