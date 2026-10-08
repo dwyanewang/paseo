@@ -1,11 +1,12 @@
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { createServer, request as httpRequest } from "node:http";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import pino from "pino";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 
 import { ensureAgentLoaded } from "../agent-loading.js";
 import { AgentManager } from "../agent-manager.js";
@@ -15,37 +16,6 @@ import { OpenCodeServerManager } from "./opencode/server-manager.js";
 
 const SENTINEL = "PASEO_OPENCODE_HISTORY_4B71";
 const TIMEOUT_MS = 300_000;
-
-/**
- * Any OpenAI-compatible endpoint drives this test. OpenRouter's compatibility
- * layer is the zero-config default; PASEO_TEST_OPENAI_* points it at a local
- * gateway instead.
- */
-function resolveModelBackend(): { baseURL: string; apiKey: string; model: string } | null {
-  const baseURL = process.env.PASEO_TEST_OPENAI_BASE_URL?.trim();
-  const apiKey = process.env.PASEO_TEST_OPENAI_API_KEY?.trim();
-  const model = process.env.PASEO_TEST_OPENAI_MODEL?.trim();
-  if (baseURL && apiKey && model) {
-    return { baseURL, apiKey, model };
-  }
-  const openRouterKey = process.env.OPENROUTER_API_KEY?.trim();
-  if (openRouterKey) {
-    return {
-      baseURL: "https://openrouter.ai/api/v1",
-      apiKey: openRouterKey,
-      model: "google/gemini-2.5-flash-lite",
-    };
-  }
-  return null;
-}
-
-function isOpenCodeInstalled(): boolean {
-  try {
-    return execFileSync("which", ["opencode"], { encoding: "utf8" }).trim().length > 0;
-  } catch {
-    return false;
-  }
-}
 
 async function reservePort(): Promise<number> {
   const server = net.createServer();
@@ -96,44 +66,19 @@ async function createRecordingProxy(upstreamPort: number) {
     globalEventConnections(): number {
       return requests.filter((entry) => entry.url.startsWith("/global/event")).length;
     },
-    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+    close: () =>
+      new Promise<void>((resolve) => {
+        server.closeAllConnections();
+        server.close(() => resolve());
+      }),
   };
 }
 
-function writeOpenCodeConfig(
-  xdgConfig: string,
-  backend: { baseURL: string; apiKey: string; model: string },
-): void {
-  const providerDir = path.join(xdgConfig, "opencode");
-  mkdirSync(providerDir, { recursive: true });
-  writeFileSync(
-    path.join(providerDir, "opencode.json"),
-    JSON.stringify(
-      {
-        $schema: "https://opencode.ai/config.json",
-        provider: {
-          harness: {
-            npm: "@ai-sdk/openai-compatible",
-            name: "harness",
-            options: { baseURL: backend.baseURL, apiKey: backend.apiKey },
-            models: { [backend.model]: { name: backend.model } },
-          },
-        },
-      },
-      null,
-      2,
-    ),
-  );
-}
-
-const backend = resolveModelBackend();
-
 describe.sequential("OpenCode archived history read (real)", () => {
-  let harness: Awaited<ReturnType<typeof createHarness>> | null = null;
+  let harness: Awaited<ReturnType<typeof createHarness>>;
 
   beforeAll(async () => {
-    if (!backend || !isOpenCodeInstalled()) return;
-    harness = await createHarness(backend);
+    harness = await createHarness();
   }, 120_000);
 
   afterAll(async () => {
@@ -142,51 +87,67 @@ describe.sequential("OpenCode archived history read (real)", () => {
 
   test(
     "never aborts the native session and attaches to no event stream",
-    async (context) => {
-      if (!harness) {
-        context.skip();
-        return;
-      }
-      const { manager, storage, workspace, model, proxy, logger } = harness;
+    async () => {
+      const { agentId, sessionId } = await harness.createArchivedHistory();
+      const abortsBefore = harness.proxy.aborts(sessionId);
+      const eventStreamsBefore = harness.proxy.globalEventConnections();
+      const { timeline } = await harness.readAndCloseHistory(agentId);
 
-      // A real OpenCode session carrying real history.
-      const created = await manager.createAgent(
-        { provider: "opencode", cwd: workspace, model, modeId: "build" },
-        undefined,
-        { workspaceId: undefined },
+      expect(timeline).toContainEqual(
+        expect.objectContaining({
+          type: "user_message",
+          text: SENTINEL,
+        }),
       );
-      const agentId = created.id;
-      await manager.runAgent(agentId, `Reply with exactly ${SENTINEL} and no other text.`);
-      const sessionId = manager.getAgent(agentId)?.persistence?.sessionId;
-      expect(sessionId).toBeTruthy();
-
-      await manager.archiveAgent(agentId);
-
-      const abortsBefore = proxy.aborts(sessionId!);
-      const eventStreamsBefore = proxy.globalEventConnections();
-
-      // The history read, then the close that closing a tab would trigger.
-      await ensureAgentLoaded(agentId, { agentManager: manager, agentStorage: storage, logger });
-      expect(manager.getTimeline(agentId).length).toBeGreaterThan(0);
-      if (manager.getAgent(agentId)) {
-        await manager.closeAgent(agentId);
-      }
 
       expect(
-        proxy.aborts(sessionId!) - abortsBefore,
+        harness.proxy.aborts(sessionId) - abortsBefore,
         "a history read must not abort the native session",
       ).toBe(0);
 
       expect(
-        proxy.globalEventConnections() - eventStreamsBefore,
+        harness.proxy.globalEventConnections() - eventStreamsBefore,
         "a history read must not attach to the global event stream",
       ).toBe(0);
     },
     TIMEOUT_MS,
   );
+
+  test(
+    "restores saved child and grandchild history into a closed snapshot",
+    async () => {
+      const { agentId, childId, grandchildId } = await harness.createArchivedHistory();
+
+      const history = await harness.readAndCloseHistory(agentId);
+
+      expect(
+        history.subagents.map((child) => ({
+          id: child.id,
+          parentSubagentId: child.parentSubagentId,
+          description: child.description,
+          status: child.status,
+        })),
+      ).toEqual([
+        { id: childId, parentSubagentId: null, description: "Child task", status: "completed" },
+        {
+          id: grandchildId,
+          parentSubagentId: childId,
+          description: "Nested task",
+          status: "completed",
+        },
+      ]);
+      expect(history.childTimelines).toEqual([
+        [expect.objectContaining({ type: "user_message", text: `${SENTINEL}_CHILD` })],
+        [expect.objectContaining({ type: "user_message", text: `${SENTINEL}_GRANDCHILD` })],
+      ]);
+      expect(history.liveAgent).toBeNull();
+      expect(history.archivedAt).toEqual(expect.any(String));
+    },
+    TIMEOUT_MS,
+  );
 });
 
-async function createHarness(modelBackend: { baseURL: string; apiKey: string; model: string }) {
+async function createHarness() {
   const runtimeDir = mkdtempSync(path.join(os.tmpdir(), "paseo-opencode-history-"));
   const home = path.join(runtimeDir, "home");
   const xdgConfig = path.join(runtimeDir, "xdg-config");
@@ -197,7 +158,6 @@ async function createHarness(modelBackend: { baseURL: string; apiKey: string; mo
   for (const directory of [home, xdgConfig, xdgData, xdgCache, xdgState, workspace]) {
     mkdirSync(directory, { recursive: true });
   }
-  writeOpenCodeConfig(xdgConfig, modelBackend);
   // OpenCode keys a session to its project, which it resolves from the git root.
   execFileSync("git", ["init", "-q"], { cwd: workspace });
 
@@ -215,7 +175,7 @@ async function createHarness(modelBackend: { baseURL: string; apiKey: string; mo
   const upstreamPort = await reservePort();
   const proxy = await createRecordingProxy(upstreamPort);
   const logger = pino({ level: "silent" });
-  let child: ChildProcess | null = null;
+  let serverProcess: ChildProcess | null = null;
   const placeholders: ChildProcess[] = [];
   const serverManager = new OpenCodeServerManager({
     logger,
@@ -227,24 +187,37 @@ async function createHarness(modelBackend: { baseURL: string; apiKey: string; mo
     // session; later acquisitions get a live placeholder that announces the
     // readiness line the manager waits for.
     spawnServerProcess: () => {
-      if (child) {
+      if (serverProcess) {
         const placeholder = spawn(
-          "sh",
-          ["-c", `echo "listening on 127.0.0.1:${upstreamPort}"; sleep 100000`],
+          process.execPath,
+          [
+            "-e",
+            `console.log("listening on 127.0.0.1:${upstreamPort}"); setInterval(() => {}, 1000)`,
+          ],
           { stdio: ["ignore", "pipe", "pipe"] },
         );
         placeholders.push(placeholder);
         return placeholder;
       }
-      child = spawn("opencode", ["serve", "--port", String(upstreamPort)], {
+      serverProcess = spawn("opencode", ["serve", "--port", String(upstreamPort)], {
         cwd: workspace,
         env: isolatedEnv,
         stdio: ["ignore", "pipe", "pipe"],
       });
-      return child;
+      return serverProcess;
     },
   });
-  const lease = await serverManager.acquireCurrent();
+  const closeServer = async () => {
+    await serverManager.shutdown();
+    serverProcess?.kill("SIGKILL");
+    for (const placeholder of placeholders) placeholder.kill("SIGKILL");
+    await proxy.close();
+    rmSync(runtimeDir, { recursive: true, force: true });
+  };
+  const lease = await serverManager.acquireCurrent().catch(async (error: unknown) => {
+    await closeServer();
+    throw error;
+  });
   const client = new OpenCodeAgentClient(logger, undefined, { serverManager });
   const storage = new AgentStorage(path.join(runtimeDir, "agents"), logger);
   const manager = new AgentManager({
@@ -252,21 +225,69 @@ async function createHarness(modelBackend: { baseURL: string; apiKey: string; mo
     registry: storage,
     logger,
   });
+  const nativeClient = createOpencodeClient({
+    baseUrl: `http://127.0.0.1:${proxy.port}`,
+    directory: workspace,
+  });
+  const writeHistory = async (sessionId: string, text: string) => {
+    // noReply persists a real OpenCode message without invoking a model. The subject
+    // is the stored history and its read side effects, so model inference adds no coverage.
+    const response = await nativeClient.session.prompt({
+      sessionID: sessionId,
+      directory: workspace,
+      noReply: true,
+      parts: [{ type: "text", text }],
+    });
+    if (response.error)
+      throw new Error(`Failed to write OpenCode history: ${JSON.stringify(response.error)}`);
+  };
+  const createChild = async (parentID: string, title: string, text: string) => {
+    const response = await nativeClient.session.create({ directory: workspace, parentID, title });
+    if (response.error || !response.data)
+      throw new Error(`Failed to create OpenCode child: ${JSON.stringify(response.error)}`);
+    await writeHistory(response.data.id, text);
+    return response.data.id;
+  };
 
   return {
-    manager,
-    storage,
-    workspace,
-    logger,
     proxy,
-    model: `harness/${modelBackend.model}`,
+    async createArchivedHistory() {
+      const created = await manager.createAgent(
+        { provider: "opencode", cwd: workspace, modeId: "build" },
+        undefined,
+        { workspaceId: undefined },
+      );
+      const sessionId = created.persistence?.sessionId;
+      if (!sessionId) throw new Error("OpenCode agent did not persist its session ID");
+      await writeHistory(sessionId, SENTINEL);
+      const childId = await createChild(sessionId, "Child task", `${SENTINEL}_CHILD`);
+      const grandchildId = await createChild(childId, "Nested task", `${SENTINEL}_GRANDCHILD`);
+      await manager.archiveAgent(created.id);
+      manager.discardHistoryState(created.id);
+      return { agentId: created.id, sessionId, childId, grandchildId };
+    },
+    async readAndCloseHistory(agentId: string) {
+      await ensureAgentLoaded(agentId, { agentManager: manager, agentStorage: storage, logger });
+      const subagents = manager.listProviderSubagents(agentId);
+      const history = {
+        timeline: manager.getTimeline(agentId),
+        subagents,
+        childTimelines: subagents.map((child) =>
+          manager.fetchProviderSubagentTimeline(agentId, child.id).rows.map((row) => row.item),
+        ),
+        liveAgent: manager.getAgent(agentId),
+        archivedAt: (await storage.get(agentId))?.archivedAt,
+      };
+      await manager.closeAgent(agentId);
+      return history;
+    },
     async close() {
-      await storage.flush();
-      await lease.release();
-      await proxy.close();
-      child?.kill("SIGKILL");
-      for (const placeholder of placeholders) placeholder.kill("SIGKILL");
-      rmSync(runtimeDir, { recursive: true, force: true });
+      try {
+        await storage.flush();
+        await lease.release();
+      } finally {
+        await closeServer();
+      }
     },
   };
 }
