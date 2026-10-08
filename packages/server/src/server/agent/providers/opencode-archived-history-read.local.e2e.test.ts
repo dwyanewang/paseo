@@ -74,7 +74,7 @@ async function createRecordingProxy(upstreamPort: number) {
   };
 }
 
-describe.sequential("OpenCode archived history read (real)", () => {
+describe.sequential("OpenCode archived history read (local)", () => {
   let harness: Awaited<ReturnType<typeof createHarness>>;
 
   beforeAll(async () => {
