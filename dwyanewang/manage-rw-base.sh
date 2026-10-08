@@ -1097,8 +1097,12 @@ replay_retained_features() {
   for ((index = start_index; index < operation_replay_count; index++)); do
     commit=${operation_replay_commits[$index]}
     write_progress "$operation_dir" replay "$index"
+    # Maintenance merges can record only ancestry, and main can already contain a
+    # retained integration's delta. Keep those empty replay events without treating
+    # them as conflicts; real conflicts still use the frozen review/continue flow.
     if ! git -C "$operation_worktree" -c core.hooksPath=/dev/null \
-      -c rerere.enabled=false -c rerere.autoupdate=false cherry-pick -m 1 "$commit"; then
+      -c rerere.enabled=false -c rerere.autoupdate=false \
+      cherry-pick --keep-redundant-commits -m 1 "$commit"; then
       snapshot_conflict replay "$index"
       auto_stage_disjoint_patch_unions
       printf 'PASEO_RW_BASE_OPERATION=%s\n' "$operation_request"

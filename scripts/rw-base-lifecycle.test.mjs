@@ -1092,6 +1092,75 @@ test("retires one feature by rebuilding from main and retained integrations", ()
   });
 });
 
+test("retires another feature while retaining a maintenance merge with no tree changes", () => {
+  withFixture({}, (fixture) => {
+    promoteBoth(fixture);
+    const maintenanceRoot = path.join(fixture.fixtureRoot, "maintenance-two");
+    git(fixture.controlRoot, "branch", "maintenance/two", "rw-base");
+    git(fixture.controlRoot, "worktree", "add", maintenanceRoot, "maintenance/two");
+    git(maintenanceRoot, "commit", "--allow-empty", "-m", "chore: record feature two maintenance");
+    git(maintenanceRoot, "push", "-u", "origin", "maintenance/two");
+
+    const maintained = runManage(fixture, "maintain", [
+      "--feature",
+      "feature-two",
+      "--branch",
+      "maintenance/two",
+    ]);
+    assert.equal(maintained.status, 0, `${maintained.stdout}\n${maintained.stderr}`);
+    const baseBefore = git(fixture.controlRoot, "rev-parse", "rw-base");
+    assert.equal(
+      git(fixture.controlRoot, "rev-parse", `${baseBefore}^{tree}`),
+      git(fixture.controlRoot, "rev-parse", `${baseBefore}^1^{tree}`),
+    );
+
+    const result = runManage(fixture, "retire", [
+      "--feature",
+      "feature-one",
+      "--replacement",
+      "upstream#123",
+    ]);
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.equal(existsSync(path.join(fixture.buildRoot, "feature-one.txt")), false);
+    assert.equal(readFileSync(path.join(fixture.buildRoot, "feature-two.txt"), "utf8"), "two\n");
+    assert.equal(git(fixture.controlRoot, "rev-parse", "rw-base^1"), baseBefore);
+    assert.equal(
+      git(fixture.controlRoot, "rev-parse", "rw-base"),
+      git(fixture.controlRoot, "rev-parse", "origin/rw-base"),
+    );
+    const status = runManage(fixture, "status");
+    assert.match(status.stdout, /feature-one\tretired/);
+    assert.match(status.stdout, /feature-two\tactive[^\n]*integrations=2/);
+  });
+});
+
+test("retires another feature when main already contains the retained feature delta", () => {
+  withFixture({}, (fixture) => {
+    promoteBoth(fixture);
+    const updaterRoot = path.join(fixture.fixtureRoot, "upstream-absorbed-feature");
+    git(fixture.fixtureRoot, "clone", fixture.upstreamRoot, updaterRoot);
+    git(updaterRoot, "config", "user.name", "Upstream User");
+    git(updaterRoot, "config", "user.email", "upstream@example.com");
+    writeFileSync(path.join(updaterRoot, "feature-two.txt"), "two\n");
+    git(updaterRoot, "add", "feature-two.txt");
+    git(updaterRoot, "commit", "-m", "feat: absorb feature two upstream");
+    git(updaterRoot, "push", "origin", "main");
+
+    const result = runManage(fixture, "retire", [
+      "--feature",
+      "feature-one",
+      "--replacement",
+      "upstream#123",
+    ]);
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.equal(existsSync(path.join(fixture.buildRoot, "feature-one.txt")), false);
+    assert.equal(readFileSync(path.join(fixture.buildRoot, "feature-two.txt"), "utf8"), "two\n");
+    const status = runManage(fixture, "status");
+    assert.match(status.stdout, /feature-one\tretired/);
+    assert.match(status.stdout, /feature-two\tactive/);
+  });
+});
+
 test("preserves refs on retirement replay conflicts and supports abort", () => {
   withFixture({ retainedFeatureUsesSharedPath: true }, (fixture) => {
     promoteBoth(fixture);
