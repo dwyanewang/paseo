@@ -104,18 +104,30 @@ async function createLoaderHarness(options: LoaderHarnessOptions = {}) {
         ...(broadcastTimeline ? { broadcastTimeline: true } : {}),
         logger,
       }),
-    createArchived: async (agentId: string, archiveOptions?: { internal?: boolean }) => {
-      const agent = await manager.createAgent(
-        {
+    seedArchivedInternal: async (agentId: string) => {
+      // Internal runtimes are disposable; only legacy records retain their history on disk.
+      await storage.upsert({
+        id: agentId,
+        provider: "codex",
+        cwd: root,
+        workspaceId: "workspace-archived",
+        createdAt: "2026-08-22T00:00:00.000Z",
+        updatedAt: "2026-08-22T00:00:01.000Z",
+        labels: {},
+        lastStatus: "closed",
+        internal: true,
+        archivedAt: "2026-08-22T00:00:01.000Z",
+        persistence: {
           provider: "codex",
-          cwd: root,
-          ...(archiveOptions?.internal === undefined ? {} : { internal: archiveOptions.internal }),
+          sessionId: `legacy-internal-${agentId}`,
+          metadata: { cwd: root },
         },
-        agentId,
-        {
-          workspaceId: "workspace-archived",
-        },
-      );
+      });
+    },
+    createArchived: async (agentId: string) => {
+      const agent = await manager.createAgent({ provider: "codex", cwd: root }, agentId, {
+        workspaceId: "workspace-archived",
+      });
       await manager.archiveAgent(agent.id);
       return agent;
     },
@@ -195,7 +207,7 @@ test("keeps archived internal history hidden from public provider-subagent reads
         },
       ]),
   });
-  await harness.createArchived(agentId, { internal: true });
+  await harness.seedArchivedInternal(agentId);
   expect((await harness.storage.get(agentId))?.internal).toBe(true);
 
   const snapshot = await harness.load(agentId);
@@ -293,7 +305,11 @@ async function runConcurrentUnarchiveScenario(
   if (scenarioOptions?.internal) {
     agentId = "00000000-0000-4000-8000-000000000308";
   }
-  await harness.createArchived(agentId, scenarioOptions);
+  if (scenarioOptions?.internal) {
+    await harness.seedArchivedInternal(agentId);
+  } else {
+    await harness.createArchived(agentId);
+  }
   const attentionTimestamp = "2026-08-22T03:04:05.000Z";
   const archivedRecord = await harness.requireRecord(agentId);
   await harness.storage.upsert({

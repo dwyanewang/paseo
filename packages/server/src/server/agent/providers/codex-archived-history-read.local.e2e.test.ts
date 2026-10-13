@@ -171,11 +171,6 @@ describe("Codex archived history read (local e2e)", () => {
         expect(await listNativeThreads()).toContain(threadId);
 
         await manager.archiveAgent(agentId);
-        // `archiveAgentUnlocked` syncs the native archive before it closes the
-        // runtime, so `thread/archive` loses to the thread's own writer lock and
-        // the best-effort sync swallows it. Archive again now that the runtime is
-        // gone, so this test observes a genuinely archived native thread.
-        await client.archiveNativeSession(handle!);
         expect(await listNativeThreads()).not.toContain(threadId);
         expect(await settledAppServers()).toEqual([]);
 
@@ -218,7 +213,7 @@ describe("Codex archived history read (local e2e)", () => {
     120_000,
   );
   test.runIf(isCodexInstalled())(
-    "does not resume a native thread the Paseo archive left active",
+    "does not resume an active native thread behind an archived Paseo record",
     async () => {
       const cwd = mkdtempSync(path.join(os.tmpdir(), "codex-active-history-cwd-"));
       const codexHome = mkdtempSync(path.join(os.tmpdir(), "codex-active-history-home-"));
@@ -251,11 +246,11 @@ describe("Codex archived history read (local e2e)", () => {
         const threadId = handle?.sessionId;
         expect(threadId).toBeTruthy();
 
-        // The ordinary archive path syncs the native archive while the runtime
-        // still owns the thread's writer, so `thread/archive` loses and the
-        // best-effort sync swallows it. The Paseo record is archived while the
-        // native thread stays active — the state a history read actually meets.
         await manager.archiveAgent(agentId);
+        const archivedAt = (await storage.get(agentId))?.archivedAt;
+        expect(archivedAt).toEqual(expect.any(String));
+        // Model legacy archive drift without changing the archived Paseo record.
+        await client.unarchiveNativeSession(handle!);
         expect(await listNativeThreads()).toContain(threadId);
         expect(await settledAppServers()).toEqual([]);
 
@@ -265,6 +260,8 @@ describe("Codex archived history read (local e2e)", () => {
           logger,
         });
         expect(manager.getTimeline(agentId).length).toBeGreaterThan(0);
+        expect((await storage.get(agentId))?.archivedAt).toBe(archivedAt);
+        expect(await listNativeThreads()).toContain(threadId);
 
         // Codex refuses to archive a thread that has an active writer. A read-only
         // history pass takes no writer, so this succeeds; a `thread/resume` would

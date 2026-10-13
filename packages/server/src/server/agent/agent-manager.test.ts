@@ -8068,6 +8068,95 @@ test("clearAgentAttention publishes archived attention changes without loading h
   }
 });
 
+test.each(["unarchive", "metadata"] as const)(
+  "clearAgentAttention preserves a concurrent %s change",
+  async (mutationKind) => {
+    const agentId = "00000000-0000-4000-8000-000000000133";
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-attention-race-"));
+    const mutationStarted = deferred<void>();
+    const mutationAllowed = deferred<void>();
+    const mutationWritten = deferred<void>();
+    const storage = new (class extends AgentStorage {
+      override async upsert(record: StoredAgentRecord): Promise<void> {
+        if (record.requiresAttention === false) {
+          await mutationWritten.promise;
+        }
+        if (record.labels.moved === "true") {
+          mutationStarted.resolve();
+          await mutationAllowed.promise;
+        }
+        await super.upsert(record);
+        if (record.labels.moved === "true") {
+          mutationWritten.resolve();
+        }
+      }
+    })(join(workdir, "agents"), logger);
+    const manager = new AgentManager({
+      clients: { codex: new TestAgentClient() },
+      registry: storage,
+      logger,
+    });
+    const before: StoredAgentRecord = {
+      id: agentId,
+      provider: "codex",
+      cwd: workdir,
+      workspaceId: "workspace-before",
+      title: "Before",
+      createdAt: "2026-08-30T00:00:00.000Z",
+      updatedAt: "2026-08-30T00:00:01.000Z",
+      labels: { retained: "true" },
+      lastStatus: "closed",
+      persistence: { provider: "codex", sessionId: "attention-race-session" },
+      requiresAttention: true,
+      attentionReason: "finished",
+      attentionTimestamp: "2026-08-30T00:00:01.000Z",
+      archivedAt: "2026-08-30T00:00:02.000Z",
+    };
+
+    try {
+      await storage.upsert(before);
+      let mutation: Promise<unknown>;
+      let expectedArchivedAt = before.archivedAt;
+      let expectedWorkspaceId = before.workspaceId;
+      let expectedTitle = before.title;
+      if (mutationKind === "unarchive") {
+        mutation = manager.unarchiveSnapshot(agentId, {
+          workspaceId: "workspace-after",
+          labels: { moved: "true" },
+        });
+        expectedArchivedAt = null;
+        expectedWorkspaceId = "workspace-after";
+      } else {
+        mutation = manager.updateAgentMetadata(agentId, {
+          title: "After",
+          labels: { moved: "true" },
+        });
+        expectedTitle = "After";
+      }
+      await mutationStarted.promise;
+      const clearAttention = manager.clearAgentAttention(agentId);
+      mutationAllowed.resolve();
+      await Promise.all([mutation, clearAttention]);
+
+      expect(await storage.get(agentId)).toMatchObject({
+        archivedAt: expectedArchivedAt,
+        workspaceId: expectedWorkspaceId,
+        title: expectedTitle,
+        labels: { retained: "true", moved: "true" },
+        requiresAttention: false,
+        attentionReason: null,
+        attentionTimestamp: null,
+      });
+      expect(manager.getAgent(agentId)).toBeNull();
+    } finally {
+      mutationAllowed.resolve();
+      mutationWritten.resolve();
+      await storage.flush();
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  },
+);
+
 test("clearAgentAttention clears archived history snapshots without resuming a provider runtime", async () => {
   const agentId = "00000000-0000-4000-8000-000000000131";
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-archived-attention-"));
