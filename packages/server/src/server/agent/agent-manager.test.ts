@@ -3,7 +3,7 @@ import {
   formatAgentMessage,
   formatSystemNotificationPrompt,
 } from "./agent-messages/index.js";
-import { expect, test, vi } from "vitest";
+import { expect, onTestFinished, test, vi } from "vitest";
 import { spawn } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -8068,94 +8068,108 @@ test("clearAgentAttention publishes archived attention changes without loading h
   }
 });
 
-test.each(["unarchive", "metadata"] as const)(
-  "clearAgentAttention preserves a concurrent %s change",
-  async (mutationKind) => {
-    const agentId = "00000000-0000-4000-8000-000000000133";
-    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-attention-race-"));
-    const mutationStarted = deferred<void>();
-    const mutationAllowed = deferred<void>();
-    const mutationWritten = deferred<void>();
-    const storage = new (class extends AgentStorage {
-      override async upsert(record: StoredAgentRecord): Promise<void> {
-        if (record.requiresAttention === false) {
-          await mutationWritten.promise;
-        }
-        if (record.labels.moved === "true") {
-          mutationStarted.resolve();
-          await mutationAllowed.promise;
-        }
-        await super.upsert(record);
-        if (record.labels.moved === "true") {
-          mutationWritten.resolve();
-        }
+async function createAttentionRaceHarness() {
+  const agentId = "00000000-0000-4000-8000-000000000133";
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-attention-race-"));
+  const mutationStarted = deferred<void>();
+  const mutationAllowed = deferred<void>();
+  const mutationWritten = deferred<void>();
+  const storage = new (class extends AgentStorage {
+    override async upsert(record: StoredAgentRecord): Promise<void> {
+      if (record.requiresAttention === false) {
+        await mutationWritten.promise;
       }
-    })(join(workdir, "agents"), logger);
-    const manager = new AgentManager({
-      clients: { codex: new TestAgentClient() },
-      registry: storage,
-      logger,
-    });
-    const before: StoredAgentRecord = {
-      id: agentId,
-      provider: "codex",
-      cwd: workdir,
-      workspaceId: "workspace-before",
-      title: "Before",
-      createdAt: "2026-08-30T00:00:00.000Z",
-      updatedAt: "2026-08-30T00:00:01.000Z",
-      labels: { retained: "true" },
-      lastStatus: "closed",
-      persistence: { provider: "codex", sessionId: "attention-race-session" },
-      requiresAttention: true,
-      attentionReason: "finished",
-      attentionTimestamp: "2026-08-30T00:00:01.000Z",
-      archivedAt: "2026-08-30T00:00:02.000Z",
-    };
-
-    try {
-      await storage.upsert(before);
-      let mutation: Promise<unknown>;
-      let expectedArchivedAt = before.archivedAt;
-      let expectedWorkspaceId = before.workspaceId;
-      let expectedTitle = before.title;
-      if (mutationKind === "unarchive") {
-        mutation = manager.unarchiveSnapshot(agentId, {
-          workspaceId: "workspace-after",
-          labels: { moved: "true" },
-        });
-        expectedArchivedAt = null;
-        expectedWorkspaceId = "workspace-after";
-      } else {
-        mutation = manager.updateAgentMetadata(agentId, {
-          title: "After",
-          labels: { moved: "true" },
-        });
-        expectedTitle = "After";
+      if (record.labels.moved === "true") {
+        mutationStarted.resolve();
+        await mutationAllowed.promise;
       }
-      await mutationStarted.promise;
-      const clearAttention = manager.clearAgentAttention(agentId);
-      mutationAllowed.resolve();
-      await Promise.all([mutation, clearAttention]);
-
-      expect(await storage.get(agentId)).toMatchObject({
-        archivedAt: expectedArchivedAt,
-        workspaceId: expectedWorkspaceId,
-        title: expectedTitle,
-        labels: { retained: "true", moved: "true" },
-        requiresAttention: false,
-        attentionReason: null,
-        attentionTimestamp: null,
-      });
-      expect(manager.getAgent(agentId)).toBeNull();
-    } finally {
-      mutationAllowed.resolve();
-      mutationWritten.resolve();
-      await storage.flush();
-      rmSync(workdir, { recursive: true, force: true });
+      await super.upsert(record);
+      if (record.labels.moved === "true") {
+        mutationWritten.resolve();
+      }
     }
-  },
-);
+  })(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+  });
+
+  onTestFinished(async () => {
+    mutationAllowed.resolve();
+    mutationWritten.resolve();
+    await storage.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  });
+
+  await storage.upsert({
+    id: agentId,
+    provider: "codex",
+    cwd: workdir,
+    workspaceId: "workspace-before",
+    title: "Before",
+    createdAt: "2026-08-30T00:00:00.000Z",
+    updatedAt: "2026-08-30T00:00:01.000Z",
+    labels: { retained: "true" },
+    lastStatus: "closed",
+    persistence: { provider: "codex", sessionId: "attention-race-session" },
+    requiresAttention: true,
+    attentionReason: "finished",
+    attentionTimestamp: "2026-08-30T00:00:01.000Z",
+    archivedAt: "2026-08-30T00:00:02.000Z",
+  });
+
+  async function clearAttentionDuring(mutation: Promise<unknown>): Promise<void> {
+    await mutationStarted.promise;
+    const clearAttention = manager.clearAgentAttention(agentId);
+    mutationAllowed.resolve();
+    await Promise.all([mutation, clearAttention]);
+  }
+
+  return { agentId, manager, storage, clearAttentionDuring };
+}
+
+test("clearAgentAttention preserves a concurrent unarchive and workspace move", async () => {
+  const { agentId, manager, storage, clearAttentionDuring } = await createAttentionRaceHarness();
+  const unarchive = manager.unarchiveSnapshot(agentId, {
+    workspaceId: "workspace-after",
+    labels: { moved: "true" },
+  });
+
+  await clearAttentionDuring(unarchive);
+
+  expect(await storage.get(agentId)).toMatchObject({
+    archivedAt: null,
+    workspaceId: "workspace-after",
+    title: "Before",
+    labels: { retained: "true", moved: "true" },
+    requiresAttention: false,
+    attentionReason: null,
+    attentionTimestamp: null,
+  });
+  expect(manager.getAgent(agentId)).toBeNull();
+});
+
+test("clearAgentAttention preserves concurrent title and label updates", async () => {
+  const { agentId, manager, storage, clearAttentionDuring } = await createAttentionRaceHarness();
+  const metadataUpdate = manager.updateAgentMetadata(agentId, {
+    title: "After",
+    labels: { moved: "true" },
+  });
+
+  await clearAttentionDuring(metadataUpdate);
+
+  expect(await storage.get(agentId)).toMatchObject({
+    archivedAt: "2026-08-30T00:00:02.000Z",
+    workspaceId: "workspace-before",
+    title: "After",
+    labels: { retained: "true", moved: "true" },
+    requiresAttention: false,
+    attentionReason: null,
+    attentionTimestamp: null,
+  });
+  expect(manager.getAgent(agentId)).toBeNull();
+});
 
 test("clearAgentAttention clears archived history snapshots without resuming a provider runtime", async () => {
   const agentId = "00000000-0000-4000-8000-000000000131";
