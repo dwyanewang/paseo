@@ -2391,6 +2391,12 @@ export class AgentManager {
 
   async clearAgentAttention(agentId: string): Promise<void> {
     const normalizedAgentId = validateAgentId(agentId, "clearAgentAttention");
+    return this.runLifecycleMutation(normalizedAgentId, () =>
+      this.clearAgentAttentionUnlocked(normalizedAgentId),
+    );
+  }
+
+  private async clearAgentAttentionUnlocked(normalizedAgentId: string): Promise<void> {
     const liveAgent = this.agents.get(normalizedAgentId);
     if (liveAgent) {
       if (liveAgent.attention.requiresAttention) {
