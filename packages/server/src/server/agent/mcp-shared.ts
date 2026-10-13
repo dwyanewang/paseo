@@ -91,22 +91,17 @@ export interface AgentWaitWithTimeoutResult extends WaitForAgentResult {
   timedOut: boolean;
 }
 
-/**
- * Timeline reads are best-effort here: the timeout message is the whole point of the
- * fallback, so it must survive an unreadable timeline. `getTimeline` rejects agents that
- * are not publicly readable — internal agents, and agents that went away while we waited.
- */
 function readRecentActivity(agentManager: AgentManager, agentId: string): string {
-  try {
-    const recent = selectItemsByProjectedLimit({
-      items: agentManager.getTimeline(agentId),
-      direction: "tail",
-      limit: 5,
-    });
-    return curateAgentActivity(recent.items);
-  } catch {
+  const agent = agentManager.getAgent(agentId) ?? agentManager.getHistorySnapshot(agentId);
+  if (!agent || agent.internal) {
     return curateAgentActivity([]);
   }
+  const recent = selectItemsByProjectedLimit({
+    items: agentManager.getTimeline(agentId),
+    direction: "tail",
+    limit: 5,
+  });
+  return curateAgentActivity(recent.items);
 }
 
 /**
