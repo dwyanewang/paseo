@@ -2075,11 +2075,13 @@ function createWorkspaceGitSnapshot(
 ) {
   return {
     cwd,
+    worktreeRevision: 0,
     git: {
       isGit: true,
       repoRoot: cwd,
       mainRepoRoot: null,
       currentBranch: "feature/service",
+      headOid: null,
       remoteUrl: "https://github.com/getpaseo/paseo.git",
       isPaseoOwnedWorktree: false,
       isDirty: true,
@@ -3917,6 +3919,8 @@ describe("session checkout status handling", () => {
         repoRoot: "/tmp/service-worktree",
         mainRepoRoot: null,
         currentBranch: "feature/service",
+        headOid: null,
+        worktreeRevision: 0,
         isDirty: true,
         baseRef: "main",
         aheadBehind: { ahead: 2, behind: 1 },
