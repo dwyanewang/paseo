@@ -30,7 +30,11 @@ Keep the session message union split when upgrading the compiler. In October 202
 
 The adapter locates `type=session` and its `message.type` union in the schema IR. Generated temporary names and branch counts are not stable identifiers. A missing target or incomplete mapping must fail generation. Each branch returns its validated output; dropping that writeback loses nested defaults. Reference indices and shared regex/enum helpers must stay in the original compiler context.
 
+The `ws-outbound.compile.ts` discovery entry is dedicated to the outbound envelope validator. Every discovered schema must contain the session message union; adding an unrelated `compile()` export here intentionally fails generation. Give unrelated validators their own generation entry and budget checks rather than silently bypassing splitting in this entry.
+
 Generation enforces a 1 MiB budget per function in the emitted JavaScript. It excludes nested function bodies from their parent's size because Hermes optimizes them separately. When a branch exceeds the budget, split that subtree before raising the limit. The generation log records the discovered branch count, entry size, largest function and output SHA. Repeated generation on the same inputs must produce the same SHA.
+
+The 1 MiB budget is an empirical growth guard, not a Hermes limit or a guarantee about total build memory. The initial prototype's largest branch was about 842 KB; the implemented generator's largest branch is 670,728 bytes, leaving about 36% below this budget. The check measures transpiled module functions including the emitted IIFE indentation, before Metro processes the module. Continue measuring the actual release bundle with Hermes and the whole build phase separately when schemas or the toolchain change.
 
 The patches are specific to zod-aot 0.20.4 and apply before importing its compiler modules. On an upgrade, review the context and union hooks alongside the existing output-propagation and `.js` import patches, then rerun the targeted codegen and outbound-validation tests. A version or emitter-shape mismatch must stop the build.
 
