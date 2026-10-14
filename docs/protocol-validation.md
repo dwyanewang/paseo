@@ -49,6 +49,23 @@ npm run benchmark:hermes --workspace=@getpaseo/protocol -- \
 
 This Linux command runs three independent `-O` compilations and records compiler/input hashes, versions, maximum process RSS, elapsed time and bytecode size. Use a new output directory each time. The cache note describes how you produced the input; the runner does not clear Metro caches. Compare process RSS with process RSS. Full Gradle/Metro/Hermes cgroup peaks include other processes and file cache, and need their own measurement. Compiler timings do not establish runtime performance: provider snapshots, streams and timeline payloads still need a warmed Android Hermes comparison and APK smoke validation.
 
+### Metro memory follow-up
+
+Splitting functions addresses Hermes's per-function optimization cost; splitting those functions into separate files does not guarantee a lower Metro peak. A 2026-10-14 screening experiment on `60337b9b6` compared four configurations with the function split already present. Each used a fresh dedicated Metro transform cache, Node 22.22.3, eight Metro workers, one Gradle worker, warm Gradle caches and Hermes `-O`. The configured file-map cache directories were absent and each run logged an `ENOENT` cache-write error; file-map snapshots remained cold and were not populated. This shared limitation must be included when interpreting or repeating the experiment:
+
+| Configuration                                                              | Full Gradle/Metro/Hermes cgroup peak |
+| -------------------------------------------------------------------------- | ------------------------------------ |
+| Function split, one source module, final Metro Source Map enabled          | 6.41 GiB                             |
+| Same, final Metro Source Map disabled                                      | 6.24 GiB                             |
+| Branches distributed across 20 modules plus one shared module, map enabled | 7.06 GiB                             |
+| Same module split, map disabled                                            | 6.95 GiB                             |
+
+All four bundle tasks succeeded with zero cgroup swap. Each configuration was measured once: the 2.7% map-only difference does not establish a repeatable improvement, and neither module-split sample reduced the peak. None met the 6 GiB target. These experiments were not adopted; retain the function split and existing build settings. The earlier 7.35 GiB result included cold Gradle/plugin work and is a different measurement cohort.
+
+The baseline peak preceded final map serialization and consisted mostly of anonymous process memory (about 6.10 GiB), with about 0.14 GiB of file cache. Skipping the approximately 76.7 MB final map does not skip worker transformations or their intermediate maps. Module splitting changes concurrent worker and serializer allocations, so measure the whole cgroup instead of inferring savings from individual file sizes. Extracted branches must retain shared metadata, regex/enum and error-formatting context; the initial prototype omitted the locale formatter and changed nested union errors before it was corrected.
+
+Verify cache isolation through the configuration Metro actually loads and populated cache stores. In the tested Expo export implementation, accepting `--config` did not mean the path reached Metro initialization; the first warm-cache probe was excluded after its private caches remained absent. The map-off probe appended a second, empty `--sourcemap-output` value, relying on this parser's last-value behavior; artifact checks verified the resulting map absence and bytecode equivalence. Package exports resolve to protocol `dist`, so source-only experiments do not exercise a changed validator in the app. The reproducible scripts, four raw profiles, artifact checks and restoration receipt are retained in the source worktree's `.dev/metro-memory-20261014/` directory. This bundle-stage experiment does not establish APK behavior or Hermes runtime performance.
+
 ## Regression Tests
 
 zod-aot is exact-pinned and young enough that compiler patches are treated as part of this package. `packages/protocol/tests/validation/ws-outbound.test.ts` keeps small regression tests for the patched cases:
