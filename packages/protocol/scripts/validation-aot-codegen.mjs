@@ -195,7 +195,7 @@ export function compileSplitSchemas(
       );
     }
     const sizes = checkFunctionBudget(
-      `${codegenResult.code}\n${codegenResult.functionDef}`,
+      `(() => {\n${codegenResult.code}\n${codegenResult.functionDef}\n})()`,
       branches,
       maxFunctionBytes,
     );

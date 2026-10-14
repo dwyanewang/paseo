@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
+import ts from "typescript";
 import {
   loadValidationCompiler,
   compileSplitSchemas,
@@ -50,6 +51,42 @@ function legacyValidator(
 }
 
 describe("split session validator code generation", () => {
+  it("enforces the budget including indentation in the shipped IIFE", async () => {
+    const compiler = await loadValidationCompiler();
+    const fields = Object.fromEntries(
+      Array.from({ length: 30 }, (_, i) => [`field${i}`, z.string()]),
+    );
+    const schema = envelope(
+      z.discriminatedUnion("type", [
+        z.object({ type: z.literal("large"), ...fields }),
+        z.object({ type: z.literal("small") }),
+      ]),
+    );
+    const sources = [{ exportName: "Schema", schema }];
+    const { compiled, summaries } = compileSplitSchemas(sources, compiler);
+    const content = ts.transpileModule(
+      compiler.generateCompiledFileContent(compiled, "./schema.js", { zodCompat: false }),
+      {
+        compilerOptions: { target: ts.ScriptTarget.ES2020 },
+      },
+    ).outputText;
+    const ast = ts.createSourceFile("shipped.js", content, ts.ScriptTarget.Latest, true);
+    const branchName = summaries[0].branches[0].name;
+    let branchBytes = 0;
+    function visit(node: ts.Node) {
+      if (ts.isFunctionDeclaration(node) && node.name?.text === branchName) {
+        branchBytes = Buffer.byteLength(node.getText(ast));
+      }
+      ts.forEachChild(node, visit);
+    }
+    visit(ast);
+    expect(branchBytes).toBeGreaterThan(2000);
+    expect(() =>
+      compileSplitSchemas(sources, compiler, { maxFunctionBytes: branchBytes - 1 }),
+    ).toThrow(/session.message.type large: function/);
+    expect(summaries[0].branches[0].bytes).toBe(branchBytes);
+  });
+
   it("writes branch defaults back without mutating inputs or dropping unknown keys", async () => {
     const compiler = await loadValidationCompiler();
     const schema = envelope(
