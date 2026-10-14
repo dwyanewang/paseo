@@ -24,6 +24,8 @@ terminal-webview cleanup, final artifact verification, and the download service.
   --heartbeat-id ID       Heartbeat already created by the owning agent through MCP.
                           The build only persists this opaque ID; it never creates
                           or deletes heartbeats through the shell CLI.
+  --android-native-jobs N Bound C++ compile/link concurrency (1..64, opt-in).
+                          Serializes CMake build tasks; default remains unchanged.
   --download-port PORT    Download service port (default: 8800).
   --download-ttl SECONDS  Download service lifetime (default: 10800).
   --no-serve-dist         Build artifacts without starting the download service.
@@ -48,6 +50,8 @@ declare -A requested_targets=()
 target_option_seen=0
 run_dir_arg=
 heartbeat_id_arg=
+android_native_jobs=
+declare -a android_native_job_args=()
 download_port=8800
 download_ttl=10800
 serve_dist=1
@@ -115,6 +119,13 @@ while (($# > 0)); do
       heartbeat_id_arg=$2
       shift 2
       ;;
+    --android-native-jobs)
+      (($# >= 2)) || fail "missing value for --android-native-jobs" 2
+      [[ -z "$android_native_jobs" ]] || fail "--android-native-jobs may only be specified once" 2
+      android_native_jobs=$2
+      [[ -n "$android_native_jobs" ]] || fail "--android-native-jobs must be in 1..64" 2
+      shift 2
+      ;;
     --download-port)
       (($# >= 2)) || fail "missing value for --download-port" 2
       download_port=$2
@@ -164,6 +175,11 @@ fi
 build_server_target=${requested_targets[server]:-0}
 build_android_target=${requested_targets[android]:-0}
 build_windows_target=${requested_targets[windows]:-0}
+if [[ -n "$android_native_jobs" ]]; then
+  [[ "$android_native_jobs" =~ ^[1-9][0-9]?$ ]] && ((android_native_jobs <= 64)) ||
+    fail "--android-native-jobs must be in 1..64" 2
+  ((build_android_target)) || fail "--android-native-jobs requires the Android target" 2
+fi
 declare -a selected_target_names=()
 ((build_server_target)) && selected_target_names+=(server)
 ((build_android_target)) && selected_target_names+=(android)
@@ -187,10 +203,15 @@ script_dir=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 control_root=$(git -C "$script_dir/.." rev-parse --show-toplevel 2>/dev/null) ||
   fail "control script is not inside a Git worktree"
 control_root=$(realpath -e -- "$control_root")
+if [[ -n "$android_native_jobs" ]]; then
+  [[ -f "$control_root/dwyanewang/android-native-jobs.gradle" ]] || fail "missing Android native jobs init script"
+  android_native_job_args=(--init-script "$control_root/dwyanewang/android-native-jobs.gradle" "-PpaseoNativeJobs=$android_native_jobs" "-Dpaseo.native.jobs=$android_native_jobs")
+fi
 state_helper="$control_root/dwyanewang/build-paseo-state.sh"
 [[ -f "$state_helper" ]] || fail "missing build state helper: $state_helper"
 source "$state_helper"
 patched_dependencies_helper=${PASEO_PATCHED_DEPENDENCIES_HELPER:-"$control_root/dwyanewang/prepare-patched-dependencies.mjs"}
+install_state_helper=${PASEO_DEPENDENCY_INSTALL_STATE_HELPER:-"$control_root/dwyanewang/dependency-install-state.mjs"}
 expo_router_types_helper=${PASEO_EXPO_ROUTER_TYPES_HELPER:-"$control_root/dwyanewang/refresh-expo-router-types.mjs"}
 [[ -f "$patched_dependencies_helper" ]] ||
   fail "missing patched dependencies helper: $patched_dependencies_helper"
@@ -223,13 +244,6 @@ find_worktree_for_branch() {
     }
     /^branch / && $2 == wanted { print path }
   '
-}
-
-dependency_inputs_changed() {
-  local old_ref=$1 new_ref=$2
-  ! git -C "$build_root" diff --quiet "$old_ref..$new_ref" -- \
-    package.json package-lock.json ':(glob)**/package.json' \
-    ':(glob)patches/**' scripts/postinstall-patches.mjs
 }
 
 prune_windows_archives() {
@@ -608,6 +622,7 @@ install_local_overlay_dependencies() {
   local npm_status tee_status
   local -a pipeline_status
 
+  node "$install_state_helper" invalidate --root "$build_root"
   node "$patched_dependencies_helper" prepare \
     --root "$build_root" \
     --old-ref "$old_ref" \
@@ -635,11 +650,16 @@ install_local_overlay_dependencies() {
     --root "$build_root" \
     --state-file "$refresh_state"
   node "$patched_dependencies_helper" restore-reordered-lockfile --root "$build_root"
+  [[ -z "$(git -C "$build_root" status --porcelain)" ]] ||
+    fail "local overlay dependency installation left checkout changes"
+  if ! node "$install_state_helper" record --root "$build_root"; then
+    printf '%s\n' 'dependency-install: no reusable receipt; a future build will reinstall.' >&2
+  fi
   patched_dependencies_verified=1
 }
 
 prepare_local_overlay() {
-  local branch_index branch_name branch_head candidate_suffix
+  local branch_index branch_name branch_head candidate_suffix install_check_status
 
   ((${#local_branches[@]} > 0)) || return 0
   candidate_suffix="$(date +%Y%m%d-%H%M%S)-$$"
@@ -659,12 +679,18 @@ prepare_local_overlay() {
     GIT_MERGE_AUTOEDIT=no git -C "$build_root" merge --no-ff --no-edit "$branch_head"
   done
 
-  if dependency_inputs_changed "$build_base_head" HEAD; then
-    stage "local-overlay: install dependencies changed by the temporary candidate"
+  if node "$install_state_helper" check --root "$build_root"; then
+    node "$patched_dependencies_helper" validate --root "$build_root"
+    node "$patched_dependencies_helper" verify --root "$build_root"
+    patched_dependencies_verified=1
+    dependencies_reinstalled=0
+    stage "local-overlay: reuse verified dependency installation"
+  else
+    install_check_status=$?
+    ((install_check_status == 3)) || fail "dependency installation check failed" "$install_check_status"
+    stage "local-overlay: install dependencies for unverified or changed installation inputs"
     install_local_overlay_dependencies "$build_base_head" HEAD
     dependencies_reinstalled=1
-  else
-    dependencies_reinstalled=0
   fi
   [[ -z "$(git -C "$build_root" status --porcelain)" ]] ||
     fail "local overlay dependency preparation left tracked or untracked changes"
@@ -717,7 +743,7 @@ launch_android_native_branch() {
       --label android-native-assemble \
       --output-dir "$resource_profile_dir" \
       -- ./gradlew assembleRelease \
-      --console=plain --no-daemon --parallel --max-workers=8 \
+      --console=plain --no-daemon --parallel --max-workers=8 "${android_native_job_args[@]}" \
       -Dorg.gradle.jvmargs="-Xmx4g -XX:MaxMetaspaceSize=1024m" \
       -PreactNativeArchitectures=arm64-v8a
   ) >"$android_native_log" 2>&1 &
@@ -1039,7 +1065,7 @@ export PASEO_BUILD_ROOT="$build_root"
 prepare_local_overlay
 
 if ((patched_dependencies_verified)); then
-  stage "dependencies: patch registry and installed applications verified during local-overlay install"
+  stage "dependencies: patch registry and installed applications verified during local-overlay preparation"
 else
   stage "dependencies: validate patch registry and installed applications"
   node "$patched_dependencies_helper" validate --root "$build_root"
@@ -1330,6 +1356,7 @@ result_temp=$(mktemp "${result_file}.tmp.XXXXXX")
   printf 'paseo_artifact_windows_summary=%q\n' "$windows_summary"
   printf 'paseo_artifact_windows_transcript=%q\n' "$windows_transcript"
   printf 'paseo_artifact_parallel_mode=%q\n' "$artifact_parallel_mode"
+  printf 'paseo_artifact_android_native_jobs=%q\n' "${android_native_jobs:-unbounded}"
   printf 'paseo_artifact_android_native_bundle_gate=%q\n' "$android_native_bundle_gate"
   printf 'paseo_artifact_parallel_mem_available_bytes=%q\n' "$mem_available_bytes"
   printf 'paseo_artifact_parallel_min_available_bytes=%q\n' "$parallel_min_available_bytes"

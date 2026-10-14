@@ -124,6 +124,8 @@ Keep the excluded npm packages installed. Normal builds use them, while the F-Dr
 
 The EAS `production-apk` profile uses the large Android resource class. Release builds compile the native ABIs and run Hermes bundling in the same Gradle invocation; the default worker can exhaust its remaining memory and kill Hermes with exit code 137 even when Gradle's own heap is correctly sized.
 
+Gradle's worker limit does not bound the compiler processes spawned by Ninja. Concurrent CMake tasks can each start Ninja's CPU-based default job count. The local build control checkout exposes an opt-in `--android-native-jobs N`: one AGP CMake build task at a time, with its C/C++ compile and link edges sharing a Ninja pool of depth N. It checks the generated pool before execution and preserves optimization flags. This does not limit custom shell build tasks or separate Gradle invocations. Changing the CMake arguments creates a new native configuration cache entry, so compare compilation time as well as memory before enabling a default. See the control checkout's `dwyanewang/打包流程.md` for the invocation and measurements.
+
 ### React version lockstep
 
 Keep `react` and `react-dom` pinned to the React version embedded by the current `react-native` release. React Native `0.81.x` embeds `react-native-renderer` `19.1.0`, so `packages/app` must use React `19.1.0`. Bumping React to a newer patch can build successfully but crash at JS startup on Android with `Incompatible React versions`, leaving the app on the native splash screen.

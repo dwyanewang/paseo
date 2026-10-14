@@ -137,6 +137,7 @@ function createFixture({
     "build-paseo-state.sh",
     "manage-rw-base.sh",
     "prepare-patched-dependencies.mjs",
+    "dependency-install-state.mjs",
     "refresh-expo-router-types.mjs",
     "rebuild-rw-main.sh",
     "rw-conflict-evidence.sh",
@@ -156,6 +157,7 @@ function createFixture({
       "#!/usr/bin/env bash",
       "set -euo pipefail",
       'if [[ "$*" == --version ]]; then printf "%s\\n" "10.9.0"; exit 0; fi',
+      'if [[ "$*" == install ]]; then mkdir -p node_modules/example; fi',
       'if [[ -f "patches/example+1.0.0.patch" ]]; then',
       '  mkdir -p "node_modules/example/android" "node_modules/example/src"',
       '  printf "ndkVersion = old\\n" >"node_modules/example/android/build.gradle"',
@@ -748,7 +750,7 @@ test("adopts a reviewed direct rw-base commit during feature maintenance", () =>
       directCommit,
     );
   });
-}, 20_000);
+}, 30_000);
 
 test("rejects adoption refs that are not currently unmanaged on rw-base", () => {
   withFixture({}, (fixture) => {

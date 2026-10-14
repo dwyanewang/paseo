@@ -1,0 +1,68 @@
+import org.gradle.api.services.BuildService
+import org.gradle.api.services.BuildServiceParameters
+
+// Opt-in only. Gradle worker leases do not cover jobs spawned inside Ninja.
+// One CMake build task owns the service while its compile/link rules share one
+// bounded Ninja pool. Java/Kotlin tasks retain the normal Gradle worker budget.
+abstract class PaseoNativeBuildSlot implements BuildService<BuildServiceParameters.None> {}
+
+// Project properties are not forwarded to composite plugin builds. The JVM
+// property keeps the same budget when Gradle applies this init script there.
+def rawJobs = System.getProperty('paseo.native.jobs') ?: gradle.startParameter.projectProperties.get('paseoNativeJobs')
+if (rawJobs == null || !(rawJobs ==~ /[1-9][0-9]?/) || rawJobs.toInteger() > 64) {
+    throw new GradleException('paseoNativeJobs must be in 1..64')
+}
+def jobs = rawJobs.toInteger()
+def slot = gradle.sharedServices.registerIfAbsent('paseoNativeBuildSlot', PaseoNativeBuildSlot) {
+    maxParallelUsages.set(1)
+}
+
+gradle.beforeProject { project ->
+    ['com.android.application', 'com.android.library'].each { pluginId ->
+        project.pluginManager.withPlugin(pluginId) {
+            project.extensions.getByName('androidComponents').finalizeDsl { android ->
+                if (android.externalNativeBuild.ndkBuild.path != null) {
+                    throw new GradleException("paseoNativeJobs does not support ndk-build: ${project.path}")
+                }
+                def settings = [android.defaultConfig] + android.buildTypes.toList() + android.productFlavors.toList()
+                if (settings.any { config -> config.externalNativeBuild.cmake.arguments.any { it.startsWith('-DCMAKE_JOB_POOL') } }) {
+                    throw new GradleException("existing CMake job pools require an explicit merge: ${project.path}")
+                }
+                def flags = android.defaultConfig.externalNativeBuild.cmake.arguments
+                flags.addAll([
+                    "-DCMAKE_JOB_POOLS=paseo_native=${jobs}".toString(),
+                    '-DCMAKE_JOB_POOL_COMPILE=paseo_native',
+                    '-DCMAKE_JOB_POOL_LINK=paseo_native'
+                ])
+            }
+            project.tasks.configureEach { task ->
+                if (task.class.name.startsWith('com.android.build.gradle.tasks.ExternalNativeBuildTask')) {
+                    task.usesService(slot)
+                    task.doFirst {
+                        // AGP 8.11's builder exposes the exact configured ABI directory.
+                        // Fail closed if AGP/CMake changes or a target overrides the pool.
+                        def builder = task.getBuilder$gradle_core()
+                        if (builder.class.name == 'com.android.build.gradle.internal.cxx.build.CxxRegularBuilder') {
+                            def folder = builder.abi.cxxBuildFolder
+                            def rules = new File(folder, 'CMakeFiles/rules.ninja')
+                            def graph = new File(folder, 'build.ninja')
+                            if (!rules.isFile() || !graph.isFile() ||
+                                !(rules.text =~ /(?m)^pool paseo_native\r?\n\s+depth = ${jobs}\s*$/)) {
+                                throw new GradleException("Ninja pool missing or has wrong depth: ${task.path}")
+                            }
+                            def nativeEdges = graph.text.split(/\r?\n(?=build )/).findAll {
+                                it.readLines().first() =~ /: \S*(COMPILER|LINKER)\S*/
+                            }
+                            if (nativeEdges.isEmpty() || nativeEdges.any { !(it =~ /(?m)^  pool = paseo_native\s*$/) }) {
+                                throw new GradleException("Ninja compile/link rule bypasses paseo_native: ${task.path}")
+                            }
+                        } else if (builder.class.name != 'com.android.build.gradle.internal.cxx.build.CxxRepublishBuilder') {
+                            throw new GradleException("unsupported AGP native builder: ${builder.class.name}")
+                        }
+                        task.logger.lifecycle("paseo-native-jobs: ${task.path} compile/link pool=${jobs}; CMake task slots=1")
+                    }
+                }
+            }
+        }
+    }
+}

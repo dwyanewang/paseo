@@ -157,6 +157,7 @@ fi
 script_dir=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 control_root=$(git -C "$script_dir/.." rev-parse --show-toplevel)
 patched_dependencies_helper=${PASEO_PATCHED_DEPENDENCIES_HELPER:-"$control_root/dwyanewang/prepare-patched-dependencies.mjs"}
+install_state_helper=${PASEO_DEPENDENCY_INSTALL_STATE_HELPER:-"$control_root/dwyanewang/dependency-install-state.mjs"}
 build_state_helper=${PASEO_BUILD_STATE_HELPER:-"$control_root/dwyanewang/build-paseo-state.sh"}
 expo_router_types_helper=${PASEO_EXPO_ROUTER_TYPES_HELPER:-"$control_root/dwyanewang/refresh-expo-router-types.mjs"}
 conflict_evidence_helper=${PASEO_CONFLICT_EVIDENCE_HELPER:-"$control_root/dwyanewang/rw-conflict-evidence.sh"}
@@ -1372,20 +1373,13 @@ push_candidates() {
     "$target_source:refs/heads/$target_branch"
 }
 
-dependency_inputs_changed() {
-  local old_ref=$1
-  local new_ref=$2
-  ! git diff --quiet "$old_ref..$new_ref" -- \
-    package.json package-lock.json ':(glob)**/package.json' \
-    ':(glob)patches/**' scripts/postinstall-patches.mjs
-}
-
 install_dependencies() {
   local old_ref=$1
   local new_ref=$2
   local install_log refresh_state npm_status tee_status
   local -a pipeline_status
 
+  node "$install_state_helper" invalidate --root "$build_root"
   refresh_state=$(mktemp "${TMPDIR:-/tmp}/paseo-patch-refresh.XXXXXX")
   temporary_files+=("$refresh_state")
   install_log=$(mktemp "${TMPDIR:-/tmp}/paseo-npm-install.XXXXXX")
@@ -1419,6 +1413,21 @@ install_dependencies() {
   node "$patched_dependencies_helper" restore-reordered-lockfile --root "$build_root"
   [[ -z "$(git status --porcelain)" ]] ||
     fail "npm install left tracked or untracked changes in the build worktree"
+  if ! node "$install_state_helper" record --root "$build_root"; then
+    printf '%s\n' 'dependency-install: no reusable receipt; a future build will reinstall.' >&2
+  fi
+}
+
+ensure_dependencies() {
+  local old_ref=$1 new_ref=$2 install_check_status
+  validate_patch_registry
+  if node "$install_state_helper" check --root "$build_root"; then
+    verify_installed_patches
+  else
+    install_check_status=$?
+    ((install_check_status == 3)) || fail "dependency installation check failed"
+    install_dependencies "$old_ref" "$new_ref"
+  fi
 }
 
 validate_patch_registry() {
@@ -1483,12 +1492,7 @@ if ((!dry_run)) && ((base_rebuilt == 0)) && target_matches_base_inputs "$base_ca
   if [[ "$(git symbolic-ref --quiet --short HEAD || true)" != "$target_branch" ]]; then
     git switch --quiet "$target_branch"
   fi
-  validate_patch_registry
-  if [[ "$starting_branch" != "$target_branch" ]]; then
-    install_dependencies "$starting_head" "$target_before"
-  else
-    verify_installed_patches
-  fi
+  ensure_dependencies "$starting_head" "$target_before"
   refresh_expo_router_types
   verify_candidate_inputs
   if ((push_target)); then
@@ -1532,13 +1536,7 @@ else
   done
 fi
 
-validate_patch_registry
-if [[ "$starting_branch" != "$target_branch" ]] ||
-  [[ -z "$target_before" ]] || dependency_inputs_changed "$target_before" HEAD; then
-  install_dependencies "$starting_head" HEAD
-else
-  verify_installed_patches
-fi
+ensure_dependencies "$starting_head" HEAD
 refresh_expo_router_types
 
 run_candidate_capability_checks() {

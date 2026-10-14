@@ -42,6 +42,7 @@ vitest_files=(
   scripts/rw-main-review-gate.test.mjs
 )
 node_test_files=(
+  scripts/dependency-install-state.test.mjs
   scripts/configure-android-build.test.mjs
   scripts/prepare-patched-dependencies.test.mjs
   scripts/profile-build-resources.test.mjs

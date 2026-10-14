@@ -317,6 +317,11 @@ function createFixture(options = {}) {
     path.join(binDir, "prepare-patched-dependencies.mjs"),
   );
 
+  copyFileSync(
+    path.join(repoRoot, "dwyanewang/dependency-install-state.mjs"),
+    path.join(binDir, "dependency-install-state.mjs"),
+  );
+
   const manifestEntry = prState ? "feature/one # PR #1" : "feature/one # Personal branch";
   const secondManifestEntry = formatSecondManifestEntry({
     currentMain,
@@ -400,6 +405,10 @@ set -euo pipefail
 printf '%s\\n' "$*" >> "$NPM_CALL_LOG"
 printf '%s|%s\\n' "$PWD" "$*" >> "$NPM_CWD_CALL_LOG"
 printf '%s|%s|%s|%s\\n' "\${LC_ALL:-}" "\${LANG:-}" "\${LANGUAGE:-}" "$*" >> "$NPM_LOCALE_CALL_LOG"
+if [[ "$*" == 'config list --json' ]]; then
+  printf '%s\\n' '{}'
+  exit 0
+fi
 if [[ "$*" == --version ]]; then
   printf '%s\\n' "\${PASEO_TEST_NPM_VERSION:-10.9.0}"
   exit 0
@@ -464,6 +473,7 @@ exec /usr/bin/diff "$@"
       PASEO_EXPO_ROUTER_TYPES_HELPER: expoRouterTypesHelper,
       PASEO_TEST_BUILD_ROOT: root,
       PASEO_PATCHED_DEPENDENCIES_HELPER: path.join(binDir, "prepare-patched-dependencies.mjs"),
+      PASEO_DEPENDENCY_INSTALL_STATE_HELPER: path.join(binDir, "dependency-install-state.mjs"),
       PATH: `${binDir}:${process.env.PATH}`,
     },
     featureHead,
@@ -3237,6 +3247,8 @@ test("rebuild runs format and lint before builds and typecheck after refreshed d
     assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
     assert.deepEqual(readFileSync(fixture.npmCallLog, "utf8").trim().split("\n"), [
       "install",
+      "config list --json",
+      "--version",
       "run format:check",
       "run lint",
       "run build:server-deps",
@@ -3263,6 +3275,8 @@ test("rebuild fails lint before starting any workspace build", () => {
     assert.equal(result.status, 9, `${result.stdout}\n${result.stderr}`);
     assert.deepEqual(readFileSync(fixture.npmCallLog, "utf8").trim().split("\n"), [
       "install",
+      "config list --json",
+      "--version",
       "run format:check",
       "run lint",
     ]);
@@ -3284,6 +3298,8 @@ test("rebuild fails app typecheck before starting the server and CLI builds", ()
     assert.equal(result.status, 7, `${result.stdout}\n${result.stderr}`);
     assert.deepEqual(readFileSync(fixture.npmCallLog, "utf8").trim().split("\n"), [
       "install",
+      "config list --json",
+      "--version",
       "run format:check",
       "run lint",
       "run build:server-deps",

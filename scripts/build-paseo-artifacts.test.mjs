@@ -327,6 +327,14 @@ fi
 } >"$output_dir/$label.summary"
 `,
   );
+  copyFileSync(
+    path.join(repoRoot, "dwyanewang/dependency-install-state.mjs"),
+    path.join(controlRoot, "dwyanewang/dependency-install-state.mjs"),
+  );
+  copyFileSync(
+    path.join(repoRoot, "dwyanewang/android-native-jobs.gradle"),
+    path.join(controlRoot, "dwyanewang/android-native-jobs.gradle"),
+  );
   git(controlRoot, "add", "dwyanewang");
   git(controlRoot, "commit", "-m", "test: add build controls");
 
@@ -386,6 +394,10 @@ set -euo pipefail
 printf 'npm|%s\\n' "$*" >>"$PASEO_TEST_COMMAND_LOG"
 if [[ "$*" == --version ]]; then
   printf '%s\\n' '10.9.0'
+  exit 0
+fi
+if [[ "$*" == 'config list --json' ]]; then
+  printf '%s\\n' '{}'
   exit 0
 fi
 root=$PASEO_TEST_BUILD_ROOT
@@ -921,6 +933,10 @@ test("builds only Android with app dependencies and no Windows or server artifac
     assert.match(commandLog, /profile\|android-native-assemble/);
     assert.doesNotMatch(commandLog, /npm\|run build:server/);
     assert.doesNotMatch(commandLog, /profile\|windows-artifacts/);
+    assert.doesNotMatch(
+      commandLog,
+      /paseoNativeJobs|paseo\.native\.jobs|android-native-jobs.gradle/,
+    );
     const resultState = readFileSync(
       path.join(fixture.buildRoot, ".dev/android-only/result.env"),
       "utf8",
@@ -931,6 +947,62 @@ test("builds only Android with app dependencies and no Windows or server artifac
     );
     assert.match(resultState, /paseo_artifact_server_build_mode=app-deps-only/);
     assert.match(resultState, /paseo_artifact_parallel_mode=android-only/);
+    assert.match(resultState, /paseo_artifact_android_native_jobs=unbounded/);
+  });
+});
+
+test("native jobs are opt-in and only reach the Android native phase", () => {
+  withFixture({}, (fixture) => {
+    const result = runBuild(fixture, "native-jobs", [
+      "--target",
+      "android",
+      "--android-native-jobs",
+      "8",
+      "--no-serve-dist",
+    ]);
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    const commands = readFileSync(fixture.commandLog, "utf8");
+    assert.match(
+      commands,
+      /^profile\|android-native-assemble\|.*--max-workers=8 --init-script .*android-native-jobs.gradle -PpaseoNativeJobs=8 /m,
+    );
+    assert.match(commands, /^profile\|android-native-assemble\|.*-Dpaseo\.native\.jobs=8 /m);
+    assert.doesNotMatch(
+      commands,
+      /^profile\|android-metro-hermes\|.*(paseoNativeJobs|init-script)/m,
+    );
+    assert.match(
+      readFileSync(path.join(fixture.buildRoot, ".dev/native-jobs/result.env"), "utf8"),
+      /paseo_artifact_android_native_jobs=8/,
+    );
+  });
+});
+
+test("rejects invalid native budgets before preparing artifacts", () => {
+  withFixture({}, (fixture) => {
+    const before = existsSync(fixture.commandLog) ? readFileSync(fixture.commandLog, "utf8") : "";
+    for (const value of ["", "0", "65", "-1", "1.5", "9999999999999999999999999"]) {
+      const result = runBuild(fixture, "invalid-jobs", [
+        "--target",
+        "android",
+        "--android-native-jobs",
+        value,
+      ]);
+      assert.equal(result.status, 2, result.stderr);
+      assert.match(result.stderr, /must be in 1..64/);
+    }
+    const result = runBuild(fixture, "non-android-jobs", [
+      "--target",
+      "server",
+      "--android-native-jobs",
+      "8",
+    ]);
+    assert.equal(result.status, 2);
+    assert.match(result.stderr, /requires the Android target/);
+    assert.equal(
+      existsSync(fixture.commandLog) ? readFileSync(fixture.commandLog, "utf8") : "",
+      before,
+    );
   });
 });
 
@@ -1178,7 +1250,7 @@ test("refreshes a changed local-overlay patch before the single dependency insta
     assert.match(result.stdout, /Patch refresh: removed node_modules\/example/);
     assert.match(
       result.stdout,
-      /patch registry and installed applications verified during local-overlay install/,
+      /patch registry and installed applications verified during local-overlay preparation/,
     );
     const installs = readFileSync(fixture.commandLog, "utf8")
       .split("\n")
@@ -1191,6 +1263,86 @@ test("refreshes a changed local-overlay patch before the single dependency insta
       true,
     );
     assert.equal(existsSync(path.join(runDir, "local-overlay-npm-install.log")), true);
+  });
+});
+
+test("verified benchmark overlays retain native caches and still reject patch drift", () => {
+  withFixture({ patchedDependency: true }, (fixture) => {
+    const root = fixture.buildRoot;
+    const installed = { version: "1.0.0" };
+    writeFileSync(
+      path.join(root, "package-lock.json"),
+      JSON.stringify({
+        lockfileVersion: 3,
+        packages: { "": {}, "node_modules/example": installed },
+      }),
+    );
+    git(root, "add", "package-lock.json");
+    git(root, "commit", "-m", "test: describe installed inventory");
+    writeFileSync(
+      path.join(root, "node_modules/.package-lock.json"),
+      JSON.stringify({
+        lockfileVersion: 3,
+        packages: { "node_modules/example": installed },
+      }),
+    );
+    writeFileSync(
+      path.join(root, "node_modules/example/package.json"),
+      JSON.stringify({ name: "example", version: "1.0.0" }),
+    );
+    const sentinel = path.join(root, "node_modules/example/android/build/object.o");
+    mkdirSync(path.dirname(sentinel), { recursive: true });
+    writeFileSync(sentinel, "retain native cache");
+    const recorded = run(
+      root,
+      "node",
+      [
+        path.join(fixture.controlRoot, "dwyanewang/dependency-install-state.mjs"),
+        "record",
+        "--root",
+        root,
+      ],
+      fixture.env,
+    );
+    assert.equal(recorded.status, 0, recorded.stderr);
+    const manifestFile = path.join(fixture.featureRoot, "packages/protocol/package.json");
+    const manifest = JSON.parse(readFileSync(manifestFile));
+    manifest.scripts = { "benchmark:hermes": "node scripts/benchmark-validation-hermes.mjs" };
+    writeFileSync(manifestFile, JSON.stringify(manifest));
+    git(fixture.featureRoot, "add", "packages/protocol/package.json");
+    git(fixture.featureRoot, "commit", "-m", "test: add audited benchmark");
+    const options = [
+      "--skip-preflight",
+      "--local-branch",
+      fixture.localBranch,
+      "--target",
+      "server",
+    ];
+    const overlay = (name) =>
+      run(
+        fixture.controlRoot,
+        "bash",
+        [
+          fixture.script,
+          "--build-root",
+          root,
+          "--run-dir",
+          path.join(root, ".dev", name),
+          ...options,
+        ],
+        fixture.env,
+      );
+    const result = overlay("reuse-native-cache");
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.match(result.stdout, /reuse verified dependency installation/);
+    assert.doesNotMatch(readFileSync(fixture.commandLog, "utf8"), /^npm\|install$/m);
+    assert.equal(readFileSync(sentinel, "utf8"), "retain native cache");
+    // A valid receipt never bypasses the independent reverse patch check.
+    writeFileSync(path.join(root, "node_modules/example/value.txt"), "drift\n");
+    const rejected = overlay("reject-patch-drift");
+    assert.notEqual(rejected.status, 0);
+    assert.match(`${rejected.stdout}\n${rejected.stderr}`, /patch|installed application/);
+    assert.doesNotMatch(readFileSync(fixture.commandLog, "utf8"), /^npm\|install$/m);
   });
 });
 
