@@ -1125,12 +1125,14 @@ if ((build_android_target)); then
     --hermes-profile local-balanced
 
   stage "android: Metro/Hermes first phase (profile: $resource_profile_dir)"
+  # React Native's Gradle inputs omit sibling workspaces such as protocol/dist.
+  # Rerun only this task; Metro's transform cache and the native phase stay incremental.
   (
     cd packages/app/android
     bash "$control_root/dwyanewang/profile-build-resources.sh" \
       --label android-metro-hermes \
       --output-dir "$resource_profile_dir" \
-      -- ./gradlew :app:createBundleReleaseJsAndAssets \
+      -- ./gradlew :app:createBundleReleaseJsAndAssets --rerun \
       --no-daemon --no-parallel --max-workers=1 \
       -Dorg.gradle.jvmargs="-Xmx2g -XX:MaxMetaspaceSize=768m" \
       -PreactNativeArchitectures=arm64-v8a

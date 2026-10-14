@@ -912,6 +912,12 @@ test("builds only Android with app dependencies and no Windows or server artifac
     const commandLog = readFileSync(fixture.commandLog, "utf8");
     assert.doesNotMatch(commandLog, /heartbeat (create|delete)/);
     assert.match(commandLog, /npm\|run build:app-deps/);
+    assert.match(
+      commandLog,
+      /profile\|android-metro-hermes\|\.\/gradlew :app:createBundleReleaseJsAndAssets --rerun /,
+    );
+    assert.doesNotMatch(commandLog, /--rerun-tasks/);
+    assert.doesNotMatch(commandLog, /^profile\|android-native-assemble\|.*--rerun/m);
     assert.match(commandLog, /profile\|android-native-assemble/);
     assert.doesNotMatch(commandLog, /npm\|run build:server/);
     assert.doesNotMatch(commandLog, /profile\|windows-artifacts/);
