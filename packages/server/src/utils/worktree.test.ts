@@ -11,6 +11,7 @@ import {
 } from "./worktree";
 import { getPaseoWorktreeMetadataPath } from "./worktree-metadata.js";
 import { execFileSync } from "child_process";
+import { rm } from "node:fs/promises";
 import {
   mkdtempSync,
   mkdirSync,
@@ -91,8 +92,8 @@ describe("paseo worktree manager", () => {
     });
   });
 
-  afterEach(() => {
-    rmSync(tempDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await rm(tempDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   it("treats a worktree as paseo-owned even when its .git admin is missing", async () => {
