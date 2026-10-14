@@ -17,12 +17,33 @@ Provider model normalization is a parser-side compatibility shim in the client c
 The protocol package owns generation.
 
 - `packages/protocol/codegen/ws-outbound.compile.ts` is the build-time zod-aot discovery entry.
-- `packages/protocol/scripts/generate-validation-aot.mjs` runs the exact-pinned compiler and applies the small local compiler patches before generation.
+- `packages/protocol/scripts/generate-validation-aot.mjs` owns the generation entrypoint. `validation-aot-codegen.mjs` owns the exact-pinned compiler patches and session branch splitting.
 - `packages/protocol/scripts/watch-validation-aot.mjs` reruns generation while editing protocol sources.
 - `packages/protocol/src/generated/validation/ws-outbound.aot.ts` is generated runtime code and is gitignored.
 - `packages/protocol/src/validation/ws-outbound-schema-metadata.ts` is runtime schema metadata for zod-aot fallback/default references.
 
 Generation runs from protocol-owned lifecycle hooks: `prebuild`, `pretypecheck`, `pretest`, and `watch`. Installs do not run generation: published packages consume protocol from prebuilt `dist`, and local build/typecheck/test flows generate the source file at the point it is actually needed.
+
+### Hermes compilation budget
+
+Keep the session message union split when upgrading the compiler. In October 2026, its inline validator produced an approximately 12 MB JavaScript function. Hermes `-O` compilation repeatedly exhausted host memory. Optimization works per function, so splitting the message branches reduces compiler demand while retaining `-O`.
+
+The adapter locates `type=session` and its `message.type` union in the schema IR. Generated temporary names and branch counts are not stable identifiers. A missing target or incomplete mapping must fail generation. Each branch returns its validated output; dropping that writeback loses nested defaults. Reference indices and shared regex/enum helpers must stay in the original compiler context.
+
+Generation enforces a 1 MiB budget per function in the emitted JavaScript. It excludes nested function bodies from their parent's size because Hermes optimizes them separately. When a branch exceeds the budget, split that subtree before raising the limit. The generation log records the discovered branch count, entry size, largest function and output SHA. Repeated generation on the same inputs must produce the same SHA.
+
+The patches are specific to zod-aot 0.20.4 and apply before importing its compiler modules. On an upgrade, review the context and union hooks alongside the existing output-propagation and `.js` import patches, then rerun the targeted codegen and outbound-validation tests. A version or emitter-shape mismatch must stop the build.
+
+Measure a fixed Android release JavaScript bundle with the compiler used by React Native:
+
+```bash
+npm run benchmark:hermes --workspace=@getpaseo/protocol -- \
+  --bundle /absolute/path/index.android.js \
+  --out /absolute/path/new-hermes-results \
+  --cache-note 'Android dev=false minify=false; Metro cold; fixed compiler input'
+```
+
+This Linux command runs three independent `-O` compilations and records compiler/input hashes, versions, maximum process RSS, elapsed time and bytecode size. Use a new output directory each time. The cache note describes how you produced the input; the runner does not clear Metro caches. Compare process RSS with process RSS. Full Gradle/Metro/Hermes cgroup peaks include other processes and file cache, and need their own measurement. Compiler timings do not establish runtime performance: provider snapshots, streams and timeline payloads still need a warmed Android Hermes comparison and APK smoke validation.
 
 ## Regression Tests
 
@@ -32,6 +53,8 @@ zod-aot is exact-pinned and young enough that compiler patches are treated as pa
 - current sequential item routing must accept `tool_call`-like status branches
 - generated runtime imports must keep `.js` extensions for packaged Node ESM
 - the generated WebSocket envelope accepts a minimal valid message and rejects a corrupted one
+
+`validation-aot-codegen.test.ts` also checks split defaults and input mutation, nested error ordering, shared regex/enum references, new branches, discriminator routing, deterministic output and generation failures. Provider snapshot tests exercise default writeback through the shipped validation boundary. AOT preserves unknown fields, so compare output semantics with the original AOT rather than requiring Zod's object stripping behavior.
 
 ## Schema Purity
 
