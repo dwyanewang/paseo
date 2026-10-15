@@ -30,7 +30,7 @@ import { useFilePreview } from "./preview-lifecycle/hook";
 import { resolveFilePreviewLifecycle } from "./preview-lifecycle/model";
 import { FilePanelBar } from "./bar";
 import { FileHtmlPreview } from "./html-preview";
-import { FileImagePreview } from "./image-preview";
+import { ImagePreview } from "@/components/image-preview/view";
 import { FileMarkdownPreview } from "./markdown-preview";
 import { FileEditorModel, getFileConflictCallout, type FileConflictCallout } from "./editor/model";
 import { createFileObservationSource } from "./editor/observation-source";
@@ -226,11 +226,7 @@ function FilePreviewBody({
     }
 
     return (
-      <FileImagePreview
-        uri={imagePreviewUri}
-        fileName={imageFileName}
-        attachment={imageAttachment}
-      />
+      <ImagePreview uri={imagePreviewUri} fileName={imageFileName} attachment={imageAttachment} />
     );
   }
 

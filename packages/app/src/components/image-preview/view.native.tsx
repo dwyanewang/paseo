@@ -1,5 +1,5 @@
-import { encodeAttachmentsForSend } from "@/attachments/service";
-import type { AttachmentMetadata } from "@/attachments/types";
+import { getFileExtension, getRasterImageMimeTypeFromPath } from "@/attachments/file-types";
+import { generateAttachmentId } from "@/attachments/utils";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -11,20 +11,16 @@ import { ZoomableImage } from "@/components/zoomable-viewport/image";
 import { useToast } from "@/contexts/toast-context";
 import type { Theme } from "@/styles/theme";
 import * as Clipboard from "expo-clipboard";
+import * as FileSystem from "expo-file-system/legacy";
 import * as MediaLibrary from "expo-media-library";
 import * as Sharing from "expo-sharing";
 import { Copy, ImageDown, Share2 } from "lucide-react-native";
 import { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { StyleSheet, View, type AccessibilityActionEvent } from "react-native";
-import { withUnistyles } from "react-native-unistyles";
-import { savePreviewImage, type ImagePreviewLibrary } from "./image-preview-save";
-
-export interface FileImagePreviewProps {
-  uri: string;
-  fileName: string;
-  attachment: AttachmentMetadata | null;
-}
+import { Text, View, type AccessibilityActionEvent } from "react-native";
+import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import { savePreviewImage, type ImagePreviewLibrary } from "./save";
+import type { ImagePreviewProps } from "./view";
 
 const ThemedCopy = withUnistyles(Copy);
 const ThemedSave = withUnistyles(ImageDown);
@@ -37,44 +33,82 @@ const imageLibrary: ImagePreviewLibrary = {
   saveToPhotoLibrary: MediaLibrary.saveToLibraryAsync,
 };
 
-export function FileImagePreview({ uri, fileName, attachment }: FileImagePreviewProps) {
+async function withLocalImage(uri: string, action: (localUri: string) => Promise<void>) {
+  if (!/^https?:\/\//i.test(uri)) {
+    await action(uri);
+    return;
+  }
+  if (!FileSystem.cacheDirectory) throw new Error("Image cache is unavailable");
+  const extension = getFileExtension(uri) || ".png";
+  const target = `${FileSystem.cacheDirectory}${generateAttachmentId()}${extension}`;
+  try {
+    const download = await FileSystem.downloadAsync(uri, target);
+    if (download.status < 200 || download.status >= 300) {
+      throw new Error(`Image download failed: ${download.status}`);
+    }
+    await action(download.uri);
+  } finally {
+    await FileSystem.deleteAsync(target, { idempotent: true });
+  }
+}
+
+export function ImagePreview({
+  uri,
+  fileName,
+  attachment,
+  accessibilityLabel,
+  style,
+  testID = "image-file-preview",
+  ...props
+}: ImagePreviewProps) {
   const { t } = useTranslation();
   const toast = useToast();
   const [menuOpen, setMenuOpen] = useState(false);
   const [copyStatus, setCopyStatus] = useState<ActionStatus>("idle");
   const [saveStatus, setSaveStatus] = useState<ActionStatus>("idle");
   const [shareStatus, setShareStatus] = useState<ActionStatus>("idle");
+  const [error, setError] = useState<string | null>(null);
+  const handleMenuOpenChange = useCallback((open: boolean) => {
+    setMenuOpen(open);
+    if (!open) setError(null);
+  }, []);
 
   const copyImage = useCallback(async () => {
-    if (!attachment || copyStatus === "pending") return;
+    if (copyStatus === "pending") return;
     setCopyStatus("pending");
+    setError(null);
     try {
-      const encoded = await encodeAttachmentsForSend([attachment]);
-      const base64 = encoded?.[0]?.data;
-      if (!base64) throw new Error("Image encoding failed");
-      await Clipboard.setImageAsync(base64);
+      await withLocalImage(uri, async (localUri) => {
+        const base64 = await FileSystem.readAsStringAsync(localUri, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+        await Clipboard.setImageAsync(base64);
+      });
       setMenuOpen(false);
       toast.copied();
     } catch {
-      toast.error(t("panels.file.image.copyFailed"));
+      setError(t("panels.file.image.copyFailed"));
     } finally {
       setCopyStatus("idle");
     }
-  }, [attachment, copyStatus, t, toast]);
+  }, [uri, copyStatus, t, toast]);
 
   const saveImage = useCallback(async () => {
     if (saveStatus === "pending") return;
     setSaveStatus("pending");
+    setError(null);
     try {
-      const result = await savePreviewImage(uri, imageLibrary);
-      if (result === "permission-denied") {
-        toast.error(t("panels.file.image.savePermissionDenied"));
-        return;
-      }
-      setMenuOpen(false);
-      toast.show(t("panels.file.image.saved"), { variant: "success" });
+      await withLocalImage(uri, async (localUri) => {
+        const result = await savePreviewImage(localUri, imageLibrary);
+        if (result === "permission-denied") {
+          setError(t("panels.file.image.savePermissionDenied"));
+          return;
+        }
+        setMenuOpen(false);
+        toast.show(t("panels.file.image.saved"), { variant: "success" });
+      });
     } catch {
-      toast.error(t("panels.file.image.saveFailed"));
+      setError(t("panels.file.image.saveFailed"));
     } finally {
       setSaveStatus("idle");
     }
@@ -83,21 +117,24 @@ export function FileImagePreview({ uri, fileName, attachment }: FileImagePreview
   const shareImage = useCallback(async () => {
     if (shareStatus === "pending") return;
     setShareStatus("pending");
+    setError(null);
     try {
       if (!(await Sharing.isAvailableAsync())) {
         throw new Error("Sharing is unavailable");
       }
-      await Sharing.shareAsync(uri, {
-        mimeType: attachment?.mimeType ?? "image/*",
-        dialogTitle: fileName,
+      await withLocalImage(uri, async (localUri) => {
+        await Sharing.shareAsync(localUri, {
+          mimeType: attachment?.mimeType ?? getRasterImageMimeTypeFromPath(uri) ?? "image/*",
+          dialogTitle: fileName,
+        });
       });
       setMenuOpen(false);
     } catch {
-      toast.error(t("panels.file.image.shareFailed"));
+      setError(t("panels.file.image.shareFailed"));
     } finally {
       setShareStatus("idle");
     }
-  }, [attachment?.mimeType, fileName, shareStatus, t, toast, uri]);
+  }, [attachment?.mimeType, fileName, shareStatus, t, uri]);
 
   const handleAccessibilityAction = useCallback(
     (event: AccessibilityActionEvent) => {
@@ -119,14 +156,16 @@ export function FileImagePreview({ uri, fileName, attachment }: FileImagePreview
   const shareLeading = useMemo(() => <ThemedShare size={16} uniProps={mutedColorMapping} />, []);
 
   return (
-    <View style={styles.container}>
-      <ContextMenu open={menuOpen} onOpenChange={setMenuOpen} compactMode="popover">
+    <View style={[styles.container, style]}>
+      <ContextMenu open={menuOpen} onOpenChange={handleMenuOpenChange} compactMode="popover">
         <ContextMenuTrigger
           enabledOnMobile
           style={styles.trigger}
-          testID="workspace-file-image-actions"
+          testID={`${testID}-actions`}
           accessibilityRole="imagebutton"
-          accessibilityLabel={t("panels.file.image.accessibilityLabel", { fileName })}
+          accessibilityLabel={
+            accessibilityLabel ?? t("panels.file.image.accessibilityLabel", { fileName })
+          }
           accessibilityHint={t("panels.file.image.accessibilityHint")}
           accessibilityActions={[
             { name: "copyImage", label: t("panels.file.image.copy") },
@@ -136,16 +175,18 @@ export function FileImagePreview({ uri, fileName, attachment }: FileImagePreview
           onAccessibilityAction={handleAccessibilityAction}
         >
           <ZoomableImage
-            accessibilityLabel={t("panels.file.image.accessibilityLabel", { fileName })}
+            {...props}
+            accessibilityLabel={
+              accessibilityLabel ?? t("panels.file.image.accessibilityLabel", { fileName })
+            }
             style={styles.viewport}
-            testID="image-file-preview"
+            testID={testID}
             uri={uri}
           />
         </ContextMenuTrigger>
-        <ContextMenuContent align="center" testID="file-image-actions-menu">
+        <ContextMenuContent align="center" testID={`${testID}-actions-menu`}>
           <ContextMenuItem
             closeOnSelect={false}
-            disabled={!attachment}
             status={copyStatus}
             pendingLabel={t("panels.file.image.copying")}
             leading={copyLeading}
@@ -171,13 +212,18 @@ export function FileImagePreview({ uri, fileName, attachment }: FileImagePreview
           >
             {t("panels.file.image.share")}
           </ContextMenuItem>
+          {error ? (
+            <Text accessibilityRole="alert" style={styles.error}>
+              {error}
+            </Text>
+          ) : null}
         </ContextMenuContent>
       </ContextMenu>
     </View>
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => ({
   container: {
     flex: 1,
     minHeight: 0,
@@ -191,4 +237,9 @@ const styles = StyleSheet.create({
     flex: 1,
     minHeight: 0,
   },
-});
+  error: {
+    color: theme.colors.destructive,
+    fontSize: theme.fontSize.sm,
+    padding: theme.spacing[3],
+  },
+}));
