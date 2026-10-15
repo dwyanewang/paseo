@@ -80,6 +80,10 @@ vi.mock("react-native-gesture-handler", () => ({
     React.createElement("div", { "data-testid": "gesture-handler-root" }, children),
 }));
 
+vi.mock("@/contexts/toast-context", () => ({
+  ToastProvider: ({ children }: { children?: React.ReactNode }) => children,
+}));
+
 vi.mock("lucide-react-native", () => {
   const createIcon = (name: string) => (props: Record<string, unknown>) =>
     React.createElement("span", { ...props, "data-icon": name });

@@ -96,6 +96,18 @@ adb shell pm disable-user --user 0 com.google.android.calendar
 
 When replay diverges, read its ranked selector suggestions. Edit the script deliberately and rerun it from the beginning. `--update` is retained for compatibility but no longer rewrites scripts.
 
+## Image preview actions
+
+File previews and chat lightboxes share `components/image-preview/view` so native long-press
+actions cover both attachment metadata and assistant image URIs. Keep lightbox zoom, close,
+and outside-tap props forwarded through that component. Native lightboxes own a local
+`ToastProvider`: a toast mounted in the app shell is covered by the lightbox's native Modal.
+Action failures stay inside the image menu so they remain visible while it is open.
+
+The native preview unit test exercises the real menu with native media APIs stubbed. It cannot
+verify Android touch arbitration or writes to the device gallery; verify those on a device
+using both a user attachment and an assistant image before shipping an APK.
+
 ## Maestro compatibility
 
 Existing Maestro flows live in `packages/app/maestro/`. Agent Device can execute its supported subset with `agent-device test <path> --maestro`, which provides a migration path while `.ad` coverage replaces these flows.

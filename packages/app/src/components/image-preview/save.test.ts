@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { savePreviewImage, type ImagePreviewLibrary } from "./image-preview-save";
+import { savePreviewImage, type ImagePreviewLibrary } from "./save";
 
 function createLibrary(permissionGranted = true): {
   library: ImagePreviewLibrary;

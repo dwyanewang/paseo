@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { Modal, Pressable, Text, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { StyleSheet } from "react-native-unistyles";
@@ -10,7 +10,9 @@ import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-ur
 import { isNative, isWeb } from "@/constants/platform";
 import { SPACING } from "@/styles/theme";
 import { WindowChromeRootRegion } from "@/utils/desktop-window";
-import { ZoomableImage } from "@/components/zoomable-viewport/image";
+import { ImagePreview } from "@/components/image-preview/view";
+import { ToastProvider } from "@/contexts/toast-context";
+import { getFileNameFromPath } from "@/attachments/utils";
 import type { ViewportSize } from "@/components/zoomable-viewport/geometry";
 import { useGlobalWebOverlayLayer, useWebOverlayRegistration } from "@/lib/overlay-root";
 
@@ -24,6 +26,7 @@ interface AttachmentLightboxProps {
 }
 
 const ModalRoot = isNative ? GestureHandlerRootView : View;
+const ModalToastRoot = isNative ? ToastProvider : Fragment;
 const LIGHTBOX_FIT = { padding: SPACING[4], maxWidth: 960, maxHeight: 640 };
 
 export function AttachmentLightbox({ source, onClose }: AttachmentLightboxProps) {
@@ -91,21 +94,23 @@ export function AttachmentLightbox({ source, onClose }: AttachmentLightboxProps)
   return (
     <Modal transparent animationType="fade" statusBarTranslucent visible onRequestClose={onClose}>
       <ModalRoot style={styles.root}>
-        <WindowChromeRootRegion corners="both">
-          <View ref={setWebOverlayScope} style={styles.root}>
-            <Pressable
-              testID="attachment-lightbox-backdrop"
-              accessibilityRole="button"
-              accessibilityLabel={t("message.attachments.dismissImage")}
-              onPress={onClose}
-              style={styles.backdrop}
-            />
-            <View pointerEvents="box-none" style={contentLayerStyle}>
-              <View pointerEvents="box-none" style={styles.imageArea}>
+        <ModalToastRoot>
+          <WindowChromeRootRegion corners="both">
+            <View ref={setWebOverlayScope} style={styles.root}>
+              <Pressable
+                testID="attachment-lightbox-backdrop"
+                accessibilityRole="button"
+                accessibilityLabel={t("message.attachments.dismissImage")}
+                onPress={onClose}
+                style={styles.backdrop}
+              />
+              <View pointerEvents="box-none" style={contentLayerStyle}>
                 {hasError ? (
                   <Text style={styles.errorText}>{t("message.attachments.imageLoadFailed")}</Text>
                 ) : (
-                  <ZoomableImage
+                  <ImagePreview
+                    attachment={metadata}
+                    fileName={metadata?.fileName ?? getFileNameFromPath(url) ?? "image"}
                     accessibilityLabel={t("composer.attachments.openImage")}
                     actions={actions}
                     contentSize={contentSize}
@@ -119,8 +124,8 @@ export function AttachmentLightbox({ source, onClose }: AttachmentLightboxProps)
                 )}
               </View>
             </View>
-          </View>
-        </WindowChromeRootRegion>
+          </WindowChromeRootRegion>
+        </ModalToastRoot>
       </ModalRoot>
     </Modal>
   );
@@ -146,9 +151,6 @@ const styles = StyleSheet.create((theme) => ({
     left: 0,
     right: 0,
     bottom: 0,
-  },
-  imageArea: {
-    flex: 1,
     alignItems: "center",
     justifyContent: "center",
   },
