@@ -341,9 +341,7 @@ export function WorkspaceDraftAgentTab({
     },
   });
   const composerState = draftInput.composerState;
-  if (!composerState) {
-    throw new Error("Workspace draft composer state is required");
-  }
+  invariant(composerState, "Workspace draft composer state is required");
 
   const draftProvider = composerState.selectedProvider;
   const draftProviderDefinitions = composerState.providerDefinitions;
