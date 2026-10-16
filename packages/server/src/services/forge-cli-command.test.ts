@@ -182,6 +182,29 @@ describe("ForgeCommandError", () => {
     expect((error as ForgeCommandError).stderr).toBe("acme command failed without stderr");
     expect((error as ForgeCommandError).stderr).not.toContain("sensitive body");
   });
+
+  it("reports a network timeout without copying the command from the raw error", () => {
+    const error = normalizeCliCommandError({
+      error: Object.assign(new Error("Command failed: acme merge --body sensitive body"), {
+        code: "ETIMEDOUT",
+      }),
+      args: ["merge", "--body", "sensitive body"],
+      cwd: "/repo",
+      commandName: "acme",
+      timeoutMs: 10000,
+      isAlreadyClassified: () => false,
+      isCommandError: () => false,
+      isAuthFailureText: () => false,
+      createAuthError: (stderr) => new Error(stderr),
+      createMissingError: () => new Error("missing"),
+      createCommandError: (params) =>
+        new ForgeCommandError({ brand: "Acme", binary: "acme" }, params),
+    });
+
+    expect(error).toBeInstanceOf(ForgeCommandError);
+    expect(error.message).toBe("Acme CLI command failed: acme");
+    expect(error).toMatchObject({ stderr: "request timed out after 10000ms" });
+  });
 });
 
 describe("createCachedCliPathResolver", () => {

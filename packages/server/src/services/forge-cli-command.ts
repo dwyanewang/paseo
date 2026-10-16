@@ -246,6 +246,19 @@ export function normalizeCliCommandError(options: NormalizeCliCommandErrorOption
   if (options.isAuthFailureText(stderr) || options.isAuthFailureText(message)) {
     return options.createAuthError(stderr);
   }
+  if (failure.code === "ETIMEDOUT" && options.timeoutMs !== undefined) {
+    let timeoutMessage = `request timed out after ${options.timeoutMs}ms`;
+    if (/^request timed out after \d+ms$/.test(message)) {
+      timeoutMessage = message;
+    }
+    return options.createCommandError({
+      args: options.args,
+      cwd: options.cwd,
+      exitCode: null,
+      stderr: stderr || timeoutMessage,
+      ...(stdout ? { stdout } : {}),
+    });
+  }
   if (failure.killed === true && options.timeoutMs !== undefined) {
     return options.createCommandError({
       args: options.args,
