@@ -14,6 +14,10 @@ Choose one integration path:
 Both paths implement the same server `ForgeService` contract and produce the
 same neutral protocol state. Do not add a Forge-specific protocol union arm.
 
+Shared Forge data shapes live in `packages/plugin/src/forge.ts`. When extending
+them, update the plugin result schema in the daemon's `forge-validation.ts`
+alongside the SDK; unlisted fields are stripped at the subprocess boundary.
+
 ## Built-in registrations
 
 For forge `acme`, the expected end state is:

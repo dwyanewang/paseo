@@ -115,6 +115,7 @@ const PullRequestCheckoutTargetSchema = z.object({
   baseRefName: z.string(),
   headRefName: z.string(),
   checkoutRefs: z.array(PullRequestCheckoutRefSchema).optional(),
+  headRefKind: z.enum(["branch", "pull-ref"]).optional(),
   headOwnerLogin: z.string().nullable(),
   preferredPushUrl: z.string().optional(),
   headRepositorySshUrl: z.string().nullable(),
