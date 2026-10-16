@@ -7,6 +7,10 @@ import {
 } from "@getpaseo/protocol/git-remote";
 import { findExecutable } from "../executable-resolution/executable-resolution.js";
 import { runGitCommand } from "../utils/run-git-command.js";
+import {
+  buildForkLocalBranchName,
+  buildPullHeadCheckoutRefs,
+} from "../utils/change-request-checkout.js";
 import { execCommand } from "../utils/spawn.js";
 import { resolveSshHostname } from "../utils/ssh-hostname.js";
 import {
@@ -2110,17 +2114,11 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
     },
 
     defaultCheckoutRefs({ changeRequestNumber }) {
-      return [
-        { remoteName: "origin", remoteRef: `refs/pull/${changeRequestNumber}/head` },
-        { remoteName: "upstream", remoteRef: `refs/pull/${changeRequestNumber}/head` },
-      ];
+      return buildPullHeadCheckoutRefs(changeRequestNumber);
     },
 
     buildPrLocalBranchName({ headRef, checkoutTarget }) {
-      const owner = checkoutTarget.isCrossRepository
-        ? normalizeGitHubOwnerForBranch(checkoutTarget.headOwnerLogin)
-        : null;
-      return owner ? `${owner}/${headRef}` : headRef;
+      return buildForkLocalBranchName({ headRef, ...checkoutTarget });
     },
 
     supportsCrossRepoCheckoutWithoutRefs: true,
@@ -2671,11 +2669,6 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
   };
 
   return api;
-}
-
-function normalizeGitHubOwnerForBranch(owner: string | null): string | null {
-  const normalized = owner?.trim().toLowerCase() ?? "";
-  return /^[a-z0-9-]+$/.test(normalized) ? normalized : null;
 }
 
 function getGithubStatusFacts(
@@ -3544,6 +3537,7 @@ async function toPullRequestCheckoutTarget(options: {
     headRepositorySshUrl: pullRequest.headRepository?.sshUrl || null,
     headRepositoryUrl: pullRequest.headRepository?.url || null,
     isCrossRepository: pullRequest.isCrossRepository,
+    headRefKind: "branch",
   };
 }
 
