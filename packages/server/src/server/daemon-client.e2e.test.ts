@@ -1269,6 +1269,7 @@ test("receives server_info on websocket connect", async () => {
   expect(serverInfo?.features?.daemonSelfUpdate).toBe(true);
   expect(serverInfo?.features?.worktreeRestore).toBe(true);
   expect(serverInfo?.features?.workspaceRecovery).toBe(true);
+  expect(serverInfo?.features?.changeRequestBranchOff).toBe(true);
 
   await client.close();
 }, 15000);

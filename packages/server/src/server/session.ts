@@ -246,6 +246,7 @@ import {
   type CreatePaseoWorktreeInput,
   type CreatePaseoWorktreeResult,
 } from "./paseo-worktree-service.js";
+import type { CheckoutBranchCopy } from "./worktree-core.js";
 import { WorkspaceAutoName } from "./workspace-auto-name.js";
 import {
   buildAgentSessionConfig as buildWorktreeAgentSessionConfig,
@@ -383,6 +384,12 @@ interface ResolvedSessionCreateAgentIntent {
   config: AgentSessionConfig;
   intent: CreateAgentIntent;
   createdDirectoryWorkspace: boolean;
+}
+
+interface CreatedWorkspace {
+  descriptor: WorkspaceDescriptorPayload;
+  // Set only when a checkout landed on a copy of the requested branch.
+  checkoutBranchCopy: CheckoutBranchCopy | null;
 }
 
 type FetchWorkspacesRequestMessage = Extract<
@@ -4098,7 +4105,7 @@ export class Session {
           hasPrompt: hasInitialCreationPrompt(agentInput),
           exists: this.creationResourceExists,
           provision: async (id) => {
-            const descriptor = await this.createRequestedWorkspace(
+            const { descriptor, checkoutBranchCopy } = await this.createRequestedWorkspace(
               {
                 ...request,
                 firstAgentContext: agentInput
@@ -4113,6 +4120,7 @@ export class Session {
               setupSkippedReason: workspace?.untrustedSource
                 ? formatWorkspaceAutomationBlockedMessage(workspace.untrustedSource)
                 : undefined,
+              checkoutBranchCopy: checkoutBranchCopy ?? undefined,
             };
           },
           createAgent: agentInput
@@ -4160,6 +4168,7 @@ export class Session {
             setupSkippedReason: creation.setupSkippedReason,
             error: creation.error,
             errorCode: creation.errorCode,
+            checkoutBranchCopy: creation.checkoutBranchCopy,
             setupTerminalId: null,
           },
         },
@@ -6721,7 +6730,7 @@ export class Session {
   private async createRequestedWorkspace(
     request: Extract<SessionInboundMessage, { type: "workspace.create.request" }>,
     workspaceId?: string,
-  ): Promise<WorkspaceDescriptorPayload> {
+  ): Promise<CreatedWorkspace> {
     if (request.internal)
       throw new Error(
         "Public internal workspaces were removed; use background workspace creation.",
@@ -6737,7 +6746,10 @@ export class Session {
       creationRequest = { ...transformed, type, requestId };
     }
     return creationRequest.source.kind === "directory"
-      ? this.handleWorkspaceCreateLocal(creationRequest, workspaceId)
+      ? {
+          descriptor: await this.handleWorkspaceCreateLocal(creationRequest, workspaceId),
+          checkoutBranchCopy: null,
+        }
       : this.handleWorkspaceCreateWorktree(creationRequest, workspaceId);
   }
 
@@ -6799,7 +6811,7 @@ export class Session {
   private async handleWorkspaceCreateWorktree(
     request: Extract<SessionInboundMessage, { type: "workspace.create.request" }>,
     workspaceId?: string,
-  ): Promise<WorkspaceDescriptorPayload> {
+  ): Promise<CreatedWorkspace> {
     if (request.source.kind !== "worktree") {
       throw new Error("Unexpected workspace source");
     }
@@ -6834,14 +6846,21 @@ export class Session {
       source.baseBranch
         ? { resolveDefaultBranch: async () => source.baseBranch as string }
         : undefined,
-    );
+    ).catch((error: unknown) => {
+      // Checkout domain errors carry no code of their own. Give them the wire code
+      // the per-worktree RPC uses so the creation snapshot reports it — notably
+      // branch_already_checked_out. Other errors pass through untouched, with any
+      // code they already carry.
+      const wireError = toWorktreeWireError(error);
+      throw wireError.code === "unknown" ? error : new WorktreeRequestError(wireError);
+    });
 
     const descriptor = await this.describeCreatedWorktreeWorkspace(result);
     await this.emitCreatedWorkspaceUpdate(
       descriptor,
       request.firstAgentContext ? "running" : undefined,
     );
-    return descriptor;
+    return { descriptor, checkoutBranchCopy: result.checkoutBranchCopy };
   }
 
   private async handleOpenProjectRequest(

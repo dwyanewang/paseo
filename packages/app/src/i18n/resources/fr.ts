@@ -1359,7 +1359,14 @@ export const fr: TranslationResources = {
     isolation: {
       local: "Local",
       worktree: "Nouveau worktree",
-      label: "Isolation",
+      label: "Mode de l’espace de travail",
+    },
+    branchMode: {
+      label: "Branche existante",
+      branchOff: "Nouvelle branche",
+      checkout: "Utiliser la branche",
+      updateHost:
+        "Mettez à jour l’hôte pour créer une nouvelle branche à partir de la sélection actuelle.",
     },
     fields: {
       project: "Projet",
@@ -1372,7 +1379,13 @@ export const fr: TranslationResources = {
       hostDisconnected: "L’hôte n’est pas connecté",
       createWorktreeFailed: "Impossible de créer le worktree",
       composerStateRequired: "L’état de la zone de saisie est requis",
+      branchAlreadyCheckedOut:
+        "Cette branche est déjà extraite ailleurs. Utilisez « Nouvelle branche » pour créer une copie, ou libérez d’abord la branche.",
       selectModel: "Sélectionnez un modèle",
+    },
+    notices: {
+      checkoutBranchCopied:
+        "{{requestedBranch}} est déjà extraite ailleurs. Une copie est utilisée à la place : {{createdBranch}}.",
     },
     tooltips: {
       project: "Choisir le projet",

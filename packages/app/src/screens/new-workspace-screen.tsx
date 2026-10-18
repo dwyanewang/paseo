@@ -98,7 +98,11 @@ import {
 } from "./new-workspace-picker-item";
 import {
   clearPickerPrAttachmentForTargetChange,
+  doesNewWorkspaceCreateWorktree,
+  effectivePickerWorktreeAction,
   initialPickerSelectionState,
+  isNewWorkspaceWorktreeActionSupported,
+  isPickerWorktreeActionSupported,
   reducePickerSelection,
   syncPickerPrAttachment,
 } from "./new-workspace-picker-state";
@@ -108,7 +112,7 @@ import {
 } from "./new-workspace-initial-context";
 import { buildNewWorkspaceProjectIconTargets } from "./new-workspace/project-icon-targets";
 import { useNewWorkspaceProjectPicker } from "./new-workspace/project-picker";
-import { useNewWorkspaceForm } from "./new-workspace/form";
+import { useNewWorkspaceForm, type WorkspaceMode } from "./new-workspace/form";
 import { ImportSessionButton } from "./new-workspace/import-session-button";
 import { useImportSession } from "@/hooks/use-import-session";
 import {
@@ -275,6 +279,37 @@ interface WorkspaceDraftSubmissionConfig {
   target: WorkspaceTabTarget;
 }
 
+// Wire code the daemon returns when `action: "checkout"` targets a branch that
+// is already checked out elsewhere (another worktree or the main checkout). This
+// is the WorktreeWireErrorCode contract (packages/server/src/server/worktree-errors.ts),
+// matched here the same way the app keys off other create errorCodes (e.g.
+// open_project's directory_not_found).
+const BRANCH_ALREADY_CHECKED_OUT_CODE = "branch_already_checked_out";
+
+interface WorkspaceCreateErrorLabels {
+  createFailed: string;
+  branchAlreadyCheckedOut: string;
+}
+
+// Git refuses to check a branch out twice, so a checkout can land on a copy of
+// the branch the user picked. Nothing about the created workspace says it is a
+// substitution, so whoever creates it has to say so out loud. Daemons that
+// predate the field never set it.
+type NotifyCheckoutBranchCopy = (copy: { requestedBranch: string; createdBranch: string }) => void;
+
+// A branch already checked out is recoverable — the user can branch off instead —
+// so it gets a dedicated, actionable message. Everything else falls back to the
+// daemon's own message, then a generic label.
+function workspaceCreateError(
+  payload: { error: string | null; errorCode?: string },
+  labels: WorkspaceCreateErrorLabels,
+): Error {
+  if (payload.errorCode === BRANCH_ALREADY_CHECKED_OUT_CODE) {
+    return new Error(labels.branchAlreadyCheckedOut);
+  }
+  return new Error(payload.error ?? labels.createFailed);
+}
+
 interface WorkspaceCreationResult {
   workspace: ReturnType<typeof normalizeWorkspaceDescriptor>;
   agent?: AgentSnapshotPayload;
@@ -298,7 +333,8 @@ async function createMultiplicityWorkspace(input: {
     workspaces: ReturnType<typeof normalizeWorkspaceDescriptor>[],
   ) => void;
   serverId: string;
-  createFailedMessage: string;
+  labels: WorkspaceCreateErrorLabels;
+  onCheckoutBranchCopy: NotifyCheckoutBranchCopy;
 }): Promise<WorkspaceCreationResult> {
   const projectId = getHostProjectId(input.project, input.serverId);
   if (!projectId) throw new Error("Project is not available on the selected host");
@@ -327,7 +363,10 @@ async function createMultiplicityWorkspace(input: {
     ...(firstAgentContext ? { firstAgentContext } : {}),
   });
   if (payload.error || !payload.workspace) {
-    throw new Error(payload.error ?? input.createFailedMessage);
+    throw workspaceCreateError(payload, input.labels);
+  }
+  if (payload.checkoutBranchCopy) {
+    input.onCheckoutBranchCopy(payload.checkoutBranchCopy);
   }
   const normalizedWorkspace = normalizeWorkspaceDescriptor(payload.workspace);
   const workspaceForInitialMerge = input.withInitialAgent
@@ -846,6 +885,7 @@ function useNewWorkspaceInitialContext({
   };
 }
 
+// oxlint-disable-next-line complexity
 export function NewWorkspaceScreen({
   serverId,
   sourceDirectory: sourceDirectoryProp,
@@ -885,6 +925,8 @@ export function NewWorkspaceScreen({
   // COMPAT(workspaceMultiplicity): added in v0.1.97, drop the gate when floor >= v0.1.97
   const supportsWorkspaceMultiplicity = useHostFeature(selectedServerId, "workspaceMultiplicity");
   const supportsForgeSearch = useHostFeature(selectedServerId, "forgeSearch");
+  // COMPAT(changeRequestBranchOff): added in v0.2.5, remove after 2027-01-31.
+  const supportsChangeRequestBranchOff = useHostFeature(selectedServerId, "changeRequestBranchOff");
   const [creationIdentity] = useState(() => ({
     draftId: draftId ?? generateDraftId(),
     worktreeSlug: createNameId(),
@@ -1005,17 +1047,7 @@ export function NewWorkspaceScreen({
     initialPickerSelectionState,
   );
   const selectedItem = pickerSelection.selectedItem;
-
-  const handleForgeChangeRequestDetected = useCallback(() => {
-    dispatchPickerSelection({ type: "pr-detected" });
-  }, []);
-
-  const handleForgeChangeRequestAutoAttach = useCallback((item: ForgeSearchItem) => {
-    dispatchPickerSelection({
-      type: "pr-added",
-      item: { kind: "github-pr", item },
-    });
-  }, []);
+  const worktreeAction = effectivePickerWorktreeAction(pickerSelection);
 
   const withConnectedClient = useCallback(() => {
     const connectedClient = getHostRuntimeStore().getClient(selectedServerId);
@@ -1043,6 +1075,36 @@ export function NewWorkspaceScreen({
       supportsMultiplicity: supportsWorkspaceMultiplicity,
       worktreeSupport,
     });
+  const workspaceMode: WorkspaceMode = showRefPicker ? worktreeAction : "local";
+  const handleForgeChangeRequestDetected = useCallback(() => {
+    dispatchPickerSelection({ type: "pr-detected" });
+  }, []);
+
+  const handleForgeChangeRequestAutoAttach = useCallback(
+    (item: ForgeSearchItem) => {
+      const pickerItem = { kind: "github-pr" as const, item };
+      const action = pickerSelection.actionOverride ?? "checkout";
+      if (
+        !isNewWorkspaceWorktreeActionSupported({
+          supportsWorkspaceMultiplicity,
+          effectiveIsolation,
+          action,
+          item: pickerItem,
+          supportsChangeRequestBranchOff,
+        })
+      ) {
+        dispatchPickerSelection({ type: "pr-auto-selection-cancelled" });
+        return;
+      }
+      dispatchPickerSelection({ type: "pr-added", item: pickerItem });
+    },
+    [
+      effectiveIsolation,
+      pickerSelection.actionOverride,
+      supportsChangeRequestBranchOff,
+      supportsWorkspaceMultiplicity,
+    ],
+  );
 
   const branchSuggestionsQuery = useQuery({
     queryKey: [
@@ -1106,16 +1168,37 @@ export function NewWorkspaceScreen({
   }, [itemById, selectedOptionId]);
   const selectPickerItem = useCallback(
     (item: PickerItem) => {
+      const action =
+        pickerSelection.actionOverride ?? (item.kind === "github-pr" ? "checkout" : "branch-off");
+      if (
+        !isNewWorkspaceWorktreeActionSupported({
+          supportsWorkspaceMultiplicity,
+          effectiveIsolation,
+          action,
+          item,
+          supportsChangeRequestBranchOff,
+        })
+      ) {
+        return;
+      }
       const nextAttachments = syncPickerPrAttachment({
         attachments: chatDraft.attachments,
         item,
       });
 
       dispatchPickerSelection({ type: "picker-selected", item });
-      chatDraft.setAttachments(nextAttachments);
+      if (nextAttachments !== chatDraft.attachments) {
+        chatDraft.setAttachments(nextAttachments);
+      }
       setPickerOpen(false);
     },
-    [chatDraft],
+    [
+      chatDraft,
+      effectiveIsolation,
+      pickerSelection.actionOverride,
+      supportsChangeRequestBranchOff,
+      supportsWorkspaceMultiplicity,
+    ],
   );
 
   const handleSelectOption = useCallback(
@@ -1202,6 +1285,22 @@ export function NewWorkspaceScreen({
     setIsolationPickerOpen(nextOpen);
   }, []);
 
+  const handleSelectWorkspaceMode = useCallback(
+    (mode: WorkspaceMode) => {
+      if (mode === "local") {
+        setIsolation("local");
+        setIsolationPickerOpen(false);
+        return;
+      }
+      if (!isPickerWorktreeActionSupported(mode, selectedItem, supportsChangeRequestBranchOff))
+        return;
+      setIsolation("worktree");
+      dispatchPickerSelection({ type: "workspace-mode-selected", mode });
+      setIsolationPickerOpen(false);
+    },
+    [selectedItem, setIsolation, supportsChangeRequestBranchOff],
+  );
+
   const handleClearDraft = useCallback(() => {
     // No-op: screen navigates away on success, text should stay for retry on error
   }, []);
@@ -1217,6 +1316,19 @@ export function NewWorkspaceScreen({
     setProjectPickerOpen(nextOpen);
   }, []);
 
+  const notifyCheckoutBranchCopy = useCallback<NotifyCheckoutBranchCopy>(
+    ({ requestedBranch, createdBranch }) => {
+      toast.show(
+        t("newWorkspace.notices.checkoutBranchCopied", { requestedBranch, createdBranch }),
+        {
+          variant: "warning",
+          durationMs: 6000,
+        },
+      );
+    },
+    [t, toast],
+  );
+
   const ensureWorkspace = useCallback(
     async (input: {
       cwd: string;
@@ -1228,6 +1340,17 @@ export function NewWorkspaceScreen({
     }) => {
       if (creationResult.workspace) {
         return creationResult;
+      }
+      if (
+        !isNewWorkspaceWorktreeActionSupported({
+          supportsWorkspaceMultiplicity,
+          effectiveIsolation,
+          action: worktreeAction,
+          item: selectedItem,
+          supportsChangeRequestBranchOff,
+        })
+      ) {
+        throw new Error(t("newWorkspace.branchMode.updateHost"));
       }
       if (!selectedProject) {
         throw new Error("Choose a project");
@@ -1248,8 +1371,14 @@ export function NewWorkspaceScreen({
       const checkoutRequest = checkoutStatusForCreate
         ? pickerItemToCheckoutRequest(
             selectedItem ?? defaultBasePickerItem(checkoutStatusForCreate),
+            worktreeAction,
           )
         : undefined;
+      const isCheckoutTargetMissing =
+        createsWorktree && worktreeAction === "checkout" && !checkoutRequest;
+      if (isCheckoutTargetMissing) {
+        throw new Error(t("newWorkspace.refPicker.chooseStart"));
+      }
       const normalizedWorkspace = await createMultiplicityWorkspace({
         idempotencyKey: creationIdentity.draftId,
         worktreeSlug: creationIdentity.worktreeSlug,
@@ -1265,7 +1394,11 @@ export function NewWorkspaceScreen({
         onEvent: input.onEvent,
         mergeWorkspaces,
         serverId: selectedServerId,
-        createFailedMessage: t("newWorkspace.errors.createWorktreeFailed"),
+        labels: {
+          createFailed: t("newWorkspace.errors.createWorktreeFailed"),
+          branchAlreadyCheckedOut: t("newWorkspace.errors.branchAlreadyCheckedOut"),
+        },
+        onCheckoutBranchCopy: notifyCheckoutBranchCopy,
       });
       setCreationResult(normalizedWorkspace);
       return normalizedWorkspace;
@@ -1275,14 +1408,17 @@ export function NewWorkspaceScreen({
       creationResult,
       effectiveIsolation,
       mergeWorkspaces,
+      notifyCheckoutBranchCopy,
       queryClient,
       selectedItem,
       selectedProject,
       selectedServerId,
       selectedSourceDirectory,
+      supportsChangeRequestBranchOff,
       supportsWorkspaceMultiplicity,
       t,
       withConnectedClient,
+      worktreeAction,
     ],
   );
 
@@ -1491,9 +1627,11 @@ export function NewWorkspaceScreen({
       open: openIsolationPicker,
       openState: isolationPickerOpen,
       onOpenChange: handleIsolationPickerOpenChange,
-      effectiveIsolation,
+      mode: workspaceMode,
       canCreateWorktree,
-      onSelect: setIsolation,
+      changeRequestBranchOffDisabled:
+        selectedItem?.kind === "github-pr" && !supportsChangeRequestBranchOff,
+      onSelect: handleSelectWorkspaceMode,
     },
     base: {
       anchorRef: pickerAnchorRef,
@@ -1510,6 +1648,10 @@ export function NewWorkspaceScreen({
       setSearchQuery: setPickerSearchQuery,
       emptyText: pickerEmptyText,
       showRefPicker,
+      changeRequestBranchOffDisabled:
+        doesNewWorkspaceCreateWorktree(supportsWorkspaceMultiplicity, effectiveIsolation) &&
+        pickerSelection.actionOverride === "branch-off" &&
+        !supportsChangeRequestBranchOff,
     },
     launch: {
       serverId: selectedServerId,

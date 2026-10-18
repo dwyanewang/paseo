@@ -15,6 +15,7 @@ export interface CreationResult {
   errorCode?: string;
   setupTerminalId?: string | null;
   setupSkippedReason?: string;
+  checkoutBranchCopy?: WorkspaceCreateResponse["payload"]["checkoutBranchCopy"];
   requestId?: string;
 }
 interface Dependencies {
@@ -78,6 +79,7 @@ export class CreationClient {
         agentId: null,
         workspace: workspace.workspace,
         setupSkippedReason: workspace.setupSkippedReason,
+        checkoutBranchCopy: workspace.checkoutBranchCopy,
         error: null,
       });
       if (!agent) return workspace;
@@ -192,6 +194,7 @@ export class CreationClient {
         workspace: snapshot.workspace,
         creation: snapshot,
         setupSkippedReason: snapshot.setupSkippedReason,
+        checkoutBranchCopy: snapshot.checkoutBranchCopy,
         error: snapshot.error,
         errorCode: snapshot.errorCode,
       });

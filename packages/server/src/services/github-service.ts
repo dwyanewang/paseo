@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
   isGitHubHost,
+  parseGitHubRemoteIdentity,
   parseGitHubRemoteUrl,
   parseGitRemoteLocation,
 } from "@getpaseo/protocol/git-remote";
@@ -479,6 +480,7 @@ const ForkPullRequestRefsSchema = z.array(
 const PullRequestCheckoutTargetSchema = z.object({
   data: z.object({
     repository: z.object({
+      url: z.string().nullable().optional(),
       pullRequest: z
         .object({
           number: z.number(),
@@ -507,6 +509,7 @@ const PullRequestCheckoutTargetSchema = z.object({
 const PULL_REQUEST_CHECKOUT_TARGET_QUERY = `
 query PullRequestCheckoutTarget($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
+    url
     pullRequest(number: $number) {
       number
       baseRefName
@@ -943,6 +946,7 @@ interface GitHubServiceDependencies {
   runner: GitHubCommandRunner;
   resolveGhPath: () => Promise<string | null>;
   now: () => number;
+  resolveSshHostname: (host: string) => Promise<string | null>;
   /**
    * GitHub Enterprise host for a workspace, or null for github.com (where `gh`
    * already defaults correctly). Used to set GH_HOST so every `gh api`/`graphql`
@@ -1045,6 +1049,7 @@ interface CreateGitHubServiceOptions {
   runner?: GitHubCommandRunner;
   resolveGhPath?: () => Promise<string | null>;
   now?: () => number;
+  resolveSshHostname?: (host: string) => Promise<string | null>;
   resolveRepoHost?: (cwd: string) => Promise<string | null>;
   resolveRepoSlug?: (cwd: string) => Promise<string | null>;
 }
@@ -1126,6 +1131,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
     runner: options.runner ?? runGhCommand,
     resolveGhPath: options.resolveGhPath ?? resolveGhPath,
     now: options.now ?? Date.now,
+    resolveSshHostname: options.resolveSshHostname ?? resolveSshHostname,
     resolveRepoHost: options.resolveRepoHost ?? resolveGitHubEnterpriseHost,
     resolveRepoSlug: options.resolveRepoSlug ?? resolveGitHubSlugFromOrigin,
   };
@@ -2148,7 +2154,11 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
             PullRequestCheckoutTargetSchema,
             "{}",
           );
-          return toPullRequestCheckoutTarget(parsed);
+          return toPullRequestCheckoutTarget({
+            cwd: input.cwd,
+            parsed,
+            resolveSshHostname: deps.resolveSshHostname,
+          });
         },
       });
     },
@@ -3503,27 +3513,105 @@ function normalizeRepositorySummary(repository: {
   };
 }
 
-function toPullRequestCheckoutTarget(
-  parsed: z.infer<typeof PullRequestCheckoutTargetSchema>,
-): PullRequestCheckoutTarget {
+async function toPullRequestCheckoutTarget(options: {
+  cwd: string;
+  parsed: z.infer<typeof PullRequestCheckoutTargetSchema>;
+  resolveSshHostname: (host: string) => Promise<string | null>;
+}): Promise<PullRequestCheckoutTarget> {
+  const { parsed } = options;
   const pullRequest = parsed.data.repository.pullRequest;
   if (!pullRequest) {
     throw new Error("Pull request not found");
   }
+  const remoteName = await resolveGitHubBaseRepositoryRemote({
+    cwd: options.cwd,
+    repositoryUrl: parsed.data.repository.url,
+    resolveSshHostname: options.resolveSshHostname,
+  });
   return {
     number: pullRequest.number,
     baseRefName: pullRequest.baseRefName,
     headRefName: pullRequest.headRefName,
-    checkoutRefs: [
-      { remoteName: "origin", remoteRef: `refs/pull/${pullRequest.number}/head` },
-      { remoteName: "upstream", remoteRef: `refs/pull/${pullRequest.number}/head` },
-    ],
+    checkoutRefs: [{ remoteName, remoteRef: `refs/pull/${pullRequest.number}/head` }],
     headOwnerLogin: pullRequest.headRepositoryOwner?.login || null,
     headRepositorySshUrl: pullRequest.headRepository?.sshUrl || null,
     headRepositoryUrl: pullRequest.headRepository?.url || null,
     isCrossRepository: pullRequest.isCrossRepository,
     headRefKind: "branch",
   };
+}
+
+async function resolveGitHubBaseRepositoryRemote(options: {
+  cwd: string;
+  repositoryUrl: string | null | undefined;
+  resolveSshHostname: (host: string) => Promise<string | null>;
+}): Promise<string> {
+  const baseRepository = await parseGitHubRepositoryRemote(options.repositoryUrl);
+  if (!baseRepository) {
+    // The GraphQL schema allows a missing repository URL, and a token without `repo` scope on a
+    // private GHE instance hits that. Base-repository detection is an improvement over the old
+    // hardcoded "origin", so fall back to it rather than failing a checkout that used to work.
+    return "origin";
+  }
+
+  const { stdout } = await runGitCommand(["remote"], { cwd: options.cwd });
+  const remoteNames = stdout
+    .split(/\r?\n/u)
+    .map((remoteName) => remoteName.trim())
+    .filter(Boolean);
+  const matchingRemoteNames: string[] = [];
+
+  for (const remoteName of remoteNames) {
+    // `git remote get-url` applies url.*.insteadOf and can hide the forge identity.
+    const { stdout: urls } = await runGitCommand(
+      ["config", "--get-all", `remote.${remoteName}.url`],
+      { cwd: options.cwd },
+    );
+    if (
+      (
+        await Promise.all(
+          urls
+            .split(/\r?\n/u)
+            .map((url) => parseGitHubRepositoryRemote(url, options.resolveSshHostname)),
+        )
+      ).some(
+        (remote) => remote?.host === baseRepository.host && remote.repo === baseRepository.repo,
+      )
+    ) {
+      matchingRemoteNames.push(remoteName);
+    }
+  }
+
+  const remoteName = matchingRemoteNames.includes("origin") ? "origin" : matchingRemoteNames[0];
+  if (!remoteName) {
+    throw new Error(
+      `No local Git remote matches the pull request base repository ${baseRepository.host}/${baseRepository.repo}`,
+    );
+  }
+  return remoteName;
+}
+
+async function parseGitHubRepositoryRemote(
+  remoteUrl: string | null | undefined,
+  resolveSshHost?: (host: string) => Promise<string | null>,
+): Promise<{ host: string; repo: string } | null> {
+  if (!remoteUrl) {
+    return null;
+  }
+  const location = parseGitRemoteLocation(remoteUrl);
+  const identity = location ? parseGitHubRemoteIdentity(location.path) : null;
+  if (!location || !identity) {
+    return null;
+  }
+  let host = location.host;
+  if (
+    resolveSshHost &&
+    !isGitHubHost(host) &&
+    (location.transport === "scp" || location.transport === "ssh")
+  ) {
+    host = (await resolveSshHost(host)) ?? host;
+  }
+  return { host, repo: identity.repo.toLowerCase() };
 }
 
 function toPullRequestSummary(

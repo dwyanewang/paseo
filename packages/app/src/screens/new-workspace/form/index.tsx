@@ -1,5 +1,6 @@
 import { useCallback, useMemo, type ReactElement, type ReactNode, type RefObject } from "react";
 import { View } from "react-native";
+import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { StyleSheet } from "react-native-unistyles";
 import type { TerminalProfile } from "@getpaseo/protocol/messages";
@@ -9,18 +10,18 @@ import { HostPicker } from "@/components/hosts/host-picker";
 import type { LaunchTarget } from "@/new-workspace-launch/target";
 import type { HostProjectListItem } from "@/projects/host-projects";
 import type { HostProfile } from "@/types/host-connection";
-import type { PickerItem } from "../../new-workspace-picker-item";
+import type { BranchWorktreeMode, PickerItem } from "../../new-workspace-picker-item";
 import {
   FIELD_BADGE_HEIGHT,
   FIELD_HEIGHT,
   FieldTrigger,
   type FieldTriggerVariant,
 } from "./field-trigger";
-import { branchIcon, folderIcon, ProjectIcon, pullRequestIcon } from "./icons";
+import { branchIcon, folderIcon, ProjectIcon, pullRequestIcon, workspaceModeIcon } from "./icons";
 import { LaunchControl } from "./launch-control";
-import { AddProjectOption, IsolationOption, ProjectOption, RefOption } from "./options";
+import { AddProjectOption, WorkspaceModeOption, ProjectOption, RefOption } from "./options";
 
-type Isolation = "local" | "worktree";
+export type WorkspaceMode = "local" | BranchWorktreeMode;
 type RenderOption = NonNullable<ComboboxProps["renderOption"]>;
 
 interface PickerControl {
@@ -53,9 +54,10 @@ export interface NewWorkspaceFormProps {
     onAddHost: () => void;
   };
   isolation: PickerControl & {
-    effectiveIsolation: Isolation;
+    mode: WorkspaceMode;
+    changeRequestBranchOffDisabled: boolean;
     canCreateWorktree: boolean;
-    onSelect: (isolation: Isolation) => void;
+    onSelect: (mode: WorkspaceMode) => void;
   };
   base: PickerControl & {
     selectedSourceDirectory: string | null;
@@ -68,6 +70,7 @@ export interface NewWorkspaceFormProps {
     setSearchQuery: (query: string) => void;
     emptyText: string;
     showRefPicker: boolean;
+    changeRequestBranchOffDisabled: boolean;
   };
   launch: {
     serverId: string;
@@ -123,37 +126,65 @@ function useProjectPicker(
   return { renderOption, footer };
 }
 
-function useIsolationPicker(
+function workspaceModeLabel(t: TFunction, mode: WorkspaceMode): string {
+  if (mode === "local") return t("newWorkspace.isolation.local");
+  return mode === "checkout"
+    ? t("newWorkspace.branchMode.checkout")
+    : t("newWorkspace.branchMode.branchOff");
+}
+
+function useWorkspaceModePicker(
   isolation: NewWorkspaceFormProps["isolation"],
   isPending: boolean,
 ): { options: ComboboxOption[]; onSelect: (id: string) => void; renderOption: RenderOption } {
   const { t } = useTranslation();
-  const { canCreateWorktree, onSelect, onOpenChange } = isolation;
-  // "New worktree" is omitted entirely (not disabled) when the project isn't a
-  // git checkout, since worktree isolation is impossible there.
+  const { canCreateWorktree, changeRequestBranchOffDisabled, onSelect } = isolation;
   const options = useMemo<ComboboxOption[]>(() => {
-    const local = { id: "local", label: t("newWorkspace.isolation.local") };
-    if (!canCreateWorktree) return [local];
-    return [local, { id: "worktree", label: t("newWorkspace.isolation.worktree") }];
+    const worktrees = [
+      { id: "branch-off", label: workspaceModeLabel(t, "branch-off") },
+      { id: "checkout", label: workspaceModeLabel(t, "checkout") },
+    ];
+    return canCreateWorktree
+      ? [{ id: "local", label: workspaceModeLabel(t, "local") }, ...worktrees]
+      : worktrees;
   }, [canCreateWorktree, t]);
   const handleSelect = useCallback(
     (id: string) => {
-      onSelect(id === "worktree" ? "worktree" : "local");
-      onOpenChange(false);
+      if (id === "local" || id === "checkout" || id === "branch-off") onSelect(id);
     },
-    [onOpenChange, onSelect],
+    [onSelect],
   );
   const renderOption = useCallback<RenderOption>(
-    (row) => <IsolationOption {...row} disabled={isPending} />,
-    [isPending],
+    (row) => {
+      const unsupported = row.option.id === "branch-off" && changeRequestBranchOffDisabled;
+      return (
+        <WorkspaceModeOption
+          {...row}
+          disabled={isPending || unsupported}
+          description={unsupported ? t("newWorkspace.branchMode.updateHost") : undefined}
+        />
+      );
+    },
+    [isPending, changeRequestBranchOffDisabled, t],
   );
   return { options, onSelect: handleSelect, renderOption };
 }
 
-function useRefRenderOption(itemById: Map<string, PickerItem>, isPending: boolean): RenderOption {
+function useRefRenderOption(
+  itemById: Map<string, PickerItem>,
+  isPending: boolean,
+  changeRequestBranchOffDisabled: boolean,
+): RenderOption {
   return useCallback<RenderOption>(
-    (row) => <RefOption {...row} item={itemById.get(row.option.id)} disabled={isPending} />,
-    [isPending, itemById],
+    (row) => (
+      <RefOption
+        {...row}
+        item={itemById.get(row.option.id)}
+        disabled={isPending}
+        changeRequestBranchOffDisabled={changeRequestBranchOffDisabled}
+      />
+    ),
+    [isPending, itemById, changeRequestBranchOffDisabled],
   );
 }
 
@@ -167,8 +198,12 @@ export function useNewWorkspaceForm(props: NewWorkspaceFormProps): ReactElement 
   const { isCompact, isPending, project, host, isolation, base, launch } = props;
   const variant: FieldTriggerVariant = isCompact ? "field" : "badge";
   const projectPicker = useProjectPicker(project, isPending);
-  const isolationPicker = useIsolationPicker(isolation, isPending);
-  const renderRefOption = useRefRenderOption(base.itemById, isPending);
+  const isolationPicker = useWorkspaceModePicker(isolation, isPending);
+  const renderRefOption = useRefRenderOption(
+    base.itemById,
+    isPending,
+    base.changeRequestBranchOffDisabled,
+  );
 
   const showHost = host.allHosts.length > 1;
   const selectedHostLabel =
@@ -194,10 +229,7 @@ export function useNewWorkspaceForm(props: NewWorkspaceFormProps): ReactElement 
     () => <HostStatusDot serverId={host.selectedServerId} />,
     [host.selectedServerId],
   );
-  const isWorktree = isolation.effectiveIsolation === "worktree";
-  const isolationValue = isWorktree
-    ? t("newWorkspace.isolation.worktree")
-    : t("newWorkspace.isolation.local");
+  const isolationValue = workspaceModeLabel(t, isolation.mode);
   const refIcon = base.selectedItem?.kind === "github-pr" ? pullRequestIcon : branchIcon;
 
   const projectField = (
@@ -243,20 +275,21 @@ export function useNewWorkspaceForm(props: NewWorkspaceFormProps): ReactElement 
       />
     </HostPicker>
   ) : null;
-  const isolationField = isolation.canCreateWorktree ? (
-    <FieldTrigger
-      ref={isolation.anchorRef}
-      variant={variant}
-      label={t("newWorkspace.isolation.label")}
-      accessibilityLabel="Workspace isolation"
-      tooltip={t("newWorkspace.tooltips.isolation")}
-      icon={isWorktree ? branchIcon : folderIcon}
-      value={isolationValue}
-      onPress={isolation.open}
-      disabled={isPending}
-      testID="workspace-create-isolation-trigger"
-    />
-  ) : null;
+  const isolationField =
+    isolation.canCreateWorktree || base.showRefPicker ? (
+      <FieldTrigger
+        ref={isolation.anchorRef}
+        variant={variant}
+        label={t("newWorkspace.isolation.label")}
+        accessibilityLabel={t("newWorkspace.isolation.label")}
+        tooltip={t("newWorkspace.tooltips.isolation")}
+        icon={workspaceModeIcon(isolation.mode)}
+        value={isolationValue}
+        onPress={isolation.open}
+        disabled={isPending}
+        testID="workspace-create-mode-trigger"
+      />
+    ) : null;
   const baseField = base.showRefPicker ? (
     <FieldTrigger
       ref={base.anchorRef}
@@ -302,7 +335,7 @@ export function useNewWorkspaceForm(props: NewWorkspaceFormProps): ReactElement 
       />
       <Combobox
         options={isolationPicker.options}
-        value={isolation.effectiveIsolation}
+        value={isolation.mode}
         onSelect={isolationPicker.onSelect}
         title={t("newWorkspace.isolation.label")}
         open={isolation.openState}
