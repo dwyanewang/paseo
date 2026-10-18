@@ -6,7 +6,9 @@ The reason is mobile performance. A captured 353 KB provider snapshot cost about
 
 ## Runtime Path
 
-`packages/protocol/src/validation/ws-outbound.ts` is the shipped boundary. It calls the generated `WSOutboundMessageSchema.safeParse` and returns the validated data. It does not normalize, repair, or re-validate the generated result.
+`packages/protocol/src/validation/ws-outbound.ts` is the shipped boundary. It validates the envelope with a generated validator that checks only each session message's `type` tag, then runs the generated validator for that one message type and returns the validated data. Issue paths from the message validator, including nested union branches, are prefixed with `message`, so callers see the same issues as when one validator covered the whole envelope. It does not normalize, repair, or re-validate the generated result.
+
+Keep one generated function per message type. zod-aot inlines every nested schema into the function it compiles, so compiling `WSOutboundMessageSchema` as a whole produced one 11 MB function. On V8 (daemon clients, plugin hosts, the CLI, and Electron), the Maglev tier compiled that function once it was hot, allocating about 800 MB and stalling for seconds, and compiled it again after each deoptimization. Hermes has no JIT, so mobile does not have this runtime JIT stall. Its release compilation has a separate function-size cost, described below. `packages/protocol/tests/validation/ws-outbound.test.ts` fails if a generated function grows past 1 MB.
 
 Generated validators preserve unknown keys where Zod object parsing strips them. The client dispatch path uses known `type` and payload fields, so this passthrough behavior is accepted for inbound messages. The wire format is unchanged.
 
@@ -16,27 +18,22 @@ Provider model normalization is a parser-side compatibility shim in the client c
 
 The protocol package owns generation.
 
-- `packages/protocol/codegen/ws-outbound.compile.ts` is the build-time zod-aot discovery entry.
-- `packages/protocol/scripts/generate-validation-aot.mjs` owns the generation entrypoint. `validation-aot-codegen.mjs` owns the exact-pinned compiler patches and session branch splitting.
+- `packages/protocol/src/validation/ws-outbound-envelope.ts` defines the tag-only envelope schema and exposes the session message schemas that get their own validators.
+- `packages/protocol/scripts/generate-validation-aot.mjs` writes the zod-aot discovery entry and the runtime schema metadata, runs the exact-pinned compiler, and applies the small local compiler patches before generation. It also emits the `type` → validator map the boundary dispatches through.
 - `packages/protocol/scripts/watch-validation-aot.mjs` reruns generation while editing protocol sources.
-- `packages/protocol/src/generated/validation/ws-outbound.aot.ts` is generated runtime code and is gitignored.
-- `packages/protocol/src/validation/ws-outbound-schema-metadata.ts` is runtime schema metadata for zod-aot fallback/default references.
+- `packages/protocol/codegen/generated/ws-outbound.compile.ts`, `packages/protocol/src/generated/validation/ws-outbound.aot.ts`, and `packages/protocol/src/generated/validation/ws-outbound-schema-metadata.ts` are generated and gitignored. The metadata module lets generated code reach schema fallback/default values.
 
 Generation runs from protocol-owned lifecycle hooks: `prebuild`, `pretypecheck`, `pretest`, and `watch`. Installs do not run generation: published packages consume protocol from prebuilt `dist`, and local build/typecheck/test flows generate the source file at the point it is actually needed.
 
 ### Hermes compilation budget
 
-Keep the session message union split when upgrading the compiler. In October 2026, its inline validator produced an approximately 12 MB JavaScript function. Hermes `-O` compilation repeatedly exhausted host memory. Optimization works per function, so splitting the message branches reduces compiler demand while retaining `-O`.
+The upstream per-message generator replaces the earlier local IR adapter that located and split the monolithic `session.message.type` union. Do not feed its per-message discovery entry to `compileSplitSchemas`: each export now represents one message, not the whole union. The retained adapter and its fixtures provide regression coverage for the historical compiler hooks; production generation uses upstream `compileSchemas` and the shared `checkFunctionBudget` only.
 
-The adapter locates `type=session` and its `message.type` union in the schema IR. Generated temporary names and branch counts are not stable identifiers. A missing target or incomplete mapping must fail generation. Each branch returns its validated output; dropping that writeback loses nested defaults. Reference indices and shared regex/enum helpers must stay in the original compiler context.
+In October 2026 the old inline validator produced an approximately 12 MB JavaScript function, and Hermes `-O` release compilation repeatedly exhausted host memory. Optimization works per function. Preserve one generated validator per message and keep `-O` enabled. Generation checks the complete emitted module before writing it and enforces a 1 MiB budget per function, excluding nested function bodies because Hermes optimizes them separately. When a message exceeds the budget, split its schema subtree before raising the limit.
 
-The `ws-outbound.compile.ts` discovery entry is dedicated to the outbound envelope validator. Every discovered schema must contain the session message union; adding an unrelated `compile()` export here intentionally fails generation. Give unrelated validators their own generation entry and budget checks rather than silently bypassing splitting in this entry.
+The generation log records the message count, total bytes, largest function and output SHA. Identical inputs must produce the same SHA. This budget is an empirical growth guard, not a Hermes limit or a guarantee about total build memory. The historical adapter's largest function was 670,728 bytes; that figure is not a measurement of the current per-message generator. The guard measures transpiled JavaScript before Metro processes it. Continue measuring the release bundle and the whole build phase separately when schemas or the toolchain change.
 
-Generation enforces a 1 MiB budget per function in the emitted JavaScript. It excludes nested function bodies from their parent's size because Hermes optimizes them separately. When a branch exceeds the budget, split that subtree before raising the limit. The generation log records the discovered branch count, entry size, largest function and output SHA. Repeated generation on the same inputs must produce the same SHA.
-
-The 1 MiB budget is an empirical growth guard, not a Hermes limit or a guarantee about total build memory. The initial prototype's largest branch was about 842 KB; the implemented generator's largest branch is 670,728 bytes, leaving about 36% below this budget. The check measures transpiled module functions including the emitted IIFE indentation, before Metro processes the module. Continue measuring the actual release bundle with Hermes and the whole build phase separately when schemas or the toolchain change.
-
-The patches are specific to zod-aot 0.20.4 and apply before importing its compiler modules. On an upgrade, review the context and union hooks alongside the existing output-propagation and `.js` import patches, then rerun the targeted codegen and outbound-validation tests. A version or emitter-shape mismatch must stop the build.
+The compiler is exact-pinned to zod-aot 0.20.4. Production generation retains the `.js` import and discriminated-union output-propagation patches. On upgrades, review emitter shapes and rerun outbound-validation and codegen tests; historical adapter fixtures also require their context/union hooks to match.
 
 Measure a fixed Android release JavaScript bundle with the compiler used by React Native:
 
@@ -60,7 +57,7 @@ Splitting functions addresses Hermes's per-function optimization cost; splitting
 | Branches distributed across 20 modules plus one shared module, map enabled | 7.06 GiB                             |
 | Same module split, map disabled                                            | 6.95 GiB                             |
 
-All four bundle tasks succeeded with zero cgroup swap. Each configuration was measured once: the 2.7% map-only difference does not establish a repeatable improvement, and neither module-split sample reduced the peak. None met the 6 GiB target. These experiments were not adopted; retain the function split and existing build settings. The earlier 7.35 GiB result included cold Gradle/plugin work and is a different measurement cohort.
+All four bundle tasks succeeded with zero cgroup swap. Each configuration was measured once: the 2.7% map-only difference does not establish a repeatable improvement, and neither module-split sample reduced the peak. None met the 6 GiB target. These experiments were not adopted. They predate the upstream per-message generator; keep that generator and the existing build settings, and measure its bundle separately. The earlier 7.35 GiB result included cold Gradle/plugin work and is a different measurement cohort.
 
 The baseline peak preceded final map serialization and consisted mostly of anonymous process memory (about 6.10 GiB), with about 0.14 GiB of file cache. Skipping the approximately 76.7 MB final map does not skip worker transformations or their intermediate maps. Module splitting changes concurrent worker and serializer allocations, so measure the whole cgroup instead of inferring savings from individual file sizes. Extracted branches must retain shared metadata, regex/enum and error-formatting context; the initial prototype omitted the locale formatter and changed nested union errors before it was corrected.
 
@@ -75,7 +72,7 @@ zod-aot is exact-pinned and young enough that compiler patches are treated as pa
 - generated runtime imports must keep `.js` extensions for packaged Node ESM
 - the generated WebSocket envelope accepts a minimal valid message and rejects a corrupted one
 
-`validation-aot-codegen.test.ts` also checks split defaults and input mutation, nested error ordering, shared regex/enum references, new branches, discriminator routing, deterministic output and generation failures. Provider snapshot tests exercise default writeback through the shipped validation boundary. AOT preserves unknown fields, so compare output semantics with the original AOT rather than requiring Zod's object stripping behavior.
+`validation-aot-codegen.test.ts` checks the retained adapter fixtures for split defaults, input mutation, nested error ordering, shared helpers, discriminator routing, deterministic output and generation failures. Production outbound tests exercise the per-message dispatch, issue paths, defaults and function-size limit. AOT preserves unknown fields, so compare output semantics with the original AOT rather than requiring Zod object stripping.
 
 ## Schema Purity
 
