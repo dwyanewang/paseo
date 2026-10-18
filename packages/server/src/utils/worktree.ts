@@ -1588,7 +1588,7 @@ async function resolveRemoteCheckoutBranchPlan({
       remoteName: target.remoteName,
       headRef: target.headRef,
     });
-    metadataBaseRefName = await resolveCheckoutBranchBaseRefName(cwd);
+    metadataBaseRefName = await resolveCheckoutBranchBaseRef(cwd, localBranchName);
     trackingRemote = { name: target.remoteName, headRef: target.headRef };
   }
 
@@ -1609,16 +1609,6 @@ function getChangeRequestNumber(
 ): number {
   if (source.kind === "checkout-github-pr") return source.githubPrNumber;
   return source.changeRequestNumber;
-}
-
-async function resolveCheckoutBranchBaseRefName(cwd: string): Promise<string> {
-  const defaultBaseBranch = await resolveRepositoryDefaultBranch(cwd);
-  if (!defaultBaseBranch) {
-    throw new Error(
-      "Base branch is required when creating a Paseo worktree, but the repository default branch could not be resolved",
-    );
-  }
-  return defaultBaseBranch;
 }
 
 async function configureWorktreePushRemote(options: {

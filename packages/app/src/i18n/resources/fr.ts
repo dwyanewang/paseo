@@ -1379,7 +1379,7 @@ export const fr: TranslationResources = {
       hostDisconnected: "L’hôte n’est pas connecté",
       createWorktreeFailed: "Impossible de créer le worktree",
       branchAlreadyCheckedOut:
-        "Cette branche est déjà extraite ailleurs. Utilisez « Nouvelle branche » pour créer une copie, ou libérez d'abord la branche.",
+        "Cette branche est déjà extraite ailleurs. Utilisez « Nouvelle branche » pour créer une copie, ou libérez d’abord la branche.",
       composerStateRequired: "L’état de la zone de saisie est requis",
       selectModel: "Sélectionnez un modèle",
     },
