@@ -6,7 +6,7 @@ import { ComboboxItem, type ComboboxOption } from "@/components/ui/combobox";
 import { Shortcut } from "@/components/ui/shortcut";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { getHostProjectSourceDirectory, type HostProjectListItem } from "@/projects/host-projects";
-import { type PickerItem } from "../../new-workspace-picker-item";
+import type { PickerItem } from "../../new-workspace-picker-item";
 import { addProjectIcon, branchIcon, folderIcon, ProjectIcon, pullRequestIcon } from "./icons";
 
 interface OptionRowState {

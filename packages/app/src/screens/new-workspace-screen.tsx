@@ -199,8 +199,6 @@ function noopClearDraft() {}
 // Stable reference so the keyboard-action handler doesn't re-register each render.
 const PROJECT_PICK_ACTIONS: readonly KeyboardActionId[] = ["workspace.project.pick"];
 
-
-
 interface WorkspaceIsolationState {
   isolation: "local" | "worktree";
   setIsolation: (value: "local" | "worktree") => void;
@@ -1581,8 +1579,6 @@ export function NewWorkspaceScreen({
     updateFormPreferences,
     withConnectedClient,
   ]);
-
-
 
   const agentControlsWithDisabled = useMemo(
     () =>
