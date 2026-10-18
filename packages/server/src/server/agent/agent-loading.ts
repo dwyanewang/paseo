@@ -166,7 +166,7 @@ export async function ensureAgentLoaded(
       const latestRecord = await deps.agentStorage.get(agentId);
       if (!latestRecord) {
         deps.agentManager.discardHistoryState?.(agentId);
-        throw new Error(`Agent not found: ${agentId}`);
+        throw new AgentNotFoundError(agentId);
       }
       if (latestRecord.archivedAt) {
         if (historyReadFailed) {

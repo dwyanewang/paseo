@@ -5,7 +5,7 @@ import { expect, onTestFinished, test } from "vitest";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { AgentManager, type AgentManagerEvent } from "./agent-manager.js";
-import { ensureAgentLoaded } from "./agent-loading.js";
+import { AgentNotFoundError, ensureAgentLoaded } from "./agent-loading.js";
 import { startAgentRun } from "./agent-prompt.js";
 import { AgentStorage } from "./agent-storage.js";
 import type {
@@ -458,7 +458,7 @@ test("discards archived history state when the record is deleted during the read
   await harness.manager.deleteAgentState(agentId);
   historyAllowed.resolve();
 
-  await expect(load).rejects.toThrow(`Agent not found: ${agentId}`);
+  await expect(load).rejects.toThrow(AgentNotFoundError);
   expect(harness.manager.getHistorySnapshot(agentId)).toBeNull();
   expect(harness.manager.getAgent(agentId)).toBeNull();
   expect(() => harness.manager.fetchTimeline(agentId)).toThrow(`Unknown agent '${agentId}'`);

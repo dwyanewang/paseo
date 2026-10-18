@@ -3573,8 +3573,6 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (this.resumeHandle?.sessionId) {
       this.currentThreadId = this.resumeHandle.sessionId;
       this.historyPending = true;
-      // Resuming can start a goal before the caller receives the session.
-      if (this.initialResumePurpose === "interactive") this.startupEvents = [];
     }
   }
 
@@ -3603,6 +3601,10 @@ export class CodexAppServerAgentSession implements AgentSession {
       }
       return;
     }
+
+    // Interactive resume may start a goal before the caller can subscribe.
+    // Dedicated history reads use connectForHistory and do not buffer live turns.
+    if (this.resumeHandle?.sessionId && this.subscribers.size === 0) this.startupEvents ??= [];
 
     const connectionPromise = this.establishConnection();
     this.connectionPromise = connectionPromise;
