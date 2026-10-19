@@ -25,6 +25,7 @@
     "typecheck": "tsgo --noEmit",
     "test": "vitest run",
     "generate:validators": "node scripts/generate-validation-aot.mjs",
+    "benchmark:hermes": "node scripts/benchmark-validation-hermes.mjs",
     "watch": "concurrently --kill-others --names validation,tsc --prefix-colors green,yellow \"node scripts/watch-validation-aot.mjs\" \"tsc -p tsconfig.json --watch --preserveWatchOutput\"",
     "prebuild": "npm run generate:validators",
     "pretypecheck": "npm run generate:validators",

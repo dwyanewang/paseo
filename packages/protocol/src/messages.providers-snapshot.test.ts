@@ -4,6 +4,7 @@ import {
   ProviderSnapshotEntrySchema,
   ProvidersSnapshotUpdateMessageSchema,
 } from "./messages.js";
+import { validateWSOutboundMessage } from "./validation/ws-outbound.js";
 
 describe("provider snapshot message schemas", () => {
   test("defaults missing provider snapshot entry enabled state to true", () => {
@@ -51,7 +52,7 @@ describe("provider snapshot message schemas", () => {
   });
 
   test("defaults missing enabled state in providers snapshot response entries", () => {
-    const parsed = GetProvidersSnapshotResponseMessageSchema.parse({
+    const input = {
       type: "get_providers_snapshot_response",
       payload: {
         entries: [
@@ -70,9 +71,14 @@ describe("provider snapshot message schemas", () => {
         generatedAt: "2026-04-24T00:00:00.000Z",
         requestId: "req-providers",
       },
-    });
+    };
+    const parsed = GetProvidersSnapshotResponseMessageSchema.parse(input);
 
     expect(parsed.payload.entries.map((entry) => entry.enabled)).toEqual([true, false]);
+    expect(validateWSOutboundMessage({ type: "session", message: input })).toEqual({
+      success: true,
+      data: { type: "session", message: parsed },
+    });
   });
 
   test("defaults missing enabled state in providers snapshot update entries", () => {
@@ -95,8 +101,7 @@ describe("provider snapshot message schemas", () => {
   });
 });
 
-test("accepts a bodyless announcement with separate discovery freshness", async () => {
-  const { validateWSOutboundMessage } = await import("./validation/ws-outbound.js");
+test("accepts a bodyless announcement with separate discovery freshness", () => {
   const message = {
     type: "providers_snapshot_update",
     payload: {

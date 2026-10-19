@@ -201,6 +201,69 @@ const SourceSchema = z.object({
     });
   });
 
+  it("writes provider defaults back through the split session envelope and preserves unknown fields", () => {
+    const input = {
+      type: "session",
+      futureEnvelopeField: "keep",
+      message: {
+        type: "get_providers_snapshot_response",
+        futureMessageField: "keep",
+        payload: {
+          entries: [
+            { provider: "codex", status: "ready", label: "Codex", futureEntryField: "keep" },
+          ],
+          generatedAt: "2026-10-14T00:00:00.000Z",
+          requestId: "split-defaults",
+        },
+      },
+    };
+    expect(validateWSOutboundMessage(input)).toEqual({
+      success: true,
+      data: {
+        ...input,
+        message: {
+          ...input.message,
+          payload: {
+            ...input.message.payload,
+            entries: [{ ...input.message.payload.entries[0], enabled: true }],
+          },
+        },
+      },
+    });
+    expect(input.message.payload.entries[0]).toEqual({
+      provider: "codex",
+      status: "ready",
+      label: "Codex",
+      futureEntryField: "keep",
+    });
+  });
+
+  it("reports the original nested error path through a split provider branch", () => {
+    const result = validateWSOutboundMessage({
+      type: "session",
+      message: {
+        type: "get_providers_snapshot_response",
+        payload: {
+          entries: [{ provider: "codex", status: "ready", enabled: true, label: 42 }],
+          generatedAt: "2026-10-14T00:00:00.000Z",
+          requestId: "split-invalid",
+        },
+      },
+    });
+    expect(result).toMatchObject({
+      success: false,
+      error: {
+        issues: [
+          {
+            code: "invalid_type",
+            expected: "string",
+            path: ["message", "payload", "entries", 0, "label"],
+          },
+        ],
+      },
+    });
+  });
+
   it.each([
     {
       name: "dedicated attention message",
