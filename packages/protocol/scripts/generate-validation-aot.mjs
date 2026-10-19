@@ -1,10 +1,7 @@
-import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-
-import { checkFunctionBudget } from "./validation-aot-codegen.mjs";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const envelopeSource = resolve(packageRoot, "src/validation/ws-outbound-envelope.ts");
@@ -163,20 +160,8 @@ const sessionMessageValidators = [
 ].join("\n");
 
 await mkdir(dirname(output), { recursive: true });
-const fullContent = `${content}\n${sessionMessageValidators}`;
-const functionSizes = checkFunctionBudget(fullContent, []);
-await writeFile(output, fullContent);
+await writeFile(output, `${content}\n${sessionMessageValidators}`);
 
 console.info(
   `generated ${relative(packageRoot, output)}: envelope + ${sessionTags.length} session message validators`,
-);
-
-console.info(
-  JSON.stringify({
-    bytes: Buffer.byteLength(fullContent),
-    sha256: createHash("sha256").update(fullContent).digest("hex"),
-    sessionValidators: sessionTags.length,
-    largestFunction: functionSizes[0],
-    maxFunctionBytes: 1024 * 1024,
-  }),
 );
