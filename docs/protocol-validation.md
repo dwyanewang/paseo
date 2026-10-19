@@ -65,6 +65,8 @@ Verify cache isolation through the configuration Metro actually loads and popula
 
 ## Regression Tests
 
+Protocol typecheck excludes test files. When generated exports or the validation boundary change, search test callers and run the affected tests after generation; a green typecheck does not check those references.
+
 zod-aot is exact-pinned and young enough that compiler patches are treated as part of this package. `packages/protocol/tests/validation/ws-outbound.test.ts` keeps small regression tests for the patched cases:
 
 - discriminated-union branch output must propagate `.default()` fields

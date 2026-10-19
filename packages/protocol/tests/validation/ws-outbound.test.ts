@@ -217,7 +217,7 @@ const SourceSchema = z.object({
         },
       },
     };
-    expect(GeneratedWSOutboundMessageSchema.safeParse(input)).toEqual({
+    expect(validateWSOutboundMessage(input)).toEqual({
       success: true,
       data: {
         ...input,
@@ -239,7 +239,7 @@ const SourceSchema = z.object({
   });
 
   it("reports the original nested error path through a split provider branch", () => {
-    const result = GeneratedWSOutboundMessageSchema.safeParse({
+    const result = validateWSOutboundMessage({
       type: "session",
       message: {
         type: "get_providers_snapshot_response",
