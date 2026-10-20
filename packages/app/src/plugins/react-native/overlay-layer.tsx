@@ -1,7 +1,8 @@
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { Pressable, View } from "react-native";
+import { View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
+import { PressHighlight } from "@/components/ui/press-highlight";
 
 /**
  * The inside of a plugin `Overlay` on every platform: a backdrop that asks to close, and a
@@ -19,7 +20,7 @@ export function OverlayLayer({
   const { t } = useTranslation();
   return (
     <>
-      <Pressable
+      <PressHighlight
         testID="plugin-overlay-backdrop"
         accessibilityLabel={t("common.actions.dismiss")}
         focusable={false}
