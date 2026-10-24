@@ -3536,6 +3536,9 @@ export class AgentManager {
   }
 
   async getLastAssistantMessage(agentId: string): Promise<string | null> {
+    if (this.historySnapshots.has(agentId)) {
+      return this.getLastAssistantMessageFromTimeline(this.timelineStore.getItems(agentId));
+    }
     if (!this.timelineStore.has(agentId)) {
       return (await this.durableTimelineStore?.getLastAssistantMessage(agentId)) ?? null;
     }

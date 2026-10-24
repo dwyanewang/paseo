@@ -595,13 +595,19 @@ class AcpRuntime {
     const nativeSessionId = readNativeSessionId(persistence);
     if (!nativeSessionId) throw new Error("ACP history read requires a native session handle");
     this.nativeSessionId = nativeSessionId;
-    await this.call(
-      this.connection.loadSession({
-        sessionId: nativeSessionId,
-        cwd,
-        mcpServers: [],
-      }),
-    );
+    this.replayWindow = "replay";
+    try {
+      await this.call(
+        this.connection.loadSession({
+          sessionId: nativeSessionId,
+          cwd,
+          mcpServers: [],
+        }),
+      );
+      await this.drainNotifications();
+    } finally {
+      this.replayWindow = null;
+    }
   }
 
   async discover(cwd?: string): Promise<ProviderCatalog> {

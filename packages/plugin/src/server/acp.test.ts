@@ -225,28 +225,44 @@ lines.on("line", (line) => {
 });`;
 
 describe("runAcpProvider", () => {
-  it("reads persisted history without opening a provider session", async () => {
+  it("reads persisted user and assistant history without opening a provider session", async () => {
     const harness = connectorHarness({
       capabilities: { loadSession: {} },
       handleRequest(instance, request) {
         if (request.method !== "session/load") return false;
+        for (const text of ["saved ", "question"]) {
+          instance.notify("session/update", {
+            sessionId: "saved-session",
+            update: {
+              sessionUpdate: "user_message_chunk",
+              messageId: "history-user",
+              content: { type: "text", text },
+            },
+          });
+        }
         instance.respond(request, {
           sessionId: "saved-session",
           modes: null,
           configOptions: [],
         });
-        setTimeout(
-          () =>
-            instance.notify("session/update", {
-              sessionId: "saved-session",
-              update: {
-                sessionUpdate: "agent_message_chunk",
-                messageId: "history-message",
-                content: { type: "text", text: "archived" },
-              },
-            }),
-          0,
-        );
+        setTimeout(() => {
+          instance.notify("session/update", {
+            sessionId: "saved-session",
+            update: {
+              sessionUpdate: "agent_message_chunk",
+              messageId: "history-message",
+              content: { type: "text", text: "archived" },
+            },
+          });
+          instance.notify("session/update", {
+            sessionId: "saved-session",
+            update: {
+              sessionUpdate: "user_message_chunk",
+              messageId: "history-followup",
+              content: { type: "text", text: "next question" },
+            },
+          });
+        }, 0);
         return true;
       },
     });
@@ -255,7 +271,6 @@ describe("runAcpProvider", () => {
       label: "History ACP",
       connector: harness.connector,
     });
-
     const history = await registration.readSessionHistory!({
       persistence: { version: 1, data: { sessionId: "saved-session" } },
       cwd: "/repo",
@@ -264,10 +279,34 @@ describe("runAcpProvider", () => {
       items: [
         {
           item: {
+            type: "user_message",
+            id: "history-user",
+            messageId: "history-user",
+            text: "saved ",
+          },
+        },
+        {
+          item: {
+            type: "user_message",
+            id: "history-user",
+            messageId: "history-user",
+            text: "saved question",
+          },
+        },
+        {
+          item: {
             type: "assistant_message",
             id: "history-message",
             messageId: "history-message",
             text: "archived",
+          },
+        },
+        {
+          item: {
+            type: "user_message",
+            id: "history-followup",
+            messageId: "history-followup",
+            text: "next question",
           },
         },
       ],

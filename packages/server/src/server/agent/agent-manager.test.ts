@@ -7971,6 +7971,10 @@ test("dedicated history reads use only the in-memory timeline", async () => {
   const agentId = "00000000-0000-4000-8000-000000000119";
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-memory-history-"));
   const durableTimelineStore = new RecordingTimelineStore();
+  await durableTimelineStore.appendCommitted(agentId, {
+    type: "assistant_message",
+    text: "durable history",
+  });
   const client = new (class extends TestAgentClient {
     async readSessionHistory() {
       return {
@@ -7999,6 +8003,7 @@ test("dedicated history reads use only the in-memory timeline", async () => {
       {},
     );
 
+    expect(await manager.getLastAssistantMessage(agentId)).toEqual("memory-only history");
     const rowsBeforeFlush = await manager.getTimelineRows(agentId);
     expect(rowsBeforeFlush).toMatchObject([
       { item: { type: "assistant_message", text: "memory-only history" } },
@@ -8008,6 +8013,108 @@ test("dedicated history reads use only the in-memory timeline", async () => {
   } finally {
     rmSync(workdir, { recursive: true, force: true });
   }
+});
+
+test("empty dedicated history does not reuse a stale durable assistant response", async () => {
+  const agentId = "00000000-0000-4000-8000-000000000120";
+  const durableTimelineStore = new RecordingTimelineStore();
+  await durableTimelineStore.appendCommitted(agentId, {
+    type: "assistant_message",
+    text: "stale response",
+  });
+  const client = new (class extends TestAgentClient {
+    async readSessionHistory() {
+      return { events: [], coverage: { kind: "complete" as const } };
+    }
+  })();
+  const manager = new AgentManager({ clients: { codex: client }, durableTimelineStore, logger });
+  await manager.readAgentHistoryFromPersistence(
+    { provider: "codex", sessionId: "empty-history", metadata: { cwd: "/repo" } },
+    { cwd: "/repo" },
+    agentId,
+    {},
+  );
+  expect(manager.getTimeline(agentId)).toEqual([]);
+  expect(await manager.getLastAssistantMessage(agentId)).toBeNull();
+});
+
+test("dedicated history expands every entry of a batched agent notification", async () => {
+  const agentId = "00000000-0000-4000-8000-000000000121";
+  const text = [
+    formatAgentMessage({
+      id: "report",
+      source: { kind: "agent-message", agentId: "worker", serverId: "remote-host" },
+      text: "Result <ready>",
+    }),
+    formatAgentMessage({
+      id: "finish",
+      source: {
+        kind: "agent-notification",
+        agentId: "worker",
+        serverId: "remote-host",
+        event: "finished",
+      },
+      text: "Worker finished",
+    }),
+  ].join("\n\n");
+  const client = new (class extends TestAgentClient {
+    async readSessionHistory() {
+      return {
+        events: [
+          {
+            type: "timeline" as const,
+            provider: "codex" as const,
+            item: {
+              type: "user_message" as const,
+              text,
+              clientMessageId: "report",
+              messageId: "provider-batch",
+            },
+          },
+        ],
+        coverage: { kind: "complete" as const },
+      };
+    }
+  })();
+  const manager = new AgentManager({ clients: { codex: client }, logger });
+  await manager.readAgentHistoryFromPersistence(
+    { provider: "codex", sessionId: "batch-history", metadata: { cwd: "/repo" } },
+    { cwd: "/repo" },
+    agentId,
+    {},
+  );
+  expect(manager.getTimeline(agentId)).toEqual([
+    {
+      type: "tool_call",
+      callId: "paseo-agent-message:report",
+      agentMessage: {
+        event: "message",
+        sender: { id: "worker", serverId: "remote-host" },
+        text: "Result <ready>",
+      },
+      name: "agent_message",
+      status: "completed",
+      error: null,
+      detail: { type: "plain_text", text: "Result <ready>", icon: "bot" },
+    },
+    {
+      type: "tool_call",
+      callId: "paseo-agent-message:finish",
+      agentMessage: {
+        event: "finished",
+        sender: { id: "worker", serverId: "remote-host" },
+        text: "Worker finished",
+      },
+      name: "agent_message",
+      status: "completed",
+      error: null,
+      detail: { type: "plain_text", text: "Worker finished", icon: "bot" },
+    },
+  ]);
+  expect(manager.getAgent(agentId)).toBeNull();
+  expect(manager.getHistorySnapshot(agentId)?.lastUserMessageAt).toBeNull();
+  expect(client.createdConfigs).toEqual([]);
+  expect(client.resumeOverrides).toEqual([]);
 });
 
 test("clearAgentAttention publishes archived attention changes without loading history", async () => {
