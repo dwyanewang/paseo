@@ -102,6 +102,7 @@ function createFixture({
   patchedDependency = false,
   rwMainRebuilt = 0,
   terminalWebview = true,
+  androidBundleLayout = "legacy",
 } = {}) {
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), "paseo-build-artifacts-"));
   const controlRoot = path.join(fixtureRoot, "control");
@@ -110,6 +111,10 @@ function createFixture({
   const binRoot = path.join(fixtureRoot, "bin");
   const androidHome = path.join(fixtureRoot, "android-sdk");
   const commandLog = path.join(fixtureRoot, "commands.log");
+  const androidBundleDirectories =
+    androidBundleLayout === "both"
+      ? ["createBundleReleaseJsAndAssets", "react/release"]
+      : [androidBundleLayout === "react" ? "react/release" : "createBundleReleaseJsAndAssets"];
   const preflightState = path.join(buildRoot, ".dev", "preflight.env");
   mkdirSync(controlRoot);
   mkdirSync(binRoot);
@@ -252,8 +257,10 @@ printf 'profile|%s|%s\\n' "$label" "$*" >>"$PASEO_TEST_COMMAND_LOG"
 mkdir -p -- "$output_dir"
 transcript="$output_dir/$label.transcript.log"
 if [[ "$label" == android-metro-hermes ]]; then
-  mkdir -p app/build/generated/assets/createBundleReleaseJsAndAssets
-  printf '%s\\n' bundle >app/build/generated/assets/createBundleReleaseJsAndAssets/index.android.bundle
+  for bundle_directory in ${androidBundleDirectories.map((directory) => `"${directory}"`).join(" ")}; do
+    mkdir -p "app/build/generated/assets/$bundle_directory"
+    printf '%s\\n' bundle >"app/build/generated/assets/$bundle_directory/index.android.bundle"
+  done
   printf '%s\\n' 'BUILD SUCCESSFUL' >"$transcript"
 elif [[ "$label" == android-native-assemble ]]; then
   if [[ -n "\${PASEO_TEST_PARALLEL_SYNC_DIR:-}" ]]; then
@@ -752,6 +759,30 @@ test("builds all targets when the upstream product has removed terminal-webview"
     assert.match(commands, /profile\|android-native-assemble/);
     assert.match(commands, /profile\|windows-artifacts/);
     assert.equal(existsSync(path.join(fixture.buildRoot, fixture.terminalRelative)), false);
+    assert.equal(git(fixture.buildRoot, "status", "--porcelain"), "");
+    assertBuildLockAvailable(fixture);
+  });
+});
+
+test("verifies the React Native 0.86 release bundle layout", () => {
+  withFixture({ terminalWebview: false, androidBundleLayout: "react" }, (fixture) => {
+    const result = runBuild(fixture, "react-release-bundle");
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.match(result.stdout, /android: bundle verified .*generated\/assets\/react\/release/);
+    assert.match(readFileSync(fixture.commandLog, "utf8"), /profile\|android-native-assemble/);
+    assert.equal(git(fixture.buildRoot, "status", "--porcelain"), "");
+  });
+});
+
+test("rejects ambiguous legacy and current Android bundle outputs before native builds", () => {
+  withFixture({ androidBundleLayout: "both" }, (fixture) => {
+    const result = runBuild(fixture, "ambiguous-bundle");
+    assert.equal(result.status, 1, `${result.stdout}\n${result.stderr}`);
+    assert.match(`${result.stdout}\n${result.stderr}`, /Multiple Android bundles/);
+    assert.doesNotMatch(
+      readFileSync(fixture.commandLog, "utf8"),
+      /profile\|android-native-assemble|profile\|windows-artifacts/,
+    );
     assert.equal(git(fixture.buildRoot, "status", "--porcelain"), "");
     assertBuildLockAvailable(fixture);
   });

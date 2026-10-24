@@ -1171,8 +1171,20 @@ if ((build_android_target)); then
       -Dorg.gradle.jvmargs="-Xmx2g -XX:MaxMetaspaceSize=768m" \
       -PreactNativeArchitectures=arm64-v8a
   )
-  android_bundle="$build_root/packages/app/android/app/build/generated/assets/createBundleReleaseJsAndAssets/index.android.bundle"
-  [[ -s "$android_bundle" ]] || fail "Android bundle is missing or empty: $android_bundle"
+  # React Native 0.86 moved release assets from the task-named directory to react/release.
+  android_bundles=()
+  for android_bundle_directory in createBundleReleaseJsAndAssets react/release; do
+    android_bundle_candidate="$build_root/packages/app/android/app/build/generated/assets/$android_bundle_directory/index.android.bundle"
+    if [[ -s "$android_bundle_candidate" ]]; then
+      android_bundles+=("$android_bundle_candidate")
+    fi
+  done
+  case ${#android_bundles[@]} in
+    0) fail "Android bundle is missing or empty in the supported React Native output directories" ;;
+    1) android_bundle=${android_bundles[0]} ;;
+    *) fail "Multiple Android bundles found; cannot identify the current release output" ;;
+  esac
+  stage "android: bundle verified ($android_bundle)"
 fi
 
 export PYTHONPATH= PYTHONHOME= WINEDEBUG=-all CI=1
