@@ -12,7 +12,7 @@ import { useToast } from "@/contexts/toast-context";
 import type { Theme } from "@/styles/theme";
 import * as Clipboard from "expo-clipboard";
 import * as FileSystem from "expo-file-system/legacy";
-import * as MediaLibrary from "expo-media-library";
+import * as MediaLibrary from "expo-media-library/legacy";
 import * as Sharing from "expo-sharing";
 import { Copy, ImageDown, Share2 } from "lucide-react-native";
 import { useCallback, useMemo, useState } from "react";

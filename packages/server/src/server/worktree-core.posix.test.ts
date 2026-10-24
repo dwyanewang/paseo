@@ -582,7 +582,6 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
           action: "branch-off",
           checkoutSource: { kind: "change_request", forge: "github", number: 123 },
           paseoHome,
-          runSetup: false,
         },
         createCoreDeps(),
       );
@@ -653,7 +652,6 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
           action: "checkout",
           refName: "refs/remotes/origin/feature/gitlab-mr",
           paseoHome,
-          runSetup: false,
         },
         createCoreDeps(),
       );
@@ -686,7 +684,6 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
           action: "checkout",
           refName: "refs/remotes/upstream/feature/gitlab-mr",
           paseoHome,
-          runSetup: false,
         },
         createCoreDeps(),
       );
@@ -714,7 +711,6 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
           action: "checkout",
           refName: "refs/remotes/origin/feature/gitlab-mr",
           paseoHome,
-          runSetup: false,
         },
         createCoreDeps(),
       );
@@ -1305,7 +1301,6 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
           refName: "main",
           checkoutSource: { kind: "change_request", forge: "github", number: 526 },
           paseoHome,
-          runSetup: false,
         },
         createCoreDeps({ github }),
       );

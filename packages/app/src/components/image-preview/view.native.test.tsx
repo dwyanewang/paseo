@@ -18,7 +18,7 @@ const native = vi.hoisted(() => ({
 }));
 
 // These APIs have no device implementation in Node. Keep the menu and its operation state real.
-vi.mock("expo-media-library", () => ({
+vi.mock("expo-media-library/legacy", () => ({
   requestPermissionsAsync: native.requestPermissions,
   saveToLibraryAsync: native.saveToLibrary,
 }));

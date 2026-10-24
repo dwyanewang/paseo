@@ -446,7 +446,6 @@ describe("paseo worktree manager", () => {
       cwd: repoDir,
       worktreeSlug: "scene-linkage",
       source: { kind: "checkout-branch", branchName: "feature/scene-linkage" },
-      runSetup: false,
       paseoHome,
     });
 
