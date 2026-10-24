@@ -7,7 +7,10 @@ function recordingToast() {
   const shown: Array<{ content: unknown; variant: string | undefined }> = [];
   const errors: string[] = [];
   const api: ToastApi = {
-    show: (content, options) => shown.push({ content, variant: options?.variant }),
+    show: (content, options) => {
+      shown.push({ content, variant: options?.variant });
+      return () => {};
+    },
     copied: () => undefined,
     error: (message) => errors.push(message),
   };

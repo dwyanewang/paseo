@@ -1381,7 +1381,7 @@ a width of its choosing, or a menu anchored to its own button. Use `Modal` when 
 and sheet presentation fit; use `Overlay` when they do not.
 
 ```tsx
-import { Overlay } from "@getpaseo/plugin/client/react-native";
+import { Overlay } from "@getpaseo/plugin/client/ui";
 
 <Overlay open={open} onClose={() => setOpen(false)} accessibilityLabel="New todo">
   <View style={{ position: "absolute", top: insets.top + 12, left: 12, right: 12 }}>
@@ -1512,7 +1512,7 @@ contains a padded form, full-width rows, a virtualized list, horizontal tabs, an
 desktop. It resolves the chosen images, or `[]` when the user cancels:
 
 ```tsx
-import { pickImages } from "@getpaseo/plugin/client/react-native";
+import { pickImages } from "@getpaseo/plugin/client/ui";
 
 const images = await pickImages({ multiple: true, limit: 4 });
 for (const image of images) await save(image.base64, image.mimeType);
@@ -1536,7 +1536,7 @@ export `pickImages`; check `typeof pickImages` first.
 and desktop, for any kind of file. It resolves the chosen files, or `[]` when the user cancels:
 
 ```tsx
-import { pickFiles } from "@getpaseo/plugin/client/react-native";
+import { pickFiles } from "@getpaseo/plugin/client/ui";
 
 const CHUNK = 256 * 1024;
 for (const file of await pickFiles({ multiple: true })) {
@@ -1567,7 +1567,7 @@ including the plugin's own `Overlay`: pinch and wheel zoom, a close button, and 
 paging when there is more than one image.
 
 ```tsx
-import { openImagePreview } from "@getpaseo/plugin/client/react-native";
+import { openImagePreview } from "@getpaseo/plugin/client/ui";
 
 openImagePreview({
   images: attachments.map((a) => ({ uri: `data:${a.mimeType};base64,${a.base64}`, name: a.name })),

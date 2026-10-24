@@ -32,8 +32,8 @@ function DetachedOverlay({ entry, theme }: { entry: PluginOverlayEntry; theme: P
   const plugin = useInstalledPlugin(serverId, pluginId);
   // The component belongs to the bundle that opened it. A reload, disable, or removal replaces or
   // drops that installation, and the overlay goes with it.
-  const [openedBy] = useState(plugin);
-  const isStale = !plugin || plugin !== openedBy;
+  const [openedBy] = useState(plugin?.lifetime);
+  const isStale = !plugin || plugin.lifetime !== openedBy;
   const client = useHostRuntimeClient(serverId);
   const hosts = useHosts();
   const hostLabel = hosts.find((host) => host.serverId === serverId)?.label ?? serverId;

@@ -536,6 +536,8 @@ describe("WorkspaceGitServiceImpl", () => {
       getCheckoutStatus: vi.fn(async (cwd: string) => createCheckoutStatus(cwd, { remoteUrl })),
       getPullRequestStatus,
     });
+    const store = createWorkspaceRuntimeStore();
+    service.onSnapshotUpdated((snapshot) => store.set(snapshot));
     const listener = vi.fn();
     const subscription = service.registerWorkspace({ cwd: REPO_CWD }, listener);
 
@@ -547,7 +549,7 @@ describe("WorkspaceGitServiceImpl", () => {
         matchesHost: (host) => host === "git.acme.internal",
       });
 
-      expect(service.peekSnapshot(REPO_CWD)?.forge).toMatchObject({
+      expect(store.get(REPO_CWD)?.forge).toMatchObject({
         featuresEnabled: false,
         authState: "no_remote",
       });
@@ -555,7 +557,7 @@ describe("WorkspaceGitServiceImpl", () => {
       oldProbeResult.resolve(true);
       await currentStatusStarted.promise;
 
-      expect(service.peekSnapshot(REPO_CWD)?.forge).toEqual({
+      expect(store.get(REPO_CWD)?.forge).toEqual({
         featuresEnabled: false,
         authState: "no_remote",
         pullRequest: null,
@@ -580,7 +582,7 @@ describe("WorkspaceGitServiceImpl", () => {
       await flushPromises();
 
       await vi.waitFor(() => {
-        expect(service.peekSnapshot(REPO_CWD)?.forge).toMatchObject({
+        expect(store.get(REPO_CWD)?.forge).toMatchObject({
           forge: "current",
           authState: "authenticated",
           pullRequest: { title: "Current registry result" },

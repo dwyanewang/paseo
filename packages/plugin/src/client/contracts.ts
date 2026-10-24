@@ -123,7 +123,7 @@ export interface PluginPendingAgentMessage {
 
 /**
  * Props of a component opened with `openOverlay`. It renders an `Overlay` from
- * `@getpaseo/plugin/client/react-native`; the host mounts nothing else.
+ * `@getpaseo/plugin/client/ui`; the host mounts nothing else.
  */
 export interface PluginOverlayProps extends PluginNavigableHostProps {
   /** Unmounts the component. Idempotent. */

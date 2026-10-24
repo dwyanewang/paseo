@@ -2995,7 +2995,6 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       if (target.latestGit) {
         this.rememberSnapshot(target, this.combineSnapshot(target), {
           forceEmit: false,
-          notify: true,
         });
       }
       this.scheduleWorkspaceRefresh(target, {

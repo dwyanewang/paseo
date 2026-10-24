@@ -470,12 +470,13 @@ function useMenuButtonView(entry: RegisteredPluginButton, theme: PluginTheme): B
   const client = useHostRuntimeClient(entry.installation.serverId);
   const toast = useToast();
   const compact = useIsCompactFormFactor();
+  const layout = usePluginLayout(compact);
   const hosts = useHosts();
   const serverId = entry.installation.serverId;
   const hostLabel = hosts.find((host) => host.serverId === serverId)?.label ?? serverId;
   return useMemo(
-    () => createButtonView({ entry, client, toast, compact, hostLabel, theme }),
-    [entry, client, toast, compact, hostLabel, theme],
+    () => createButtonView({ entry, client, toast, layout, hostLabel, theme }),
+    [entry, client, toast, layout, hostLabel, theme],
   );
 }
 
