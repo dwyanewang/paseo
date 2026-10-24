@@ -402,6 +402,7 @@ trap '' PIPE
 
 started_epoch=$(date +%s)
 terminal_webview=packages/app/src/terminal/webview/terminal-emulator-webview-html.ts
+terminal_webview_present=0
 terminal_restore_needed=0
 distribution_cleanup_needed=0
 result_temp=
@@ -1078,8 +1079,11 @@ version=$(node -e '
   process.stdout.write(pkg.version);
 ' "$build_root/package.json") || fail "could not read a safe package version"
 
-[[ -z "$(git status --porcelain -- "$terminal_webview")" ]] ||
-  fail "terminal-webview has pre-existing changes: $build_root/$terminal_webview"
+if git ls-files --error-unmatch -- "$terminal_webview" >/dev/null 2>&1; then
+  terminal_webview_present=1
+  [[ -z "$(git status --porcelain -- "$terminal_webview")" ]] ||
+    fail "terminal-webview has pre-existing changes: $build_root/$terminal_webview"
+fi
 
 declare -a serve_target_args=()
 if ((build_android_target && !build_windows_target)); then
@@ -1090,9 +1094,13 @@ fi
 if ((build_android_target || build_windows_target)); then
   stage "prepare-build: clear exact selected artifacts and write this run's marker ($selected_targets_csv)"
   bash "$control_root/dwyanewang/serve-dist.sh" prepare-build "${serve_target_args[@]}"
-  terminal_restore_needed=1
-  stage "terminal-webview: regenerate embedded HTML"
-  (cd packages/app && npm run build:terminal-webview)
+  if ((terminal_webview_present)); then
+    terminal_restore_needed=1
+    stage "terminal-webview: regenerate embedded HTML"
+    (cd packages/app && npm run build:terminal-webview)
+  else
+    stage "terminal-webview: removed from the product tree; no generated HTML to prepare"
+  fi
 else
   stage "prepare-build: server-only selection has no downloadable artifact marker"
 fi
@@ -1211,7 +1219,11 @@ if ((build_windows_target)); then
 fi
 
 restore_terminal_webview
-stage "cleanup: terminal-webview restored"
+if ((terminal_webview_present)); then
+  stage "cleanup: terminal-webview restored"
+else
+  stage "cleanup: product tree has no terminal-webview generated file"
+fi
 [[ -z "$(git -C "$build_root" status --porcelain)" ]] ||
   fail "build worktree is not clean after artifact generation: $build_root"
 [[ -z "$(git -C "$control_root" status --porcelain)" ]] ||

@@ -58,7 +58,15 @@ process.env.EXPO_ROUTER_APP_ROOT = routerRoot;
 const requireFromApp = createRequire(packagePath);
 let regenerateDeclarations;
 try {
-  ({ regenerateDeclarations } = requireFromApp("expo-router/build/typed-routes"));
+  let generatorPath;
+  try {
+    generatorPath = requireFromApp.resolve("expo-router/build/typed-routes");
+  } catch (error) {
+    if (error.code !== "MODULE_NOT_FOUND") throw error;
+    // SDK 57 moved the generator to the package used by the Expo CLI.
+    generatorPath = requireFromApp.resolve("@expo/router-server/build/typed-routes");
+  }
+  ({ regenerateDeclarations } = requireFromApp(generatorPath));
 } catch (error) {
   fail(`could not load expo-router typed-routes generator: ${error.message}`);
 }

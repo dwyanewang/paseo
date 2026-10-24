@@ -101,6 +101,7 @@ function createFixture({
   dependenciesReinstalled = 0,
   patchedDependency = false,
   rwMainRebuilt = 0,
+  terminalWebview = true,
 } = {}) {
   const fixtureRoot = mkdtempSync(path.join(tmpdir(), "paseo-build-artifacts-"));
   const controlRoot = path.join(fixtureRoot, "control");
@@ -155,15 +156,17 @@ function createFixture({
       ].join("\n"),
     );
   }
-  for (const workspace of ["highlight", "relay", "protocol", "client", "server", "cli"]) {
+  for (const workspace of ["highlight", "relay", "protocol", "client", "server", "cli", "app"]) {
     const workspaceRoot = path.join(controlRoot, "packages", workspace);
     mkdirSync(workspaceRoot, { recursive: true });
     writeFileSync(path.join(workspaceRoot, "package.json"), `{"name":"${workspace}"}\n`);
   }
   const terminalRelative = "packages/app/src/terminal/webview/terminal-emulator-webview-html.ts";
   const terminalControl = path.join(controlRoot, terminalRelative);
-  mkdirSync(path.dirname(terminalControl), { recursive: true });
-  writeFileSync(terminalControl, "export const html = 'original';\n");
+  if (terminalWebview) {
+    mkdirSync(path.dirname(terminalControl), { recursive: true });
+    writeFileSync(terminalControl, "export const html = 'original';\n");
+  }
   const desktopPackage = path.join(controlRoot, "packages/desktop/package.json");
   mkdirSync(path.dirname(desktopPackage), { recursive: true });
   writeFileSync(desktopPackage, '{"name":"desktop-fixture"}\n');
@@ -735,6 +738,20 @@ test("runs the complete three-platform artifact chain from one ready state", () 
       readFileSync(path.join(fixture.buildRoot, fixture.terminalRelative), "utf8"),
       "export const html = 'original';\n",
     );
+    assert.equal(git(fixture.buildRoot, "status", "--porcelain"), "");
+    assertBuildLockAvailable(fixture);
+  });
+});
+
+test("builds all targets when the upstream product has removed terminal-webview", () => {
+  withFixture({ terminalWebview: false }, (fixture) => {
+    const result = runBuild(fixture, "native-grid-terminal");
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    const commands = readFileSync(fixture.commandLog, "utf8");
+    assert.doesNotMatch(commands, /build:terminal-webview/);
+    assert.match(commands, /profile\|android-native-assemble/);
+    assert.match(commands, /profile\|windows-artifacts/);
+    assert.equal(existsSync(path.join(fixture.buildRoot, fixture.terminalRelative)), false);
     assert.equal(git(fixture.buildRoot, "status", "--porcelain"), "");
     assertBuildLockAvailable(fixture);
   });

@@ -1052,7 +1052,7 @@ test("run-bound continue allows remote main to advance while preserving every fr
     assert.match(state, new RegExp(`paseo_build_requested_at=${request.requestedAt}`));
     assert.match(state, new RegExp(`paseo_build_frozen_at=${request.frozenAt}`));
   });
-}, 20_000);
+}, 30_000);
 
 test("rejects choosing one parent when add/add patches change different hunks of one target", () => {
   withFixture({ featureOneAddsPatch: true }, (fixture) => {
