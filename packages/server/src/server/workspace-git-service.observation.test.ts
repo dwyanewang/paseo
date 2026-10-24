@@ -482,6 +482,7 @@ describe("WorkspaceGitService checkout observation", () => {
     await vi.waitFor(() => {
       expect(summaryListener).toHaveBeenLastCalledWith(
         expect.objectContaining({
+          worktreeRevision: 1,
           git: expect.objectContaining({
             isDirty: true,
             diffStat: { additions: 4, deletions: 2 },
@@ -499,10 +500,66 @@ describe("WorkspaceGitService checkout observation", () => {
     expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(1);
     expect(getPullRequestStatus).not.toHaveBeenCalled();
 
+    summaryListener.mockClear();
+    watcher.records[0]?.callback(null, [
+      { path: path.join(REPO_CWD, "tracked.txt"), type: "update" },
+    ]);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.waitFor(() => {
+      expect(summaryListener).toHaveBeenCalledWith(
+        expect.objectContaining({ worktreeRevision: 2 }),
+      );
+      expect(service.getMetrics().workspaceRefreshInFlightCount).toBe(0);
+    });
+    await flushPromises();
+
     diffSubscription.unsubscribe();
     summarySubscription.unsubscribe();
     diffManager.dispose();
     service.dispose();
+  });
+
+  test("working-tree fallback polling versions consecutive dirty snapshots", async () => {
+    const watcher = createWatcherHarness({ failDirectories: new Set([REPO_CWD]) });
+    const getCheckoutStatus = vi.fn(async (cwd: string) =>
+      createCheckoutStatus(cwd, { isDirty: true }),
+    );
+    const service = createService(watcher, { getCheckoutStatus });
+    const listener = vi.fn();
+    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, listener);
+
+    await vi.waitFor(() => {
+      expect(service.peekSnapshot(REPO_CWD)).toMatchObject({ worktreeRevision: 0 });
+      expect(service.getMetrics().workspaceObservationSetupInFlightCount).toBe(0);
+      expect(service.getMetrics().workspaceRefreshInFlightCount).toBe(0);
+    });
+    listener.mockClear();
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    await vi.waitFor(() => {
+      expect(listener).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          worktreeRevision: 1,
+          git: expect.objectContaining({ isDirty: true }),
+        }),
+      );
+    });
+    listener.mockClear();
+
+    // The first tick left the snapshot unchanged apart from its revision, so the degraded
+    // backoff doubles the gap before the next poll.
+    await vi.advanceTimersByTimeAsync(10_000);
+    await vi.waitFor(() => {
+      expect(listener).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          worktreeRevision: 2,
+          git: expect.objectContaining({ isDirty: true }),
+        }),
+      );
+    });
+
+    subscription.unsubscribe();
+    await service.dispose();
   });
 
   test("worktree events invalidate uncommitted diffs and metadata events invalidate both", async () => {
@@ -1330,6 +1387,10 @@ describe("WorkspaceGitService checkout observation", () => {
       .find((record) => record.directory === GIT_DIR)
       ?.callback(null, [{ path: path.join(GIT_DIR, "packed-refs"), type: "update" }]);
     await vi.advanceTimersByTimeAsync(1_000);
+    await vi.waitFor(() => {
+      expect(service.getMetrics().workspaceRefreshInFlightCount).toBe(0);
+    });
+    await flushPromises();
     await vi.advanceTimersByTimeAsync(150);
     await vi.waitFor(() => {
       expect(getCheckoutDiff).toHaveBeenCalledTimes(2);

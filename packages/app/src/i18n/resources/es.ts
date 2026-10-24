@@ -1377,7 +1377,13 @@ export const es: TranslationResources = {
     isolation: {
       local: "Local",
       worktree: "Nuevo worktree",
-      label: "Aislamiento",
+      label: "Modo del espacio de trabajo",
+    },
+    branchMode: {
+      label: "Rama existente",
+      branchOff: "Nueva rama",
+      checkout: "Usar rama",
+      updateHost: "Actualiza el host para crear una rama nueva a partir de la selección actual.",
     },
     fields: {
       project: "Proyecto",
@@ -1389,8 +1395,14 @@ export const es: TranslationResources = {
     errors: {
       hostDisconnected: "Hostno está conectado",
       createWorktreeFailed: "No se pudo crear el árbol de trabajo",
+      branchAlreadyCheckedOut:
+        "Esa rama ya está activa en otro lugar. Usa Nueva rama para crear una copia o libera la rama primero.",
       composerStateRequired: "Se requiere el estado del compositor",
       selectModel: "Selecciona un modelo",
+    },
+    notices: {
+      checkoutBranchCopied:
+        "{{requestedBranch}} ya está activa en otro lugar. Se usará una copia en su lugar: {{createdBranch}}.",
     },
     tooltips: {
       project: "Choose the project",
@@ -2002,6 +2014,23 @@ export const es: TranslationResources = {
       failedToLoad: "No se pudo cargar el archivo",
       notFound: "No se encontró el archivo",
       failedToLoadPreview: "No se pudo cargar la vista previa del archivo",
+      closePreview: "Cerrar vista previa del archivo",
+      closePreviewHint: "Cierra este archivo y vuelve a su pestaña principal",
+      image: {
+        accessibilityLabel: "Vista previa de imagen: {{fileName}}",
+        accessibilityHint: "Pellizca para ampliar. Mantén pulsado para ver las acciones de imagen.",
+        copy: "Copiar imagen",
+        copying: "Copiando imagen...",
+        copyFailed: "No se pudo copiar la imagen",
+        save: "Guardar en Fotos",
+        saving: "Guardando imagen...",
+        saved: "Guardada en Fotos",
+        savePermissionDenied: "Permite el acceso a Fotos para guardar esta imagen",
+        saveFailed: "No se pudo guardar la imagen",
+        share: "Compartir imagen",
+        sharing: "Compartiendo imagen...",
+        shareFailed: "No se pudo compartir la imagen",
+      },
       editor: {
         preview: "Vista previa",
         source: "Código fuente",

@@ -1367,7 +1367,13 @@ export const ptBR: TranslationResources = {
     isolation: {
       local: "Local",
       worktree: "Novo worktree",
-      label: "Isolamento",
+      label: "Modo do workspace",
+    },
+    branchMode: {
+      label: "Branch existente",
+      branchOff: "Nova branch",
+      checkout: "Fazer checkout",
+      updateHost: "Atualize o host para criar uma nova branch a partir da seleção atual.",
     },
     fields: {
       project: "Projeto",
@@ -1379,8 +1385,14 @@ export const ptBR: TranslationResources = {
     errors: {
       hostDisconnected: "Host não está conectado",
       createWorktreeFailed: "Falha ao criar worktree",
+      branchAlreadyCheckedOut:
+        "Esse branch já está em uso em outro lugar. Use Nova branch para criar uma cópia, ou libere o branch primeiro.",
       composerStateRequired: "O estado do composer é obrigatório",
       selectModel: "Selecione um modelo",
+    },
+    notices: {
+      checkoutBranchCopied:
+        "{{requestedBranch}} já está em uso em outro lugar. Usando uma cópia no lugar: {{createdBranch}}.",
     },
     tooltips: {
       project: "Choose the project",
@@ -1987,6 +1999,24 @@ export const ptBR: TranslationResources = {
       failedToLoad: "Falha ao carregar arquivo",
       notFound: "Arquivo não encontrado",
       failedToLoadPreview: "Falha ao carregar prévia do arquivo",
+      closePreview: "Fechar prévia do arquivo",
+      closePreviewHint: "Fecha este arquivo e volta para a aba principal",
+      image: {
+        accessibilityLabel: "Prévia da imagem: {{fileName}}",
+        accessibilityHint:
+          "Faça o gesto de pinça para ampliar. Mantenha pressionado para ver as ações da imagem.",
+        copy: "Copiar imagem",
+        copying: "Copiando imagem...",
+        copyFailed: "Falha ao copiar imagem",
+        save: "Salvar em Fotos",
+        saving: "Salvando imagem...",
+        saved: "Salva em Fotos",
+        savePermissionDenied: "Permita acesso ao Fotos para salvar esta imagem",
+        saveFailed: "Falha ao salvar imagem",
+        share: "Compartilhar imagem",
+        sharing: "Compartilhando imagem...",
+        shareFailed: "Falha ao compartilhar imagem",
+      },
       editor: {
         preview: "Prévia",
         source: "Fonte",

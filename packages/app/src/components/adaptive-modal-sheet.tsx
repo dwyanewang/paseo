@@ -653,8 +653,9 @@ export function AdaptiveModalSheet({
         enablePanDownToClose
         backgroundComponent={SheetBackground}
         handleComponent={SheetHandle}
-        keyboardBehavior="extend"
+        keyboardBehavior="interactive"
         keyboardBlurBehavior="restore"
+        android_keyboardInputMode="adjustPan"
         accessible={false}
         presentation={presentation}
       >

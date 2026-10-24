@@ -155,11 +155,14 @@ export const getWorkspaceGitSelfHealPhaseMs = getWorkspaceGitObservationReensure
 
 export interface WorkspaceGitRuntimeSnapshot {
   cwd: string;
+  /** Monotonic per-workspace token advanced at the working-tree observation boundary. */
+  worktreeRevision?: number;
   git: {
     isGit: boolean;
     repoRoot: string | null;
     mainRepoRoot: string | null;
     currentBranch: string | null;
+    headOid: string | null;
     remoteUrl: string | null;
     isPaseoOwnedWorktree: boolean;
     isDirty: boolean | null;
@@ -418,6 +421,7 @@ class WorkspaceGitWatcherSubscriptionTimeoutError extends Error {
 
 interface WorkspaceGitTarget {
   cwd: string;
+  worktreeRevision: number;
   listeners: Set<WorkspaceGitListener>;
   workingTreeWatchTarget: WorkingTreeWatchTarget | null;
   debounceTimer: NodeJS.Timeout | null;
@@ -1199,6 +1203,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   private createWorkspaceTarget(cwd: string): WorkspaceGitTarget {
     const target: WorkspaceGitTarget = {
       cwd,
+      worktreeRevision: 0,
       listeners: new Set(),
       workingTreeWatchTarget: null,
       debounceTimer: null,
@@ -1593,13 +1598,17 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   // A refresh that throws is swallowed by refreshWorkspaceTarget and leaves the fingerprint
   // alone, so it reads as a quiet tick and widens the gap. That is the intended outcome: a
   // repository whose Git commands keep failing is the last one to retry every 5 seconds.
+  // Callers advance worktreeRevision before every degraded poll so working-tree consumers
+  // revalidate; that bump alone is not a workspace change and must not reset the backoff.
   private async refreshDegradedPollTarget(
     workspaceTarget: WorkspaceGitTarget,
     request: WorkspaceGitRefreshRequest,
   ): Promise<boolean> {
-    const fingerprintBefore = workspaceTarget.latestFingerprint;
+    const fingerprintBefore = fingerprintIgnoringWorktreeRevision(workspaceTarget.latestSnapshot);
     await this.refreshWorkspaceTarget(workspaceTarget, request);
-    return workspaceTarget.latestFingerprint !== fingerprintBefore;
+    return (
+      fingerprintIgnoringWorktreeRevision(workspaceTarget.latestSnapshot) !== fingerprintBefore
+    );
   }
 
   private startWorkingTreeWatchFallback(
@@ -1623,6 +1632,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
           if (!workspaceTarget) {
             return false;
           }
+          workspaceTarget.worktreeRevision += 1;
           const changed = await this.refreshDegradedPollTarget(workspaceTarget, {
             force: false,
             refreshStructure: target.repoRoot === null,
@@ -2103,6 +2113,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     for (const workspaceKey of target.workspaceKeys) {
       const workspaceTarget = this.workspaceTargets.get(workspaceKey);
       if (workspaceTarget) {
+        workspaceTarget.worktreeRevision += 1;
         this.scheduleWorkspaceRefresh(workspaceTarget, { scope: "worktree", reason });
       }
     }
@@ -2636,6 +2647,10 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
           }
         }
         if (refreshWorktree) {
+          workspaceTarget.worktreeRevision += 1;
+          if (workspaceTarget.latestGit) {
+            workspaceTarget.latestSnapshot = this.combineSnapshot(workspaceTarget);
+          }
           const workingTreeTarget = this.getWorkingTreeWatchTargetForWorkspace(workspaceTarget);
           if (workingTreeTarget) {
             workingTreeTargets.add(workingTreeTarget);
@@ -2680,6 +2695,10 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
           const workingTreeTarget = this.getWorkingTreeWatchTargetForWorkspace(workspaceTarget);
           if (workingTreeTarget) {
             workingTreeTargets.add(workingTreeTarget);
+          }
+          workspaceTarget.worktreeRevision += 1;
+          if (workspaceTarget.latestGit) {
+            workspaceTarget.latestSnapshot = this.combineSnapshot(workspaceTarget);
           }
           return await this.refreshDegradedPollTarget(workspaceTarget, {
             force: false,
@@ -3370,6 +3389,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       repoRoot: checkoutStatus.repoRoot,
       mainRepoRoot: checkoutStatus.mainRepoRoot,
       currentBranch: checkoutStatus.currentBranch,
+      headOid: checkoutStatus.headOid,
       remoteUrl: checkoutStatus.remoteUrl,
       isPaseoOwnedWorktree: checkoutStatus.isPaseoOwnedWorktree,
       isDirty: refreshWorktree
@@ -3439,6 +3459,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
 
     return {
       cwd: target.cwd,
+      worktreeRevision: target.worktreeRevision,
       git: target.latestGit,
       forge: target.latestForge ?? buildForgeUnavailableSnapshot(),
     };
@@ -3877,14 +3898,22 @@ function parseWorkspaceGitStashList(
   return entries;
 }
 
+function fingerprintIgnoringWorktreeRevision(
+  snapshot: WorkspaceGitRuntimeSnapshot | null,
+): string | null {
+  return snapshot ? JSON.stringify({ ...snapshot, worktreeRevision: undefined }) : null;
+}
+
 function buildNotGitSnapshot(cwd: string): WorkspaceGitRuntimeSnapshot {
   return {
     cwd,
+    worktreeRevision: 0,
     git: {
       isGit: false,
       repoRoot: null,
       mainRepoRoot: null,
       currentBranch: null,
+      headOid: null,
       remoteUrl: null,
       isPaseoOwnedWorktree: false,
       isDirty: null,

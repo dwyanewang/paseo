@@ -872,6 +872,7 @@ export interface CheckoutStatusGitNonPaseo {
   repoRoot: string;
   mainRepoRoot: string | null;
   currentBranch: string | null;
+  headOid: string | null;
   isDirty: boolean;
   baseRef: string | null;
   aheadBehind: AheadBehind | null;
@@ -891,6 +892,7 @@ export interface CheckoutStatusGitPaseo {
   repoRoot: string;
   mainRepoRoot: string;
   currentBranch: string | null;
+  headOid: string | null;
   isDirty: boolean;
   baseRef: string;
   aheadBehind: AheadBehind | null;
@@ -1625,6 +1627,25 @@ export async function resolveRepositoryDefaultBranch(
     return "master";
   }
 
+  // No origin/HEAD and no conventionally-named default branch (e.g. repo defaults to
+  // "develop" or "trunk"). Fall back to whatever branch is currently checked out in
+  // repoRoot, since that's usually the user's working default.
+  try {
+    const { stdout: headRef } = await runGitCommand(
+      ["symbolic-ref", "--quiet", "--short", "HEAD"],
+      {
+        cwd: repoRoot,
+        envOverlay: READ_ONLY_GIT_ENV,
+      },
+    );
+    const currentBranch = headRef.trim();
+    if (currentBranch) {
+      return currentBranch;
+    }
+  } catch {
+    // ignore (e.g. detached HEAD)
+  }
+
   return null;
 }
 
@@ -2315,6 +2336,7 @@ export async function getCheckoutStatus(
   const baseRef = facts.resolvedBaseRef;
   const mainRepoRoot = facts.mainRepoRoot;
   const factsContext = { ...context, facts };
+  const headOid = await getCurrentHeadSha(cwd, factsContext);
   const aheadBehind =
     baseRef && currentBranch
       ? await getAheadBehind(cwd, baseRef, currentBranch, factsContext)
@@ -2334,6 +2356,7 @@ export async function getCheckoutStatus(
       repoRoot: worktreeRoot,
       mainRepoRoot: mainRepoRoot ?? worktreeRoot,
       currentBranch,
+      headOid,
       isDirty,
       baseRef: displayBaseRef ?? baseRef,
       aheadBehind,
@@ -2352,6 +2375,7 @@ export async function getCheckoutStatus(
     mainRepoRoot:
       mainRepoRoot && resolve(mainRepoRoot) !== resolve(worktreeRoot) ? mainRepoRoot : null,
     currentBranch,
+    headOid,
     isDirty,
     baseRef: displayBaseRef,
     aheadBehind,

@@ -1355,7 +1355,13 @@ export const ja: TranslationResources = {
     isolation: {
       local: "ローカル",
       worktree: "新しいワークツリー",
-      label: "分離方法",
+      label: "ワークスペースモード",
+    },
+    branchMode: {
+      label: "既存ブランチ",
+      branchOff: "新しいブランチ",
+      checkout: "チェックアウト",
+      updateHost: "現在の選択から新しいブランチを作成するには、ホストを更新してください。",
     },
     fields: {
       project: "プロジェクト",
@@ -1367,8 +1373,14 @@ export const ja: TranslationResources = {
     errors: {
       hostDisconnected: "ホストが接続されていません",
       createWorktreeFailed: "ワークツリーの作成に失敗しました",
+      branchAlreadyCheckedOut:
+        "そのブランチは別の場所で既にチェックアウトされています。「新しいブランチ」でコピーを作成するか、先にブランチを解放してください。",
       composerStateRequired: "コンポーザーの状態が必要です",
       selectModel: "モデルを選択してください",
+    },
+    notices: {
+      checkoutBranchCopied:
+        "{{requestedBranch}} は別の場所で既にチェックアウトされています。代わりにコピーを使用します: {{createdBranch}}。",
     },
     tooltips: {
       project: "Choose the project",
@@ -1973,6 +1985,23 @@ export const ja: TranslationResources = {
       failedToLoad: "ファイルの読み込みに失敗しました",
       notFound: "ファイルが見つかりません",
       failedToLoadPreview: "ファイルプレビューの読み込みに失敗しました",
+      closePreview: "ファイルプレビューを閉じる",
+      closePreviewHint: "このファイルを閉じて親タブに戻ります",
+      image: {
+        accessibilityLabel: "画像プレビュー：{{fileName}}",
+        accessibilityHint: "ピンチで拡大できます。長押しで画像操作を開きます。",
+        copy: "画像をコピー",
+        copying: "画像をコピー中...",
+        copyFailed: "画像をコピーできませんでした",
+        save: "写真に保存",
+        saving: "画像を保存中...",
+        saved: "写真に保存しました",
+        savePermissionDenied: "この画像を保存するには写真への追加を許可してください",
+        saveFailed: "画像を保存できませんでした",
+        share: "画像を共有",
+        sharing: "画像を共有中...",
+        shareFailed: "画像を共有できませんでした",
+      },
       editor: {
         preview: "プレビュー",
         source: "ソース",

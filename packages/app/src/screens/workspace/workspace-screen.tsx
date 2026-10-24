@@ -15,6 +15,7 @@ import {
   useComposerTabFullscreen,
 } from "@/composer/editing-session";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { Button } from "@/components/ui/button";
 import { SheetHostScope } from "@/components/ui/isolated-bottom-sheet-modal";
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import { getOpenAgentTabLabel } from "@getpaseo/protocol/agent-labels";
@@ -36,6 +37,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useRouter, type Href } from "expo-router";
 import * as Clipboard from "expo-clipboard";
 import { useTranslation } from "react-i18next";
+import { X } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { Theme } from "@/styles/theme";
@@ -3324,6 +3326,10 @@ function WorkspaceScreenContent({
       isWorkspaceHeaderSubtitleDistinct,
     ],
   );
+  const handleCloseActiveFile = useCallback(() => {
+    if (activeTabDescriptor?.kind !== "file") return;
+    void handleCloseTabById(activeTabDescriptor.tabId);
+  }, [activeTabDescriptor, handleCloseTabById]);
   const compactHeaderScripts = useMemo(
     () => ({
       serverId: normalizedServerId,
@@ -3377,6 +3383,18 @@ function WorkspaceScreenContent({
             onCloseTabsBelow={handleCloseTabsToRight}
             onCloseOtherTabs={handleCloseOtherTabs}
           />
+          {activeTabDescriptor?.kind === "file" ? (
+            <Button
+              variant="ghost"
+              size="md"
+              leftIcon={X}
+              style={styles.mobileFileCloseButton}
+              testID="workspace-file-tab-close"
+              accessibilityLabel={t("panels.file.closePreview")}
+              accessibilityHint={t("panels.file.closePreviewHint")}
+              onPress={handleCloseActiveFile}
+            />
+          ) : null}
           <WorkspaceHeaderMenuMobile
             normalizedServerId={normalizedServerId}
             normalizedWorkspaceId={normalizedWorkspaceId}
@@ -3397,6 +3415,7 @@ function WorkspaceScreenContent({
         </CompactWorkspaceHeader>
       ) : null,
     [
+      activeTabDescriptor,
       activeTabKey,
       canOpenImportSheet,
       compactHeaderScripts,
@@ -3404,6 +3423,7 @@ function WorkspaceScreenContent({
       currentBranchName,
       explorerSidebarToggleAccessibilityState,
       explorerSidebarToggleLabel,
+      handleCloseActiveFile,
       handleCloseOtherTabs,
       handleCloseTabById,
       handleCloseTabsToLeft,
@@ -3431,6 +3451,7 @@ function WorkspaceScreenContent({
       openImportSheet,
       showCreateBrowserTab,
       showWorkspaceSetup,
+      t,
       tabs,
       workspaceDirectory,
       workspaceHeaderSubtitle,
@@ -3883,6 +3904,13 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[2],
   },
   newTabTooltipShortcut: {},
+  mobileFileCloseButton: {
+    width: 44,
+    height: 44,
+    paddingHorizontal: 0,
+    paddingVertical: 0,
+    marginRight: theme.spacing[1],
+  },
   headerMenuProfileIconWrapper: {
     width: 16,
     height: 16,

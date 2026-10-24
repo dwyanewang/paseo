@@ -12,7 +12,7 @@ import { buildSeededHost, buildCreateAgentPreferences } from "../support/helpers
 import { seedWorkspace } from "../support/helpers/seed-client";
 import {
   openNewWorkspaceComposer,
-  selectWorkspaceIsolation,
+  selectWorkspaceMode,
   loadSessionMessageReaders,
 } from "../support/helpers/new-workspace";
 import { fillComposerDraft } from "../support/helpers/composer";
@@ -100,7 +100,7 @@ for (const version of ["0.2.5", "0.7.2", "0.8.0"]) {
     }) => {
       await openOldHost(page, project.workspaceId);
       await openNewWorkspaceComposer(page, project);
-      await selectWorkspaceIsolation(page, "worktree");
+      await selectWorkspaceMode(page, "branch-off");
       const prompt = "Create this workspace: emit 1 coalesced agent stream updates";
       await fillComposerDraft(page, prompt);
       await pressSubmitBeforeTheNextRender(page, "Create");

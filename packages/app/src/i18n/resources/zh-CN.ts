@@ -1330,7 +1330,13 @@ export const zhCN: TranslationResources = {
     isolation: {
       local: "本地",
       worktree: "新建 worktree",
-      label: "隔离",
+      label: "Workspace 模式",
+    },
+    branchMode: {
+      label: "现有分支",
+      branchOff: "新建分支",
+      checkout: "检出",
+      updateHost: "更新 host 后即可从当前选择新建分支。",
     },
     fields: {
       project: "项目",
@@ -1342,8 +1348,12 @@ export const zhCN: TranslationResources = {
     errors: {
       hostDisconnected: "Host 未连接",
       createWorktreeFailed: "创建 worktree 失败",
+      branchAlreadyCheckedOut: "该分支已在别处检出。请改用「新建分支」创建副本，或先释放该分支。",
       composerStateRequired: "Composer 状态必填",
       selectModel: "请选择模型",
+    },
+    notices: {
+      checkoutBranchCopied: "{{requestedBranch}} 已在别处检出，改用副本分支：{{createdBranch}}。",
     },
     tooltips: {
       project: "Choose the project",
@@ -1932,6 +1942,23 @@ export const zhCN: TranslationResources = {
       failedToLoad: "加载文件失败",
       notFound: "找不到文件",
       failedToLoadPreview: "加载文件预览失败",
+      closePreview: "关闭文件预览",
+      closePreviewHint: "关闭此文件并返回其父标签",
+      image: {
+        accessibilityLabel: "图片预览：{{fileName}}",
+        accessibilityHint: "双指捏合可缩放，长按可打开图片操作。",
+        copy: "复制图片",
+        copying: "正在复制图片...",
+        copyFailed: "复制图片失败",
+        save: "保存到相册",
+        saving: "正在保存图片...",
+        saved: "已保存到相册",
+        savePermissionDenied: "请允许相册写入权限以保存此图片",
+        saveFailed: "保存图片失败",
+        share: "分享图片",
+        sharing: "正在分享图片...",
+        shareFailed: "分享图片失败",
+      },
       editor: {
         preview: "预览",
         source: "源代码",

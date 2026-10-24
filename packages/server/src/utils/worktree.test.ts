@@ -9,6 +9,7 @@ import {
   type CreateWorktreeOptions,
   type WorktreeConfig,
 } from "./worktree";
+import { getPaseoWorktreeMetadataPath } from "./worktree-metadata.js";
 import { execFileSync } from "child_process";
 import { rm } from "node:fs/promises";
 import {
@@ -435,6 +436,29 @@ describe("paseo worktree manager", () => {
         await silentRemote.close();
       }
     }, 45_000);
+  });
+
+  it("records the repo default branch as the base when checking out an existing branch", async () => {
+    // New Workspace → check out an existing branch directly (not a branch-off copy).
+    execFileSync("git", ["branch", "feature/scene-linkage"], { cwd: repoDir });
+
+    const created = await createLegacyWorktreeForTest({
+      cwd: repoDir,
+      worktreeSlug: "scene-linkage",
+      source: { kind: "checkout-branch", branchName: "feature/scene-linkage" },
+      paseoHome,
+    });
+
+    const metadata = JSON.parse(
+      readFileSync(getPaseoWorktreeMetadataPath(created.worktreePath), "utf8"),
+    );
+
+    // Regression: the base must be a real base (the repo default branch), never a
+    // self-reference to the checked-out branch. A self-referencing base makes the
+    // Changes diff compare the branch against its own remote — i.e. surface unpushed
+    // commits as if they were changes relative to a base.
+    expect(metadata.baseRefName).not.toBe("feature/scene-linkage");
+    expect(metadata.baseRefName).toBe("main");
   });
 });
 
