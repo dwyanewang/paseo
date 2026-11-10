@@ -2,5 +2,5 @@
 # sync-rw-main-branches.sh removes merged PRs; new entries are explicit only.
 # Each entry records the main/head pair last semantically reviewed.
 
-refactor/provider-history-read # PR #4473 # reviewed-main:b8bb335c563279be45544b1b20a1fa5b3e56d422 # reviewed-head:17574146de98e53e8447d7bd2e7b9538ea328711
-feat/plugin-host-infrastructure # Temporary personal overlay # reviewed-main:b8bb335c563279be45544b1b20a1fa5b3e56d422 # reviewed-head:32cc4f267d298dc7c42241da41d29e76e44a0c6a
+refactor/provider-history-read # PR #4473 # reviewed-main:82687ec95bd9e54e272dd86ab329fc36cf30ce7f # reviewed-head:176fd913df78b49780f3d59d2b16f9880b3e9347
+feat/plugin-host-infrastructure # Temporary personal overlay # reviewed-main:82687ec95bd9e54e272dd86ab329fc36cf30ce7f # reviewed-head:a2accde877b96dd5691c1760e1021834abaad4b6
