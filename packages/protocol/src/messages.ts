@@ -4003,6 +4003,8 @@ export const ServerInfoStatusPayloadSchema = z
         checkoutRefresh: z.boolean().optional(),
         // COMPAT(workspaceMultiplicity): added in v0.1.97, drop the gate when floor >= v0.1.97
         workspaceMultiplicity: z.boolean().optional(),
+        // COMPAT(changeRequestBranchOff): added in v0.2.5, remove after 2027-01-31.
+        changeRequestBranchOff: z.boolean().optional(),
         // COMPAT(projectRemove): added in v0.1.97, drop the gate when floor >= v0.1.97.
         projectRemove: z.boolean().optional(),
         // COMPAT(projectAdd): added in v0.1.97, drop the gate when floor >= v0.1.97.
@@ -5322,6 +5324,16 @@ export const ClearAgentAttentionResponseMessageSchema = z.object({
   }),
 });
 
+// Present when a checkout could not take the requested branch — it was already
+// live in another worktree — and the daemon created a copy of it instead. Absent
+// on every other create, including daemons that predate the field.
+const CheckoutBranchCopySchema = z
+  .object({
+    requestedBranch: z.string(),
+    createdBranch: z.string(),
+  })
+  .optional();
+
 export const CreationSnapshotSchema = z.object({
   kind: z.enum(["workspace", "agent"]),
   idempotencyKey: z.string(),
@@ -5343,6 +5355,7 @@ export const CreationSnapshotSchema = z.object({
   errorCode: z.string().optional(),
   failedStage: z.enum(["workspace", "agent", "prompt"]).optional(),
   outcomeUnknown: z.boolean().optional(),
+  checkoutBranchCopy: CheckoutBranchCopySchema,
 });
 export type CreationSnapshot = z.infer<typeof CreationSnapshotSchema>;
 export type AgentCreateRequest = z.infer<typeof AgentCreateRequestSchema>;
@@ -5384,6 +5397,7 @@ export const WorkspaceCreateResponseSchema = z.object({
     setupSkippedReason: z.string().optional(),
     error: z.string().nullable(),
     errorCode: z.string().optional(),
+    checkoutBranchCopy: CheckoutBranchCopySchema,
     requestId: z.string(),
   }),
 });
@@ -6454,6 +6468,7 @@ export const CreatePaseoWorktreeResponseSchema = z.object({
     error: z.string().nullable(),
     errorCode: z.string().optional(),
     setupTerminalId: z.string().nullable(),
+    checkoutBranchCopy: CheckoutBranchCopySchema,
     setupSkippedReason: z.string().optional(),
     requestId: z.string(),
   }),

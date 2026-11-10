@@ -43,11 +43,20 @@ export interface CreateWorktreeCoreDeps {
   resolveDefaultBranch?: (repoRoot: string) => Promise<string>;
 }
 
+// A checkout that could not take the branch itself and landed on a copy of it.
+export interface CheckoutBranchCopy {
+  requestedBranch: string;
+  createdBranch: string;
+}
+
 export interface CreateWorktreeCoreResult {
   worktree: CreatedWorktree;
   intent: WorktreeCreationIntent;
   repoRoot: string;
   created: boolean;
+  // Null on every other path, including branch-off, where landing on a different
+  // branch is the whole point rather than a substitution.
+  checkoutBranchCopy: CheckoutBranchCopy | null;
 }
 
 export async function createWorktreeCore(
@@ -76,6 +85,16 @@ async function createWorktreeCoreWithPriority(
       githubPrNumber: input.githubPrNumber,
       worktreeSlug: requestedWorktreeSlug,
     };
+  } else if (input.action === "branch-off") {
+    const worktreeSlug = requestedWorktreeSlug ?? normalizeWorktreeSlug(createNameId());
+    intentInput = {
+      action: "branch-off",
+      refName: input.refName,
+      branchName: requestedBranchName,
+      checkoutSource: input.checkoutSource,
+      githubPrNumber: input.githubPrNumber,
+      worktreeSlug,
+    };
   } else if (input.checkoutSource !== undefined || input.githubPrNumber !== undefined) {
     intentInput = {
       checkoutSource: input.checkoutSource,
@@ -102,7 +121,8 @@ async function createWorktreeCoreWithPriority(
   let normalizedSlug: string;
 
   switch (intent.kind) {
-    case "branch-off": {
+    case "branch-off":
+    case "branch-off-change-request": {
       normalizedSlug = requestedWorktreeSlug ?? normalizeWorktreeSlug(intent.branchName);
       break;
     }
@@ -140,25 +160,48 @@ async function createWorktreeCoreWithPriority(
   normalizedSlug = validateWorktreeSlug(transformed.slug);
   intent = creationIntentFromRequest(transformed, intent);
 
+  const worktree = await createWorktree({
+    cwd: repoRoot,
+    worktreeSlug: normalizedSlug,
+    worktreePath: transformed.path,
+    source: intent,
+    paseoHome: input.paseoHome,
+    worktreesRoot: input.worktreesRoot,
+  });
   return {
-    worktree: await createWorktree({
-      cwd: repoRoot,
-      worktreeSlug: normalizedSlug,
-      worktreePath: transformed.path,
-      source: intent,
-      paseoHome: input.paseoHome,
-      worktreesRoot: input.worktreesRoot,
-    }),
+    worktree,
     intent,
     repoRoot,
     created: true,
+    checkoutBranchCopy: resolveCheckoutBranchCopy(intent, worktree),
   };
+}
+
+// Git refuses to check out a branch that is already live in another worktree, so
+// the creator falls back to a suffixed copy of it. Report that substitution
+// instead of letting the user believe they are on the branch they picked. Only
+// checkouts can substitute: branch-off lands on a new branch by design.
+function resolveCheckoutBranchCopy(
+  intent: WorktreeCreationIntent,
+  worktree: CreatedWorktree,
+): CheckoutBranchCopy | null {
+  if (intent.kind !== "checkout-branch" || intent.branchName === worktree.branchName) {
+    return null;
+  }
+  return { requestedBranch: intent.branchName, createdBranch: worktree.branchName };
 }
 
 function describeCreationRequest(
   intent: WorktreeCreationIntent,
   placement: Pick<PluginWorktreeCreateRequest, "repoRoot" | "sourceCheckout" | "slug" | "path">,
 ): PluginWorktreeCreateRequest {
+  if (intent.kind === "branch-off-change-request")
+    return {
+      ...placement,
+      kind: "branch-off",
+      branch: intent.branchName,
+      baseRef: intent.headRef,
+    };
   if (intent.kind === "branch-off")
     return {
       ...placement,
@@ -182,10 +225,16 @@ function creationIntentFromRequest(
   original: WorktreeCreationIntent,
 ): WorktreeCreationIntent {
   if (request.kind === "branch-off") {
+    if (original.kind === "branch-off-change-request") {
+      return { ...original, branchName: request.branch, headRef: request.baseRef };
+    }
     return { kind: request.kind, branchName: request.branch, baseBranch: request.baseRef };
   }
   if (request.kind === "checkout-branch") {
     return {
+      ...(original.kind === "checkout-branch" && original.branchName === request.branch
+        ? original
+        : {}),
       kind: request.kind,
       branchName: request.branch,
     };

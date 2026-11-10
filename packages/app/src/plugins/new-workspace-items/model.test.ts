@@ -21,46 +21,49 @@ function viewOf(baseItem: PickerItem | null) {
 }
 
 describe("the base ref a plugin reads", () => {
-  it("names the exact ref creation uses, so setting it back picks the same base", async () => {
-    // `release` exists locally and on origin, and the two have diverged.
-    const rows = buildBranchPickerItems([
-      {
-        name: "release",
-        committerDate: 0,
-        hasLocal: true,
-        hasRemote: true,
-        localAhead: 2,
-        localBehind: 1,
-      },
-    ]);
-    const origin = rows.find((row) => row.kind === "branch" && row.refName.includes("remotes"));
-    if (!origin) throw new Error("expected an origin row");
+  it.each(["branch-off", "checkout"] as const)(
+    "round-trips the exact ref for %s creation",
+    async (action) => {
+      // `release` exists locally and on origin, and the two have diverged.
+      const rows = buildBranchPickerItems([
+        {
+          name: "release",
+          committerDate: 0,
+          hasLocal: true,
+          hasRemote: true,
+          localAhead: 2,
+          localBehind: 1,
+        },
+      ]);
+      const origin = rows.find((row) => row.kind === "branch" && row.refName.includes("remotes"));
+      if (!origin) throw new Error("expected an origin row");
 
-    const chosen: PickerItem[] = [];
-    const setup = createNewWorkspaceSetup(
-      {
-        serverId: "host-a",
-        locked: false,
-        project: { id: "p", name: "repo" },
-        canCreateWorktree: true,
-        supportsMetadata: true,
-      },
-      { persistIsolation: () => {}, syncBaseAttachment: (item) => chosen.push(item) },
-    );
-    const read = toPluginNewWorkspace({
-      host: HOST,
-      view: viewOf(origin),
-      commands: setup.commandsFor({ serverId: "host-a", projectId: "p" }),
-    });
+      const chosen: PickerItem[] = [];
+      const setup = createNewWorkspaceSetup(
+        {
+          serverId: "host-a",
+          locked: false,
+          project: { id: "p", name: "repo" },
+          canCreateWorktree: true,
+          supportsMetadata: true,
+        },
+        { persistIsolation: () => {}, syncBaseAttachment: (item) => chosen.push(item) },
+      );
+      const read = toPluginNewWorkspace({
+        host: HOST,
+        view: viewOf(origin),
+        commands: setup.commandsFor({ serverId: "host-a", projectId: "p" }),
+      });
 
-    expect(read.baseRef).toEqual({ type: "branch", name: "refs/remotes/origin/release" });
-    if (read.baseRef?.type !== "branch") throw new Error("expected a branch");
-    await read.setBaseRef(read.baseRef);
+      expect(read.baseRef).toEqual({ type: "branch", name: "refs/remotes/origin/release" });
+      if (read.baseRef?.type !== "branch") throw new Error("expected a branch");
+      await read.setBaseRef(read.baseRef);
 
-    expect(pickerItemToCheckoutRequest(chosen[0] ?? null)).toEqual(
-      pickerItemToCheckoutRequest(origin),
-    );
-  });
+      expect(pickerItemToCheckoutRequest(chosen[0] ?? null, action)).toEqual(
+        pickerItemToCheckoutRequest(origin, action),
+      );
+    },
+  );
 });
 
 describe("the metadata a plugin sets", () => {

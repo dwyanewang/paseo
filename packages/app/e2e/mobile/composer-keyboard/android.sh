@@ -582,7 +582,7 @@ run_host_scroll() {
   local prefix="${ARTIFACTS_DIR}/${host}-native-scroll"
   prepare_composer closed
   if [[ "${host}" == new-workspace ]]; then
-    ad press 'id="workspace-create-isolation-trigger"' --settle
+    ad press 'id="workspace-create-mode-trigger"' --settle
     ad press 'text="Local"' --settle
   fi
   # Submit through each real host; draft/workspace creation then mounts its chat.

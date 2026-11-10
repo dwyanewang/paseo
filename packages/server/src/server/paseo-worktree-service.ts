@@ -9,6 +9,7 @@ import type { PersistedWorkspaceRecord } from "./workspace-registry.js";
 import type { WorkspaceProvisioningService } from "./session/workspace-provisioning/workspace-provisioning-service.js";
 import {
   createWorktreeCore,
+  type CheckoutBranchCopy,
   type CreateWorktreeCoreDeps,
   type CreateWorktreeCoreInput,
 } from "./worktree-core.js";
@@ -46,6 +47,7 @@ export interface CreatePaseoWorktreeResult {
   workspace: PersistedWorkspaceRecord;
   repoRoot: string;
   created: boolean;
+  checkoutBranchCopy: CheckoutBranchCopy | null;
 }
 
 export type CreatePaseoWorktreeFn = (
@@ -140,6 +142,7 @@ async function createPaseoWorktreeWithPriority(
       workspace,
       repoRoot: createdWorktree.repoRoot,
       created: createdWorktree.created,
+      checkoutBranchCopy: createdWorktree.checkoutBranchCopy,
     };
   } catch (error) {
     if (!createdWorktree.created) {
@@ -283,7 +286,11 @@ async function maybeMarkFirstAgentBranchAutoNameEligible(options: {
   input: Pick<CreatePaseoWorktreeInput, "branchName">;
 }): Promise<void> {
   const { createdWorktree, input } = options;
-  if (!createdWorktree.created || createdWorktree.intent.kind !== "branch-off") {
+  if (
+    !createdWorktree.created ||
+    (createdWorktree.intent.kind !== "branch-off" &&
+      createdWorktree.intent.kind !== "branch-off-change-request")
+  ) {
     return;
   }
   // A branch the caller named is their choice; only a placeholder slug is replaced.
