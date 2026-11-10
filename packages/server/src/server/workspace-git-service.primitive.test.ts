@@ -94,6 +94,7 @@ function createCheckoutStatus(
     repoRoot: cwd,
     mainRepoRoot: null,
     currentBranch: "main",
+    headOid: "head-1",
     isDirty: false,
     baseRef: "main",
     aheadBehind: { ahead: 0, behind: 0 },
@@ -165,11 +166,13 @@ interface SnapshotOverrides {
 function createBaseSnapshot(cwd: string): WorkspaceGitRuntimeSnapshot {
   return {
     cwd,
+    worktreeRevision: 0,
     git: {
       isGit: true,
       repoRoot: cwd,
       mainRepoRoot: null,
       currentBranch: "main",
+      headOid: "head-1",
       remoteUrl: "https://github.com/acme/repo.git",
       isPaseoOwnedWorktree: false,
       isDirty: false,
@@ -251,6 +254,7 @@ function createSnapshot(cwd: string, overrides?: SnapshotOverrides): WorkspaceGi
   const forge = resolveSnapshotForge(base, overrides);
   return {
     cwd,
+    worktreeRevision: base.worktreeRevision,
     git: {
       ...base.git,
       ...overrides?.git,
