@@ -25,9 +25,11 @@ interface CreationRequest {
   hasAgent: boolean;
   hasPrompt: boolean;
   exists: (kind: "workspace" | "agent", id: string) => Promise<boolean>;
-  provision?: (
-    workspaceId: string,
-  ) => Promise<{ workspace: WorkspaceDescriptorPayload; setupSkippedReason?: string }>;
+  provision?: (workspaceId: string) => Promise<{
+    workspace: WorkspaceDescriptorPayload;
+    setupSkippedReason?: string;
+    checkoutBranchCopy?: CreationSnapshot["checkoutBranchCopy"];
+  }>;
   createAgent?: (
     agentId: string,
     workspace: WorkspaceDescriptorPayload | undefined,
@@ -157,7 +159,7 @@ export class CreationService {
       if (input.provision && !record.snapshot.workspace) {
         record.inFlight = "workspace";
         await this.write(identity, record);
-        const { workspace, setupSkippedReason } = await input.provision(
+        const { workspace, setupSkippedReason, checkoutBranchCopy } = await input.provision(
           record.snapshot.workspaceId!,
         );
         record.inFlight = null;
@@ -166,6 +168,7 @@ export class CreationService {
           workspace,
           workspaceId: workspace.id,
           setupSkippedReason,
+          checkoutBranchCopy,
         });
       }
       if (input.hasAgent && input.createAgent && !record.snapshot.agent) {
