@@ -7,7 +7,7 @@ import {
   archiveWorkspaceFromDaemon,
   assertNewWorkspaceSidebarAndHeader,
   connectNewWorkspaceDaemonClient,
-  expectWorkspaceIsolationSelected,
+  expectWorkspaceModeSelected,
   openNewWorkspaceComposer,
   openProjectViaDaemon,
   submitNewWorkspacePrompt,
@@ -154,8 +154,8 @@ export async function withNewWorkspaceIssuesExample(
     await run({
       chooseWorktree: () =>
         test.step("choose a new worktree", async () => {
-          await page.getByTestId("workspace-create-isolation-trigger").click();
-          await page.getByTestId("workspace-create-isolation-worktree").click();
+          await page.getByTestId("workspace-create-mode-trigger").click();
+          await page.getByTestId("workspace-create-mode-branch-off").click();
         }),
       chooseIssue: (label) =>
         test.step(`choose the issue "${label}"`, async () => {
@@ -189,13 +189,13 @@ export async function withNewWorkspaceIssuesExample(
         }),
       expectIsolation: (isolation) =>
         test.step(`the screen is on ${isolation}`, () =>
-          expectWorkspaceIsolationSelected(page, isolation)),
+          expectWorkspaceModeSelected(page, isolation === "worktree" ? "branch-off" : "local")),
       reopenWithoutPlugin: () =>
         test.step("reopen the screen without the plugin", async () => {
           await client.removePlugin(PLUGIN_ID);
           // Leaving the screen drops its in-memory choice, so only the saved preference is left.
           await page.goBack();
-          await expect(page.getByTestId("workspace-create-isolation-trigger")).toHaveCount(0);
+          await expect(page.getByTestId("workspace-create-mode-trigger")).toHaveCount(0);
           await openNewWorkspaceComposer(page, project);
           await expect(page.getByRole("button", { name: "Mount", exact: true })).toHaveCount(0);
         }),

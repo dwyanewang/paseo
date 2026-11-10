@@ -475,7 +475,7 @@ describe("paseo worktree manager", () => {
     });
 
     const metadata = JSON.parse(
-      readFileSync(getPaseoWorktreeMetadataPath(created.worktreePath), "utf8"),
+      readFileSync(await getPaseoWorktreeMetadataPath(created.worktreePath), "utf8"),
     );
 
     // Regression: the base must be a real base (the repo default branch), never a

@@ -8,10 +8,7 @@ import {
   invalidateCheckoutGitQueriesForClient,
   invalidateCheckoutGitQueriesForServer,
 } from "@/git/query-keys";
-import {
-  draftAgentCommandsQueryKey,
-  sessionAgentCommandsQueryKey,
-} from "@/hooks/agent-commands-query";
+import { draftAgentCommandsQueryKey, sessionAgentCommandsQueryKey } from "@/agent-commands/cache";
 import {
   prPanePipelineQueryKey,
   prPaneTimelineQueryKey,

@@ -2,7 +2,7 @@ import type { Query, QueryClient } from "@tanstack/react-query";
 import {
   invalidateDraftAgentCommandsForCwd,
   invalidateDraftAgentCommandsForServer,
-} from "@/hooks/agent-commands-query";
+} from "@/agent-commands/cache";
 import { prPanePipelineQueryKind, prPaneTimelineQueryKind } from "./pull-request-panel/query-keys";
 
 interface CheckoutQueryIdentity {

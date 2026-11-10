@@ -512,7 +512,7 @@ describe("WorkspaceGitService checkout observation", () => {
     const subscription = service.registerWorkspace({ cwd: REPO_CWD }, listener);
 
     await vi.waitFor(() => {
-      expect(service.peekSnapshot(REPO_CWD)).toMatchObject({ worktreeRevision: 0 });
+      expect(listener).toHaveBeenLastCalledWith(expect.objectContaining({ worktreeRevision: 0 }));
       expect(service.getMetrics().workspaceObservationSetupInFlightCount).toBe(0);
       expect(service.getMetrics().workspaceRefreshInFlightCount).toBe(0);
     });

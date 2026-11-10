@@ -643,7 +643,7 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
       })
         .toString()
         .trim();
-      const metadata = readPaseoWorktreeMetadata(result.worktree.worktreePath);
+      const metadata = await readPaseoWorktreeMetadata(result.worktree.worktreePath);
 
       expect(result.intent).toEqual({
         kind: "branch-off-change-request",
@@ -1357,7 +1357,7 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
         createCoreDeps({ github }),
       );
       const readme = readFileSync(path.join(result.worktree.worktreePath, "README.md"), "utf8");
-      const metadata = readPaseoWorktreeMetadata(result.worktree.worktreePath);
+      const metadata = await readPaseoWorktreeMetadata(result.worktree.worktreePath);
 
       expect(result.intent).toEqual({
         kind: "branch-off-change-request",
