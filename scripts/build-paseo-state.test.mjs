@@ -230,6 +230,60 @@ test("Expo module preflight accepts tracked iOS-only and scoped modules", () => 
   }
 });
 
+test.each([
+  ["tracked", '{"platforms":["ios"],"ios":{"modules":["PaseoWindowLayoutModule"]}}', 0],
+  ["untracked", '{"platforms":["ios"]}', 1],
+  ["ignored", '{"platforms":["ios"]}', 1],
+  ["tracked", "{invalid", 1],
+  ["tracked", "[]", 1],
+  ["tracked", "null", 1],
+  ["tracked", undefined, 1],
+])("Expo package-less module: %s with config %j", (tracking, config, expectedStatus) => {
+  const root = mkdtempSync(path.join(tmpdir(), "paseo-expo-config-"));
+  try {
+    const relative = "packages/app/modules/paseo-window-layout";
+    const moduleDir = path.join(root, relative);
+    mkdirSync(path.join(moduleDir, "ios"), { recursive: true });
+    writeFileSync(path.join(moduleDir, "ios/PaseoWindowLayoutModule.swift"), "// native module\n");
+    if (config !== undefined) {
+      writeFileSync(path.join(moduleDir, "expo-module.config.json"), config);
+    }
+    const init = spawnSync("git", ["init", "-b", "main", root], { encoding: "utf8" });
+    assert.equal(init.status, 0, init.stderr);
+    if (tracking === "tracked") {
+      const add = spawnSync("git", ["-C", root, "add", "."], { encoding: "utf8" });
+      assert.equal(add.status, 0, add.stderr);
+    } else if (tracking === "ignored") {
+      writeFileSync(path.join(root, ".gitignore"), `${relative}/\n`);
+    }
+    const result = spawnSync(
+      "bash",
+      ["-c", 'source "$1"; paseo_check_expo_modules "$2"', "modules", helper, root],
+      { encoding: "utf8" },
+    );
+    assert.equal(result.status, expectedStatus, result.stderr);
+    if (expectedStatus === 0) {
+      assert.match(result.stdout, /OK packages\/app\/modules\/paseo-window-layout/);
+      assert.match(result.stdout, /local module config=expo-module\.config\.json/);
+    } else if (tracking !== "tracked") {
+      assert.match(result.stderr, /rejected untracked\/ignored module/);
+    } else if (config === undefined) {
+      assert.match(
+        result.stderr,
+        /package\.json is missing and no expo-module\.config\.json exists/,
+      );
+    } else {
+      assert.match(result.stderr, /expo-module\.config\.json cannot be parsed/);
+    }
+    assert.equal(existsSync(path.join(moduleDir, "ios/PaseoWindowLayoutModule.swift")), true);
+    if (config !== undefined) {
+      assert.equal(readFileSync(path.join(moduleDir, "expo-module.config.json"), "utf8"), config);
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("Expo module preflight rejects ignored remnants and never removes them", () => {
   const root = mkdtempSync(path.join(tmpdir(), "paseo-expo-stale-"));
   try {

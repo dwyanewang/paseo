@@ -90,12 +90,14 @@ paseo_atomic_write_state_file() {
 }
 
 # Expo's autolinker enumerates packages/app/modules by directory shape, not by
-# whether a module has native files or an expo-module.config.json.  Keep this
-# check close to the shared build state helpers so the artifact orchestrator and
+# whether a module has native files or a package.json. Package-less local modules
+# use their directory name and expo-module.config.json (Expo SDK 57 scanning.ts).
+# Keep this check close to the shared build state helpers so the orchestrator and
 # its focused tests use exactly the same rules.
 paseo_check_expo_modules() {
   (($# == 1)) || return 2
   local root=$1 modules_dir candidate relative package_file package_info tracked ignored
+  local metadata_file metadata_kind
   local failed=0
   local -a candidates=()
 
@@ -140,22 +142,31 @@ paseo_check_expo_modules() {
     package_file="$candidate/package.json"
     tracked=$(git -C "$root" ls-files -- "$relative" "$relative/" 2>/dev/null || true)
     ignored=$(git -C "$root" check-ignore -v -- "$relative" "$package_file" 2>/dev/null || true)
+    metadata_file=$package_file
+    metadata_kind=package.json
     if [[ ! -f "$package_file" ]]; then
-      printf 'Expo module preflight: invalid module %s: package.json is missing\n' "$relative" >&2
-      printf '  git-tracked: %s\n  git-ignored: %s\n' \
-        "${tracked:-no}" "${ignored:-no}" >&2
-      printf '%s\n' '  isolate the stale directory manually; the preflight never deletes or moves modules.' >&2
-      failed=1
-      continue
+      metadata_file="$candidate/expo-module.config.json"
+      metadata_kind=expo-module.config.json
+      if [[ ! -f "$metadata_file" ]]; then
+        printf 'Expo module preflight: invalid module %s: package.json is missing and no expo-module.config.json exists\n' "$relative" >&2
+        printf '  git-tracked: %s\n  git-ignored: %s\n' \
+          "${tracked:-no}" "${ignored:-no}" >&2
+        printf '%s\n' '  isolate the stale directory manually; the preflight never deletes or moves modules.' >&2
+        failed=1
+        continue
+      fi
     fi
     if ! package_info=$(node -e '
       const fs = require("node:fs");
       const value = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-      if (!value || typeof value !== "object") throw new Error("package.json is not an object");
-      process.stdout.write(`name=${typeof value.name === "string" ? value.name : "<unnamed>"} version=${typeof value.version === "string" ? value.version : "<unknown>"}`);
-    ' "$package_file" 2>&1); then
-      printf 'Expo module preflight: invalid module %s: package.json cannot be parsed (%s)\n' \
-        "$relative" "$package_info" >&2
+      const kind = process.argv[2];
+      if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${kind} is not an object`);
+      process.stdout.write(kind === "package.json"
+        ? `name=${typeof value.name === "string" ? value.name : "<unnamed>"} version=${typeof value.version === "string" ? value.version : "<unknown>"}`
+        : "local module config=expo-module.config.json");
+    ' "$metadata_file" "$metadata_kind" 2>&1); then
+      printf 'Expo module preflight: invalid module %s: %s cannot be parsed (%s)\n' \
+        "$relative" "$metadata_kind" "$package_info" >&2
       printf '  git-tracked: %s\n  git-ignored: %s\n' \
         "${tracked:-no}" "${ignored:-no}" >&2
       failed=1
