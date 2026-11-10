@@ -6,7 +6,6 @@ import {
   checkoutPrStatusQueryKey,
   checkoutStatusQueryKey,
 } from "@/git/query-keys";
-import { draftAgentCommandsQueryKey } from "@/hooks/agent-commands-query";
 import {
   prPanePipelineQueryKey,
   prPaneTimelineQueryKey,
@@ -16,6 +15,7 @@ import {
   resolveWorkingDiffComparison,
   selectWorkingDiffComparison,
 } from "@/git/working-diff-comparison";
+import { draftAgentCommandsQueryKey } from "@/agent-commands/cache";
 import {
   applyCheckoutStatusUpdateFromEvent,
   ensureCheckoutStatus,
