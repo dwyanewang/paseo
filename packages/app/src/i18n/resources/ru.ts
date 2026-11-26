@@ -1449,12 +1449,18 @@ export const ru: TranslationResources = {
     errors: {
       hostDisconnected: "Хост не подключён",
       createWorktreeFailed: "Не удалось создать worktree.",
+      branchAlreadyCheckedOut:
+        "Эта ветка уже извлечена в другом месте. Используйте «Новая ветка», чтобы создать копию, или сначала освободите ветку.",
       composerStateRequired: "Редактор сообщения ещё не готов.",
       selectModel: "Выберите модель",
       branchInProjectDirectory:
         "Ветка {{branch}} уже открыта в папке проекта. Выберите «Папка проекта», чтобы работать в ней, или создайте от неё новую ветку.",
       branchInWorktree:
         "Ветка {{branch}} уже открыта в {{path}}. Выберите этот worktree в «Существующий worktree» или создайте от неё новую ветку.",
+    },
+    notices: {
+      checkoutBranchCopied:
+        "Ветка {{requestedBranch}} уже извлечена в другом месте. Вместо неё используется копия: {{createdBranch}}.",
     },
     tooltips: {
       project: "Выберите проект",
@@ -2210,6 +2216,24 @@ export const ru: TranslationResources = {
       failedToLoad: "Не удалось загрузить файл",
       notFound: "Файл не найден",
       failedToLoadPreview: "Не удалось загрузить предварительный просмотр файла.",
+      closePreview: "Закрыть просмотр файла",
+      closePreviewHint: "Закрывает этот файл и возвращает на родительскую вкладку",
+      image: {
+        accessibilityLabel: "Просмотр изображения: {{fileName}}",
+        accessibilityHint:
+          "Сведите или разведите пальцы для масштабирования. Удерживайте для действий с изображением.",
+        copy: "Копировать изображение",
+        copying: "Копирование изображения...",
+        copyFailed: "Не удалось скопировать изображение",
+        save: "Сохранить в Фото",
+        saving: "Сохранение изображения...",
+        saved: "Сохранено в Фото",
+        savePermissionDenied: "Разрешите добавление в Фото, чтобы сохранить изображение",
+        saveFailed: "Не удалось сохранить изображение",
+        share: "Поделиться изображением",
+        sharing: "Отправка изображения...",
+        shareFailed: "Не удалось поделиться изображением",
+      },
       editor: {
         preview: "Предпросмотр",
         source: "Исходный текст",

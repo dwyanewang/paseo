@@ -9,6 +9,49 @@ import {
 } from "./status-projection.js";
 
 describe("checkout status projection", () => {
+  test("projects the checked-out commit identity onto the wire payload", () => {
+    const snapshot = {
+      cwd: "/repo",
+      worktreeRevision: 7,
+      git: {
+        isGit: true,
+        repoRoot: "/repo",
+        mainRepoRoot: null,
+        currentBranch: "main",
+        headOid: "0123456789abcdef",
+        remoteUrl: null,
+        isPaseoOwnedWorktree: false,
+        isDirty: false,
+        baseRef: null,
+        aheadBehind: null,
+        upstreamRef: null,
+        aheadOfOrigin: null,
+        behindOfOrigin: null,
+        hasRemote: false,
+        diffStat: null,
+      },
+      forge: {
+        featuresEnabled: false,
+        authState: "no_remote",
+        pullRequest: null,
+        error: null,
+      },
+    } satisfies WorkspaceGitRuntimeSnapshot;
+
+    const payload = buildCheckoutStatusPayloadFromSnapshot({
+      cwd: "/repo",
+      requestId: "req-head",
+      snapshot,
+    });
+    const parsed = CheckoutStatusResponseSchema.parse({
+      type: "checkout_status_response",
+      payload,
+    });
+
+    expect(parsed.payload.headOid).toBe("0123456789abcdef");
+    expect(parsed.payload.worktreeRevision).toBe(7);
+  });
+
   test("publishes where the forge is on the web with the checkout status", () => {
     const snapshot: WorkspaceGitRuntimeSnapshot = {
       cwd: "/repo",

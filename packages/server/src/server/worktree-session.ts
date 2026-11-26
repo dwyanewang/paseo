@@ -314,6 +314,9 @@ export async function handleCreatePaseoWorktreeRequest(
             }
           : {}),
         requestId: request.requestId,
+        ...(createdWorktree.checkoutBranchCopy
+          ? { checkoutBranchCopy: createdWorktree.checkoutBranchCopy }
+          : {}),
       },
     });
     dependencies.emit({

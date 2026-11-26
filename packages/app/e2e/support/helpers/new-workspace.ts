@@ -376,6 +376,28 @@ export async function selectWorkspaceIsolation(
   await option.click();
 }
 
+// Exercise the two controls together in existing workflow specs.
+export type WorkspaceMode = "local" | "branch-off" | "checkout";
+
+export async function expectWorkspaceModeSelected(page: Page, mode: WorkspaceMode): Promise<void> {
+  await expectWorkspaceIsolationSelected(page, mode === "local" ? "local" : "worktree");
+  if (mode === "local") return;
+  await openStartingRefPicker(page);
+  await expect(page.getByTestId(`new-workspace-ref-picker-${mode}`)).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await page.keyboard.press("Escape");
+}
+
+export async function selectWorkspaceMode(page: Page, mode: WorkspaceMode): Promise<void> {
+  await selectWorkspaceIsolation(page, mode === "local" ? "local" : "worktree");
+  if (mode === "local") return;
+  await openStartingRefPicker(page);
+  await page.getByTestId(`new-workspace-ref-picker-${mode}`).click();
+  await page.keyboard.press("Escape");
+}
+
 export async function submitNewWorkspaceEmpty(page: Page): Promise<void> {
   const createButton = page
     .getByTestId("message-input-root")

@@ -14,7 +14,7 @@ import {
   fillNewWorkspaceDraft,
   openNewWorkspaceComposer,
   openProjectViaDaemon,
-  selectWorkspaceIsolation,
+  selectWorkspaceMode,
   submitNewWorkspaceEmpty,
   submitNewWorkspacePrompt,
   waitForCreatedWorkspace,
@@ -73,7 +73,8 @@ export async function verifyDelayedWorkspaceCreation(
 
     await test.step("Submit workspace creation with the requested content", async () => {
       await openNewWorkspaceComposer(page, project);
-      await selectWorkspaceIsolation(page, isolation);
+      const mode = isolation === "worktree" ? "branch-off" : "local";
+      await selectWorkspaceMode(page, mode);
       if (launch === "chat") {
         await dropFileOnComposer(page, CONTEXT);
         await expectAttachmentPill(page, "composer-file-attachment-pill");

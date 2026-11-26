@@ -262,6 +262,10 @@ export interface WorktreeCheckoutRef {
   remoteRef: string;
 }
 
+export type WorktreeCheckoutBranchTarget =
+  | { kind: "local"; refName: string }
+  | { kind: "remote"; refName: string; remoteName: string; headRef: string };
+
 export type WorktreeSource =
   | {
       kind: "branch-off";
@@ -270,7 +274,7 @@ export type WorktreeSource =
       /** Where the new branch starts when that is not `baseBranch`, such as a fork's head. */
       startPoint?: string;
     }
-  | { kind: "checkout-branch"; branchName: string }
+  | { kind: "checkout-branch"; branchName: string; target?: WorktreeCheckoutBranchTarget }
   | { kind: "restore"; branchName: string; baseRef: string | null }
   | { kind: "restore-commit"; commit: string; baseRef: string }
   | { kind: "restore-from-base"; baseRef: string; branchName: string }
@@ -2622,6 +2626,16 @@ async function resolveWorktreeSourcePlan({
       return resolveRestoredWorktreeFromBasePlan(cwd, source);
     case "checkout-branch": {
       await validateGitBranchName(cwd, source.branchName);
+      if (source.target?.kind === "remote") {
+        return resolveRemoteCheckoutBranchPlan({
+          cwd,
+          branchName: source.branchName,
+          target: source.target,
+        });
+      }
+      if (source.target?.kind === "local" && !(await localBranchExists(cwd, source.branchName))) {
+        throw new UnknownBranchError({ branchName: source.branchName, cwd });
+      }
       await ensureLocalBranch(cwd, source.branchName);
       const baseRef = await resolveCheckoutBranchBaseRef(cwd, source.branchName);
       if (await isBranchCheckedOut(cwd, source.branchName)) {
@@ -2680,6 +2694,66 @@ async function resolveWorktreeSourcePlan({
       };
     }
   }
+}
+
+interface ResolveRemoteCheckoutBranchPlanOptions {
+  cwd: string;
+  branchName: string;
+  target: Extract<WorktreeCheckoutBranchTarget, { kind: "remote" }>;
+}
+
+async function resolveRemoteCheckoutBranchPlan({
+  cwd,
+  branchName,
+  target,
+}: ResolveRemoteCheckoutBranchPlanOptions): Promise<WorktreeSourcePlan> {
+  let hasRemoteRef = await gitRefExists(cwd, target.refName);
+  if (!hasRemoteRef) {
+    const fetchedRemote = await tryFetchWorktreeTrackingRemote({
+      cwd,
+      remoteName: target.remoteName,
+      headRef: target.headRef,
+    });
+    hasRemoteRef = fetchedRemote !== undefined;
+  }
+  if (!hasRemoteRef) {
+    throw new UnknownBranchError({ branchName, cwd });
+  }
+
+  const hasLocalBranch = await localBranchExists(cwd, branchName);
+  const localRef = `refs/heads/${branchName}`;
+  if (hasLocalBranch && (await gitRefsMatch(cwd, localRef, target.refName))) {
+    return resolveWorktreeSourcePlan({
+      cwd,
+      source: { kind: "checkout-branch", branchName },
+      desiredSlug: branchName,
+    });
+  }
+
+  const localBranchName = await resolveUniqueLocalBranchName(cwd, branchName);
+  const isCopy = hasLocalBranch;
+  let metadataBaseRefName = target.refName;
+  let trackingRemote: WorktreeSourcePlan["trackingRemote"];
+  if (!isCopy) {
+    await ensureRemoteFetchesBranch({
+      cwd,
+      remoteName: target.remoteName,
+      headRef: target.headRef,
+    });
+    metadataBaseRefName = await resolveCheckoutBranchBaseRef(cwd, localBranchName);
+    trackingRemote = { name: target.remoteName, headRef: target.headRef };
+  }
+
+  return {
+    branchName: localBranchName,
+    metadataBaseRefName,
+    changeRequestLookupTarget: createPaseoWorktreeChangeRequestHint({
+      headRef: localBranchName,
+      localBranchName,
+    }),
+    addArguments: ["-b", localBranchName, "--no-track", target.refName],
+    ...(trackingRemote ? { trackingRemote } : {}),
+  };
 }
 
 async function resolveChangeRequestRemotePlan(
@@ -3069,6 +3143,20 @@ async function localBranchExists(cwd: string, branchName: string): Promise<boole
   } catch {
     return false;
   }
+}
+
+async function gitRefExists(cwd: string, refName: string): Promise<boolean> {
+  const result = await runGitCommand(["show-ref", "--verify", "--quiet", refName], {
+    cwd,
+    acceptExitCodes: [0, 1],
+  });
+  return result.exitCode === 0;
+}
+
+async function gitRefsMatch(cwd: string, leftRef: string, rightRef: string): Promise<boolean> {
+  const { stdout: leftSha } = await runGitCommand(["rev-parse", "--verify", leftRef], { cwd });
+  const { stdout: rightSha } = await runGitCommand(["rev-parse", "--verify", rightRef], { cwd });
+  return leftSha.trim() === rightSha.trim();
 }
 
 async function resolveUniqueLocalBranchName(cwd: string, candidateBranch: string): Promise<string> {

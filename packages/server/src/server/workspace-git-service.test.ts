@@ -41,12 +41,14 @@ function createLogger() {
 function createSnapshot(
   cwd: string,
   overrides?: {
+    worktreeRevision?: number;
     git?: Partial<WorkspaceGitRuntimeSnapshot["git"]>;
     forge?: Partial<WorkspaceGitRuntimeSnapshot["forge"]>;
   },
 ): WorkspaceGitRuntimeSnapshot {
   const base: WorkspaceGitRuntimeSnapshot = {
     cwd,
+    worktreeRevision: 0,
     git: {
       isGit: true,
       repoRoot: cwd,
@@ -82,6 +84,7 @@ function createSnapshot(
   const forgeName = resolveSnapshotForgeName(featuresEnabled, overrides);
   return {
     cwd,
+    worktreeRevision: overrides?.worktreeRevision ?? base.worktreeRevision,
     git: {
       ...base.git,
       ...overrides?.git,
@@ -2190,6 +2193,7 @@ describe("WorkspaceGitServiceImpl", () => {
     );
     expect(workspaceListener).toHaveBeenCalledWith(
       createSnapshot(REPO_CWD, {
+        worktreeRevision: 1,
         git: { isDirty: true, diffStat: { additions: 8, deletions: 3 } },
       }),
     );

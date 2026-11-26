@@ -30,6 +30,8 @@ export function buildCheckoutStatusPayloadFromSnapshot({
       isGit: false,
       repoRoot: null,
       currentBranch: null,
+      headOid: null,
+      worktreeRevision: null,
       isDirty: null,
       baseRef: null,
       aheadBehind: null,
@@ -48,6 +50,9 @@ export function buildCheckoutStatusPayloadFromSnapshot({
     throw new Error("Workspace git snapshot is missing required checkout status fields");
   }
 
+  const worktreeRevision = snapshot.worktreeRevision ?? 0;
+  const forgeWeb = snapshot.forgeWeb ? { forgeWeb: snapshot.forgeWeb } : {};
+
   if (snapshot.git.isPaseoOwnedWorktree) {
     if (snapshot.git.mainRepoRoot === null || snapshot.git.baseRef === null) {
       throw new Error("Workspace git snapshot is missing required worktree status fields");
@@ -59,6 +64,8 @@ export function buildCheckoutStatusPayloadFromSnapshot({
       repoRoot: snapshot.git.repoRoot,
       mainRepoRoot: snapshot.git.mainRepoRoot,
       currentBranch: snapshot.git.currentBranch ?? null,
+      headOid: snapshot.git.headOid,
+      worktreeRevision,
       isDirty: snapshot.git.isDirty,
       baseRef: snapshot.git.baseRef,
       baseRefExact: snapshot.git.baseRefExact,
@@ -73,7 +80,7 @@ export function buildCheckoutStatusPayloadFromSnapshot({
       pushRemote: snapshot.git.pushRemote,
       firstPushRemote: snapshot.git.firstPushRemote,
       remoteUrl: snapshot.git.remoteUrl,
-      ...(snapshot.forgeWeb ? { forgeWeb: snapshot.forgeWeb } : {}),
+      ...forgeWeb,
       isPaseoOwnedWorktree: true,
       error: null,
       requestId,
@@ -86,6 +93,8 @@ export function buildCheckoutStatusPayloadFromSnapshot({
     repoRoot: snapshot.git.repoRoot,
     mainRepoRoot: snapshot.git.mainRepoRoot,
     currentBranch: snapshot.git.currentBranch ?? null,
+    headOid: snapshot.git.headOid,
+    worktreeRevision,
     isDirty: snapshot.git.isDirty,
     baseRef: snapshot.git.baseRef ?? null,
     baseRefExact: snapshot.git.baseRefExact,
@@ -100,7 +109,7 @@ export function buildCheckoutStatusPayloadFromSnapshot({
     pushRemote: snapshot.git.pushRemote,
     firstPushRemote: snapshot.git.firstPushRemote,
     remoteUrl: snapshot.git.remoteUrl,
-    ...(snapshot.forgeWeb ? { forgeWeb: snapshot.forgeWeb } : {}),
+    ...forgeWeb,
     isPaseoOwnedWorktree: false,
     error: null,
     requestId,

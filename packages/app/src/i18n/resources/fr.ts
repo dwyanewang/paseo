@@ -1459,12 +1459,18 @@ export const fr: TranslationResources = {
     errors: {
       hostDisconnected: "L’hôte n’est pas connecté",
       createWorktreeFailed: "Impossible de créer le worktree",
+      branchAlreadyCheckedOut:
+        "Cette branche est déjà extraite ailleurs. Utilisez « Nouvelle branche » pour créer une copie, ou libérez d’abord la branche.",
       composerStateRequired: "L’état de la zone de saisie est requis",
       selectModel: "Sélectionnez un modèle",
       branchInProjectDirectory:
         "{{branch}} est extraite dans le répertoire du projet. Choisissez Répertoire du projet pour y travailler, ou créez une branche à partir d’elle.",
       branchInWorktree:
         "{{branch}} est extraite dans {{path}}. Choisissez ce worktree dans Worktree existant, ou créez une branche à partir d’elle.",
+    },
+    notices: {
+      checkoutBranchCopied:
+        "{{requestedBranch}} est déjà extraite ailleurs. Une copie est utilisée à la place : {{createdBranch}}.",
     },
     tooltips: {
       project: "Choisir le projet",
@@ -2223,6 +2229,23 @@ export const fr: TranslationResources = {
       failedToLoad: "Impossible de charger le fichier",
       notFound: "Fichier introuvable",
       failedToLoadPreview: "Impossible de charger l’aperçu du fichier",
+      closePreview: "Fermer l'aperçu du fichier",
+      closePreviewHint: "Ferme ce fichier et revient à son onglet parent",
+      image: {
+        accessibilityLabel: "Aperçu de l'image : {{fileName}}",
+        accessibilityHint: "Pincez pour zoomer. Appuyez longuement pour les actions d'image.",
+        copy: "Copier l'image",
+        copying: "Copie de l'image...",
+        copyFailed: "Échec de la copie de l'image",
+        save: "Enregistrer dans Photos",
+        saving: "Enregistrement de l'image...",
+        saved: "Enregistrée dans Photos",
+        savePermissionDenied: "Autorisez l'accès à Photos pour enregistrer cette image",
+        saveFailed: "Échec de l'enregistrement de l'image",
+        share: "Partager l'image",
+        sharing: "Partage de l'image...",
+        shareFailed: "Échec du partage de l'image",
+      },
       editor: {
         preview: "Aperçu",
         source: "Source",

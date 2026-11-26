@@ -33,6 +33,7 @@ export type PickerCheckoutRequest = Pick<
 
 /** What a new worktree does with the picked ref: start a new branch from it, or work on it. */
 export type RefAction = "branch-off" | "checkout";
+export type BranchWorktreeMode = RefAction;
 
 /** A branch is a base to branch off by default; a pull request is checked out. */
 export const DEFAULT_REF_ACTION: Record<PickerItem["kind"], RefAction> = {
@@ -194,10 +195,7 @@ export function pickerItemToCheckoutRequest(
   if (!item) return undefined;
   switch (item.kind) {
     case "branch":
-      // A checkout works on the local branch; both the origin row and the local row stand for it.
-      return action === "checkout"
-        ? { action, refName: branchNameFromRef(item.refName) }
-        : { action, refName: item.refName };
+      return { action, refName: item.refName };
     case "github-pr": {
       const headRefName = item.item.headRefName?.trim();
       const forge = item.item.forge ?? "github";

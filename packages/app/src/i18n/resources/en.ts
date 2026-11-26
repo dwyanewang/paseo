@@ -1440,12 +1440,18 @@ export const en = {
     errors: {
       hostDisconnected: "Host is not connected",
       createWorktreeFailed: "Failed to create worktree",
+      branchAlreadyCheckedOut:
+        "That branch is already checked out elsewhere. Use New branch to create a copy, or free the branch first.",
       composerStateRequired: "Composer state is required",
       selectModel: "Select a model",
       branchInProjectDirectory:
         "{{branch}} is checked out in the project directory. Choose Project directory to work on it, or branch off it.",
       branchInWorktree:
         "{{branch}} is checked out in {{path}}. Choose that worktree under Existing worktree, or branch off it.",
+    },
+    notices: {
+      checkoutBranchCopied:
+        "{{requestedBranch}} is already checked out elsewhere. Using a copy instead: {{createdBranch}}.",
     },
     tooltips: {
       project: "Choose the project",
@@ -2200,6 +2206,23 @@ export const en = {
       failedToLoad: "Failed to load file",
       notFound: "File not found",
       failedToLoadPreview: "Failed to load file preview",
+      closePreview: "Close file preview",
+      closePreviewHint: "Closes this file and returns to its parent tab",
+      image: {
+        accessibilityLabel: "Image preview: {{fileName}}",
+        accessibilityHint: "Pinch to zoom. Long press for image actions.",
+        copy: "Copy image",
+        copying: "Copying image...",
+        copyFailed: "Failed to copy image",
+        save: "Save to photos",
+        saving: "Saving image...",
+        saved: "Saved to photos",
+        savePermissionDenied: "Allow photo access to save this image",
+        saveFailed: "Failed to save image",
+        share: "Share image",
+        sharing: "Sharing image...",
+        shareFailed: "Failed to share image",
+      },
       editor: {
         preview: "Preview",
         source: "Source",

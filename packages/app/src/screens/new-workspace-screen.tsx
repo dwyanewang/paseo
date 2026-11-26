@@ -330,6 +330,8 @@ interface WorkspaceDraftSubmissionConfig {
   target: WorkspaceTabTarget;
 }
 
+type NotifyCheckoutBranchCopy = (copy: { requestedBranch: string; createdBranch: string }) => void;
+
 interface WorkspaceCreationResult {
   workspace: ReturnType<typeof normalizeWorkspaceDescriptor>;
   agent?: AgentSnapshotPayload;
@@ -359,6 +361,7 @@ async function createMultiplicityWorkspace(input: {
   ) => void;
   serverId: string;
   createFailedMessage: string;
+  onCheckoutBranchCopy: NotifyCheckoutBranchCopy;
 }): Promise<WorkspaceCreationResult> {
   const projectId = getHostProjectId(input.project, input.serverId);
   if (!projectId) throw new Error("Project is not available on the selected host");
@@ -399,6 +402,7 @@ async function createMultiplicityWorkspace(input: {
   if (payload.error || !payload.workspace) {
     throw new Error(payload.error ?? input.createFailedMessage);
   }
+  if (payload.checkoutBranchCopy) input.onCheckoutBranchCopy(payload.checkoutBranchCopy);
   const normalizedWorkspace = normalizeWorkspaceDescriptor(payload.workspace);
   const workspaceForInitialMerge = input.withInitialAgent
     ? { ...normalizedWorkspace, status: "running" as const, statusEnteredAt: new Date() }
@@ -1324,6 +1328,19 @@ export function NewWorkspaceScreen({
     setProjectPickerOpen(nextOpen);
   }, []);
 
+  const notifyCheckoutBranchCopy = useCallback<NotifyCheckoutBranchCopy>(
+    ({ requestedBranch, createdBranch }) => {
+      toast.show(
+        t("newWorkspace.notices.checkoutBranchCopied", { requestedBranch, createdBranch }),
+        {
+          variant: "warning",
+          durationMs: 6000,
+        },
+      );
+    },
+    [t, toast],
+  );
+
   const ensureWorkspace = useCallback(
     async (input: {
       cwd: string;
@@ -1380,6 +1397,7 @@ export function NewWorkspaceScreen({
         mergeWorkspaces,
         serverId: selectedServerId,
         createFailedMessage: t("newWorkspace.errors.createWorktreeFailed"),
+        onCheckoutBranchCopy: notifyCheckoutBranchCopy,
       });
       setCreationResult(normalizedWorkspace);
       return normalizedWorkspace;
@@ -1390,6 +1408,7 @@ export function NewWorkspaceScreen({
       effectiveIsolation,
       launchTarget,
       mergeWorkspaces,
+      notifyCheckoutBranchCopy,
       queryClient,
       selectedItem,
       selectedProject,

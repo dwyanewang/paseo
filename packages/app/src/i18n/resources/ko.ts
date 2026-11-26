@@ -1436,12 +1436,18 @@ export const ko: TranslationResources = {
     errors: {
       hostDisconnected: "호스트가 연결되어 있지 않습니다",
       createWorktreeFailed: "워크트리를 생성하지 못했습니다",
+      branchAlreadyCheckedOut:
+        "해당 브랜치는 다른 곳에서 이미 체크아웃되어 있습니다. 사본을 만들려면 새 브랜치를 사용하거나 먼저 브랜치를 해제하세요.",
       composerStateRequired: "작성기 상태가 필요합니다",
       selectModel: "모델을 선택하세요",
       branchInProjectDirectory:
         "{{branch}} 브랜치는 프로젝트 디렉터리에 체크아웃되어 있습니다. 거기서 작업하려면 프로젝트 디렉터리를 선택하거나, 새 브랜치를 만드세요.",
       branchInWorktree:
         "{{branch}} 브랜치는 {{path}}에 체크아웃되어 있습니다. 기존 워크트리에서 그 워크트리를 선택하거나, 새 브랜치를 만드세요.",
+    },
+    notices: {
+      checkoutBranchCopied:
+        "{{requestedBranch}}은(는) 다른 곳에서 이미 체크아웃되어 있습니다. 대신 사본을 사용합니다: {{createdBranch}}.",
     },
     tooltips: {
       project: "Choose the project",
@@ -2182,6 +2188,24 @@ export const ko: TranslationResources = {
       failedToLoad: "파일을 불러오지 못했습니다",
       notFound: "파일을 찾을 수 없습니다",
       failedToLoadPreview: "파일 미리보기를 불러오지 못했습니다",
+      closePreview: "파일 미리보기 닫기",
+      closePreviewHint: "이 파일을 닫고 상위 탭으로 돌아갑니다",
+      image: {
+        accessibilityLabel: "이미지 미리보기: {{fileName}}",
+        accessibilityHint:
+          "손가락을 모아 확대 또는 축소하세요. 이미지 작업을 보려면 길게 누르세요.",
+        copy: "이미지 복사",
+        copying: "이미지 복사 중...",
+        copyFailed: "이미지를 복사하지 못했습니다",
+        save: "사진에 저장",
+        saving: "이미지 저장 중...",
+        saved: "사진에 저장됨",
+        savePermissionDenied: "이 이미지를 저장하려면 사진 접근을 허용하세요",
+        saveFailed: "이미지를 저장하지 못했습니다",
+        share: "이미지 공유",
+        sharing: "이미지 공유 중...",
+        shareFailed: "이미지를 공유하지 못했습니다",
+      },
       editor: {
         preview: "미리보기",
         source: "소스",

@@ -185,11 +185,14 @@ export const getWorkspaceGitSelfHealPhaseMs = getWorkspaceGitObservationReensure
 
 export interface WorkspaceGitRuntimeSnapshot {
   cwd: string;
+  /** Monotonic per-workspace token advanced at the working-tree observation boundary. */
+  worktreeRevision?: number;
   git: {
     isGit: boolean;
     repoRoot: string | null;
     mainRepoRoot: string | null;
     currentBranch: string | null;
+    headOid: string | null;
     headSha?: string;
     remoteUrl: string | null;
     isPaseoOwnedWorktree: boolean;
@@ -496,6 +499,7 @@ class WorkspaceGitWatcherSubscriptionTimeoutError extends Error {
 interface WorkspaceGitTarget {
   gitDirPaths: GitObservationPaths | null;
   cwd: string;
+  worktreeRevision: number;
   listeners: Set<WorkspaceGitListener>;
   releaseTimer: NodeJS.Timeout | null;
   workingTreeWatchTarget: WorkingTreeWatchTarget | null;
@@ -1389,6 +1393,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     const target: WorkspaceGitTarget = {
       gitDirPaths: null,
       cwd,
+      worktreeRevision: 0,
       listeners: new Set(),
       releaseTimer: null,
       workingTreeWatchTarget: null,
@@ -1862,6 +1867,8 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   // A refresh that throws is swallowed by refreshWorkspaceTarget and leaves the fingerprint
   // alone, so it reads as a quiet tick and widens the gap. That is the intended outcome: a
   // repository whose Git commands keep failing is the last one to retry every 5 seconds.
+  // Live degraded polls advance the working-tree revision for consumers without resetting
+  // quiet backoff. Suspended folders keep the last committed observation unchanged.
   private async refreshDegradedPollTarget(
     workspaceTarget: WorkspaceGitTarget,
     request: WorkspaceGitRefreshRequest,
@@ -1869,9 +1876,15 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     if (await this.suspendWorkspaceIfFolderMissing(workspaceTarget)) {
       return false;
     }
-    const fingerprintBefore = workspaceTarget.latestFingerprint;
+    workspaceTarget.worktreeRevision += 1;
+    if (workspaceTarget.latestGit) {
+      workspaceTarget.latestSnapshot = this.combineSnapshot(workspaceTarget);
+    }
+    const fingerprintBefore = fingerprintIgnoringWorktreeRevision(workspaceTarget.latestSnapshot);
     await this.refreshWorkspaceTarget(workspaceTarget, request);
-    return workspaceTarget.latestFingerprint !== fingerprintBefore;
+    return (
+      fingerprintIgnoringWorktreeRevision(workspaceTarget.latestSnapshot) !== fingerprintBefore
+    );
   }
 
   private async suspendWorkspaceIfFolderMissing(target: WorkspaceGitTarget): Promise<boolean> {
@@ -2504,6 +2517,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     for (const workspaceKey of target.workspaceKeys) {
       const workspaceTarget = this.workspaceTargets.get(workspaceKey);
       if (workspaceTarget) {
+        workspaceTarget.worktreeRevision += 1;
         this.scheduleWorkspaceRefresh(workspaceTarget, {
           origin: "observation",
           scope: "worktree",
@@ -3119,6 +3133,10 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
           }
         }
         if (refreshWorktree) {
+          workspaceTarget.worktreeRevision += 1;
+          if (workspaceTarget.latestGit) {
+            workspaceTarget.latestSnapshot = this.combineSnapshot(workspaceTarget);
+          }
           const workingTreeTarget = this.getWorkingTreeWatchTargetForWorkspace(workspaceTarget);
           if (workingTreeTarget) {
             workingTreeTargets.add(workingTreeTarget);
@@ -3894,6 +3912,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       repoRoot: checkoutStatus.repoRoot,
       mainRepoRoot: checkoutStatus.mainRepoRoot,
       currentBranch: checkoutStatus.currentBranch,
+      headOid: checkoutStatus.headOid,
       headSha: facts.isGit ? facts.pullRequestLookupTarget?.headSha : undefined,
       remoteUrl: checkoutStatus.remoteUrl,
       isPaseoOwnedWorktree: checkoutStatus.isPaseoOwnedWorktree,
@@ -3996,6 +4015,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
 
     return {
       cwd: target.cwd,
+      worktreeRevision: target.worktreeRevision,
       git: target.latestGit,
       forge: target.latestForge ?? buildForgeUnavailableSnapshot(),
       // Only the remote it was resolved for: after `git remote set-url` the old host and
@@ -4756,14 +4776,22 @@ function parseWorkspaceGitStashList(
   return entries;
 }
 
+function fingerprintIgnoringWorktreeRevision(
+  snapshot: WorkspaceGitRuntimeSnapshot | null,
+): string | null {
+  return snapshot ? JSON.stringify({ ...snapshot, worktreeRevision: undefined }) : null;
+}
+
 function buildNotGitSnapshot(cwd: string): WorkspaceGitRuntimeSnapshot {
   return {
     cwd,
+    worktreeRevision: 0,
     git: {
       isGit: false,
       repoRoot: null,
       mainRepoRoot: null,
       currentBranch: null,
+      headOid: null,
       remoteUrl: null,
       isPaseoOwnedWorktree: false,
       isDirty: null,

@@ -120,6 +120,23 @@ test("workspace readiness is observable before provider startup and duplicate re
   expect(f.calls).toEqual(["workspace", "agent", "prompt"]);
 });
 
+test("a checkout that landed on a branch copy stays disclosed across replays", async () => {
+  const f = await fixture();
+  const checkoutBranchCopy = { requestedBranch: "feature/foo", createdBranch: "feature/foo-1" };
+  f.input.provision = async () => {
+    f.calls.push("workspace");
+    return { workspace, checkoutBranchCopy };
+  };
+  f.provider.resolve();
+  const result = await f.service.create(f.input, f.observe);
+  expect(f.updates.find((snapshot) => snapshot.phase === "workspace_ready")).toMatchObject({
+    checkoutBranchCopy,
+  });
+  expect(result).toMatchObject({ phase: "completed", checkoutBranchCopy });
+  expect(await new CreationService(f.directory, silentLogger).create(f.input)).toEqual(result);
+  expect(f.calls).toEqual(["workspace", "agent", "prompt"]);
+});
+
 test("a failed agent startup retries only that stage with the reserved IDs", async () => {
   const f = await fixture();
   let attempts = 0;

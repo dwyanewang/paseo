@@ -122,12 +122,7 @@ export async function resolveWorktreeCreationIntent(
     }
 
     const branchName = input.refName?.trim();
-    if (branchName) {
-      return {
-        kind: "checkout-branch",
-        branchName,
-      };
-    }
+    if (branchName) return resolveCheckoutBranchIntent(branchName);
 
     throw new MissingCheckoutTargetError();
   }
@@ -156,6 +151,34 @@ export async function resolveWorktreeCreationIntent(
     baseBranch: await resolveDefaultBranch(repoRoot, deps),
     branchName: input.branchName ?? input.worktreeSlug ?? "worktree",
   };
+}
+
+function resolveCheckoutBranchIntent(refName: string): WorktreeCreationIntent {
+  const localPrefix = "refs/heads/";
+  if (refName.startsWith(localPrefix)) {
+    return {
+      kind: "checkout-branch",
+      branchName: refName.slice(localPrefix.length),
+      target: { kind: "local", refName },
+    };
+  }
+
+  const remotePrefix = "refs/remotes/";
+  if (refName.startsWith(remotePrefix)) {
+    const remoteAndHead = refName.slice(remotePrefix.length);
+    const separator = remoteAndHead.indexOf("/");
+    if (separator > 0 && separator < remoteAndHead.length - 1) {
+      const remoteName = remoteAndHead.slice(0, separator);
+      const headRef = remoteAndHead.slice(separator + 1);
+      return {
+        kind: "checkout-branch",
+        branchName: headRef,
+        target: { kind: "remote", refName, remoteName, headRef },
+      };
+    }
+  }
+
+  return { kind: "checkout-branch", branchName: refName };
 }
 
 /**
@@ -202,8 +225,9 @@ async function fetchChangeRequestHead(params: {
     });
     return { baseBranch, startPoint, untrustedSource };
   } catch {
-    // Without the remote's copy, the base resolves as any base branch name does.
-    return { baseBranch: baseName, startPoint, untrustedSource };
+    // A pull request can still serve its head after the source branch is gone.
+    // The start point is already pinned, so compare against the target branch in that case.
+    return { baseBranch: checkout.baseRefName, startPoint, untrustedSource };
   }
 }
 

@@ -60,12 +60,19 @@ export interface CreateWorktreeCoreDeps {
   resolveDefaultBranch?: (repoRoot: string) => Promise<string>;
 }
 
+// A checkout that could not take the branch itself and landed on a copy of it.
+export interface CheckoutBranchCopy {
+  requestedBranch: string;
+  createdBranch: string;
+}
+
 export interface CreateWorktreeCoreResult {
   worktree: CreatedWorktree;
   intent: WorktreeCreationIntent;
   untrustedSource?: UntrustedWorkspaceSource;
   repoRoot: string;
   created: boolean;
+  checkoutBranchCopy: CheckoutBranchCopy | null;
 }
 
 export async function createWorktreeCore(
@@ -206,6 +213,7 @@ async function createWorktreeAtRepositoryRoot(
     untrustedSource,
     repoRoot,
     created: true,
+    checkoutBranchCopy: resolveCheckoutBranchCopy(intent, createdWorktree),
   };
 }
 
@@ -241,6 +249,20 @@ async function tryCreateWithWorktreeManager(options: {
     },
   });
   return { worktree, preparedBranchOff };
+}
+
+// Git refuses to check out a branch that is already live in another worktree, so
+// the creator falls back to a suffixed copy of it. Report that substitution
+// instead of letting the user believe they are on the branch they picked. Only
+// checkouts can substitute: branch-off lands on a new branch by design.
+function resolveCheckoutBranchCopy(
+  intent: WorktreeCreationIntent,
+  worktree: CreatedWorktree,
+): CheckoutBranchCopy | null {
+  if (intent.kind !== "checkout-branch" || intent.branchName === worktree.branchName) {
+    return null;
+  }
+  return { requestedBranch: intent.branchName, createdBranch: worktree.branchName };
 }
 
 function describeCreationRequest(
@@ -281,10 +303,9 @@ function creationIntentFromRequest(
     };
   }
   if (request.kind === "checkout-branch") {
-    return {
-      kind: request.kind,
-      branchName: request.branch,
-    };
+    if (original.kind === "checkout-branch" && original.branchName === request.branch)
+      return original;
+    return { kind: request.kind, branchName: request.branch };
   }
   const {
     repoRoot: _repoRoot,

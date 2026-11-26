@@ -903,6 +903,7 @@ export interface CheckoutStatusGitNonPaseo {
   repoRoot: string;
   mainRepoRoot: string | null;
   currentBranch: string | null;
+  headOid: string | null;
   isDirty: boolean;
   baseRef: string | null;
   baseRefExact?: string | null;
@@ -933,6 +934,7 @@ export interface CheckoutStatusGitPaseo {
   repoRoot: string;
   mainRepoRoot: string;
   currentBranch: string | null;
+  headOid: string | null;
   isDirty: boolean;
   baseRef: string;
   baseRefExact?: string | null;
@@ -1761,6 +1763,25 @@ export async function resolveRepositoryDefaultBranch(
   }
   if (branches.has("master")) {
     return "master";
+  }
+
+  // No origin/HEAD and no conventionally-named default branch (e.g. repo defaults to
+  // "develop" or "trunk"). Fall back to whatever branch is currently checked out in
+  // repoRoot, since that's usually the user's working default.
+  try {
+    const { stdout: headRef } = await runGitCommand(
+      ["symbolic-ref", "--quiet", "--short", "HEAD"],
+      {
+        cwd: repoRoot,
+        envOverlay: READ_ONLY_GIT_ENV,
+      },
+    );
+    const currentBranch = headRef.trim();
+    if (currentBranch) {
+      return currentBranch;
+    }
+  } catch {
+    // ignore (e.g. detached HEAD)
   }
 
   return null;
@@ -2656,6 +2677,7 @@ export async function getCheckoutStatus(
   const baseRef = facts.resolvedBaseRef;
   const mainRepoRoot = facts.mainRepoRoot;
   const factsContext = { ...context, facts };
+  const headOid = await getCurrentHeadSha(cwd, factsContext);
   // Ref-derived counts skip the current base branch; the diff consumer still needs its ref.
   const comparisonBaseRef = baseRef
     ? await resolveQualifiedComparisonBaseRef(cwd, baseRef, factsContext).catch(() => null)
@@ -2686,6 +2708,7 @@ export async function getCheckoutStatus(
       repoRoot: worktreeRoot,
       mainRepoRoot: mainRepoRoot ?? worktreeRoot,
       currentBranch,
+      headOid,
       isDirty,
       baseRef: displayBaseRef ?? baseRef,
       baseRefExact: baseRef,
@@ -2704,6 +2727,7 @@ export async function getCheckoutStatus(
     mainRepoRoot:
       mainRepoRoot && resolve(mainRepoRoot) !== resolve(worktreeRoot) ? mainRepoRoot : null,
     currentBranch,
+    headOid,
     isDirty,
     baseRef: displayBaseRef,
     baseRefExact: baseRef,

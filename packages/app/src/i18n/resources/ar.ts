@@ -1429,12 +1429,18 @@ export const ar: TranslationResources = {
     errors: {
       hostDisconnected: "Host غير متصل",
       createWorktreeFailed: "فشل في إنشاء شجرة العمل",
+      branchAlreadyCheckedOut:
+        "هذا الفرع مسحوب بالفعل في مكان آخر. استخدم فرع جديد لإنشاء نسخة، أو حرِّر الفرع أولًا.",
       composerStateRequired: "حالة الملحن مطلوبة",
       selectModel: "اختر نموذجا",
       branchInProjectDirectory:
         "الفرع {{branch}} مفعّل في مجلد المشروع. اختر مجلد المشروع للعمل عليه، أو أنشئ فرعًا جديدًا منه.",
       branchInWorktree:
         "الفرع {{branch}} مفعّل في {{path}}. اختر شجرة العمل هذه من شجرة عمل موجودة، أو أنشئ فرعًا جديدًا منه.",
+    },
+    notices: {
+      checkoutBranchCopied:
+        "الفرع {{requestedBranch}} مسحوب بالفعل في مكان آخر. سيتم استخدام نسخة بدلًا منه: {{createdBranch}}.",
     },
     tooltips: {
       project: "Choose the project",
@@ -2170,6 +2176,23 @@ export const ar: TranslationResources = {
       failedToLoad: "فشل تحميل الملف",
       notFound: "الملف غير موجود",
       failedToLoadPreview: "فشل تحميل معاينة الملف",
+      closePreview: "إغلاق معاينة الملف",
+      closePreviewHint: "يغلق هذا الملف ويعود إلى علامة التبويب الأصلية",
+      image: {
+        accessibilityLabel: "معاينة الصورة: {{fileName}}",
+        accessibilityHint: "قرّب أو باعد بإصبعين للتكبير. اضغط مطولًا لإجراءات الصورة.",
+        copy: "نسخ الصورة",
+        copying: "جارٍ نسخ الصورة...",
+        copyFailed: "فشل نسخ الصورة",
+        save: "حفظ في الصور",
+        saving: "جارٍ حفظ الصورة...",
+        saved: "تم الحفظ في الصور",
+        savePermissionDenied: "اسمح بالإضافة إلى الصور لحفظ هذه الصورة",
+        saveFailed: "فشل حفظ الصورة",
+        share: "مشاركة الصورة",
+        sharing: "جارٍ مشاركة الصورة...",
+        shareFailed: "فشلت مشاركة الصورة",
+      },
       editor: {
         preview: "معاينة",
         source: "المصدر",
