@@ -125,6 +125,7 @@ export class PluginRegistry {
           sidebarViews: [],
           sidebarItems: { header: [], footer: [] },
           legacySidebarItems: [],
+          workspaceRowBadgeItems: [],
           filePanels: [],
           composerItems: [],
           newWorkspaceItems: [],
@@ -135,6 +136,7 @@ export class PluginRegistry {
           themes: [],
           timelineTransformers: [],
           timelineRenderers: [],
+          notificationOpenHandlers: [],
         };
         const unsubscribeTranslations = installation.i18n.subscribe(() => this.publish());
         installation.lifetime.signal.addEventListener("abort", unsubscribeTranslations, {
@@ -280,6 +282,12 @@ export function usePluginCatalogStatus(serverId: string): PluginCatalogStatus {
     () => pluginRegistry.getCatalogStatus(serverId),
     () => pluginRegistry.getCatalogStatus(serverId),
   );
+}
+
+/** Why the app could not run the plugin's client bundle, updated when the host's catalog changes. */
+export function usePluginEvaluationError(serverId: string, pluginId: string): string | undefined {
+  const read = () => pluginRegistry.getEvaluationError(serverId, pluginId);
+  return useSyncExternalStore(pluginRegistry.subscribe, read, read);
 }
 
 export function usePluginInstallations(pluginId: string): InstalledPlugin[] {

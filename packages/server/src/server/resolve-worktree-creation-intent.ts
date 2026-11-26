@@ -1,10 +1,25 @@
 import type { ForgeService, PullRequestCheckoutTarget } from "../services/forge-service.js";
-import type { WorktreeSource } from "../utils/worktree.js";
+import type { WorktreeCheckoutRef, WorktreeSource } from "../utils/worktree.js";
+import type { UntrustedWorkspaceSource } from "./workspace-automation-gate.js";
 
 export type WorktreeCreationIntent = Exclude<
   WorktreeSource,
-  { kind: "restore" | "restore-from-base" }
->;
+  { kind: "restore" | "restore-from-base" | "restore-commit" }
+> & { untrustedSource?: UntrustedWorkspaceSource };
+
+export function worktreeUntrustedSource(
+  intent: WorktreeCreationIntent,
+): UntrustedWorkspaceSource | undefined {
+  if (intent.kind === "checkout-change-request" && intent.headRepository) {
+    return {
+      kind: "change_request",
+      forge: intent.forge,
+      number: intent.changeRequestNumber,
+      headRepository: intent.headRepository,
+    };
+  }
+  return intent.untrustedSource;
+}
 
 export interface ResolveWorktreeCreationIntentInput {
   worktreeSlug?: string;
@@ -29,6 +44,14 @@ export interface ResolveWorktreeCreationIntentDeps {
   forge: string;
   forgeService: ForgeService;
   resolveDefaultBranch: (repoRoot: string) => Promise<string>;
+  /** Fetches the first ref a remote serves into a local ref, and returns that remote's name. */
+  fetchRef: (input: FetchRefInput) => Promise<string>;
+}
+
+export interface FetchRefInput {
+  repoRoot: string;
+  sources: WorktreeCheckoutRef[];
+  destination: string;
 }
 
 export class MissingCheckoutTargetError extends Error {
@@ -70,7 +93,20 @@ export async function resolveWorktreeCreationIntent(
   deps: ResolveWorktreeCreationIntentDeps,
 ): Promise<WorktreeCreationIntent> {
   if (input.action === "branch-off") {
-    return resolveBranchOffIntent(input, repoRoot, deps);
+    const branchName = input.branchName ?? input.worktreeSlug ?? "worktree";
+    const changeRequest = resolveInputChangeRequest(input);
+    if (changeRequest) {
+      return {
+        kind: "branch-off",
+        ...(await fetchChangeRequestHead({ input, changeRequest, repoRoot, deps })),
+        branchName,
+      };
+    }
+    return {
+      kind: "branch-off",
+      baseBranch: input.refName?.trim() || (await resolveDefaultBranch(repoRoot, deps)),
+      branchName,
+    };
   }
 
   if (input.action === "checkout") {
@@ -85,10 +121,8 @@ export async function resolveWorktreeCreationIntent(
       });
     }
 
-    const refName = input.refName?.trim();
-    if (refName) {
-      return resolveCheckoutBranchIntent(refName);
-    }
+    const branchName = input.refName?.trim();
+    if (branchName) return resolveCheckoutBranchIntent(branchName);
 
     throw new MissingCheckoutTargetError();
   }
@@ -147,43 +181,61 @@ function resolveCheckoutBranchIntent(refName: string): WorktreeCreationIntent {
   return { kind: "checkout-branch", branchName: refName };
 }
 
-interface PrCheckoutIntentParams {
-  refName?: string;
-  changeRequestNumber: number;
+/**
+ * Fetches a change request's head, so a new branch can start from it without checking the change
+ * request out. The head lands outside `refs/remotes`, which base branch pickers list. The remote
+ * that serves the change request is the repository it merges into, which is `upstream` in a fork
+ * clone. The base comes from that remote: a same-repository change request's own branch, so its
+ * pull request stacks on the change request, or a fork's target branch, since the fork's branch is
+ * not in this repository.
+ */
+async function fetchChangeRequestHead(params: {
+  input: ResolveWorktreeCreationIntentInput;
+  changeRequest: { number: number; forge?: string };
   repoRoot: string;
   deps: ResolveWorktreeCreationIntentDeps;
-}
-
-async function resolveBranchOffIntent(
-  input: ResolveWorktreeCreationIntentInput,
-  repoRoot: string,
-  deps: ResolveWorktreeCreationIntentDeps,
-): Promise<WorktreeCreationIntent> {
-  const changeRequest = resolveInputChangeRequest(input);
-  if (!changeRequest) {
-    return {
-      kind: "branch-off",
-      baseBranch: input.refName?.trim() || (await resolveDefaultBranch(repoRoot, deps)),
-      branchName: input.branchName ?? input.worktreeSlug ?? "worktree",
-    };
-  }
-
+}): Promise<{
+  baseBranch: string;
+  startPoint: string;
+  untrustedSource?: UntrustedWorkspaceSource;
+}> {
+  const { input, changeRequest, repoRoot, deps } = params;
   assertCheckoutSourceMatchesResolvedForge(changeRequest, deps);
-  const checkoutIntent = await resolvePrCheckoutIntent({
+  const checkout = await resolvePrCheckoutIntent({
     refName: input.refName,
     changeRequestNumber: changeRequest.number,
     repoRoot,
     deps,
   });
-  return {
-    kind: "branch-off-change-request",
-    forge: checkoutIntent.forge,
-    changeRequestNumber: checkoutIntent.changeRequestNumber,
-    headRef: checkoutIntent.headRef,
-    baseRefName: checkoutIntent.baseRefName,
-    checkoutRefs: checkoutIntent.checkoutRefs ?? [],
-    branchName: input.branchName ?? input.worktreeSlug ?? "worktree",
-  };
+  const untrustedSource = worktreeUntrustedSource(checkout);
+  const startPoint = `refs/paseo/change-requests/${changeRequest.number}`;
+  const remote = await deps.fetchRef({
+    repoRoot,
+    sources: checkout.checkoutRefs,
+    destination: startPoint,
+  });
+  const baseName = checkout.trackOriginHead ? checkout.headRef : checkout.baseRefName;
+  const baseBranch = `refs/remotes/${remote}/${baseName}`;
+  try {
+    // Compared as the remote has it, not as a local branch last pulled.
+    await deps.fetchRef({
+      repoRoot,
+      sources: [{ remoteName: remote, remoteRef: `refs/heads/${baseName}` }],
+      destination: baseBranch,
+    });
+    return { baseBranch, startPoint, untrustedSource };
+  } catch {
+    // A pull request can still serve its head after the source branch is gone.
+    // The start point is already pinned, so compare against the target branch in that case.
+    return { baseBranch: checkout.baseRefName, startPoint, untrustedSource };
+  }
+}
+
+interface PrCheckoutIntentParams {
+  refName?: string;
+  changeRequestNumber: number;
+  repoRoot: string;
+  deps: ResolveWorktreeCreationIntentDeps;
 }
 
 function resolveInputChangeRequest(
@@ -216,9 +268,11 @@ function assertCheckoutSourceMatchesResolvedForge(
   }
 }
 
-async function resolvePrCheckoutIntent(
-  params: PrCheckoutIntentParams,
-): Promise<Extract<WorktreeCreationIntent, { kind: "checkout-change-request" }>> {
+async function resolvePrCheckoutIntent(params: PrCheckoutIntentParams): Promise<
+  Extract<WorktreeCreationIntent, { kind: "checkout-change-request" }> & {
+    checkoutRefs: WorktreeCheckoutRef[];
+  }
+> {
   const { deps } = params;
   const service = deps.forgeService;
   const checkoutTarget = await resolvePrCheckoutTarget(params);

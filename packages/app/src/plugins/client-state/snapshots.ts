@@ -51,6 +51,9 @@ export function createPluginWorkspaceSnapshot(
     createdAt: serializeTimestamp(workspace.createdAt),
     lastPromptAt: serializeTimestamp(workspace.lastUserMessageAt),
     parentAgent,
+    parentWorkspace: workspace.parentWorkspaceId
+      ? entityRefs.workspace(hostId, workspace.parentWorkspaceId)
+      : null,
     indicator,
     indicatorLabel: i18n.t(indicatorLabelKeys[indicator]),
     id: workspace.id,
@@ -86,6 +89,8 @@ export function createPluginAgentSnapshot(agent: Agent, workspaceId: string): Pl
     workspaceId,
     provider: agent.provider,
     status: agent.status,
+    backgroundWork: Object.freeze({ count: agent.backgroundWork?.count ?? 0 }),
+    background: agent.background ?? false,
     createdAt: agent.createdAt.toISOString(),
     updatedAt: agent.updatedAt.toISOString(),
     lastActivityAt: agent.lastActivityAt.toISOString(),

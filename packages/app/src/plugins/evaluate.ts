@@ -24,6 +24,7 @@ import {
   type PluginSurfaceProps,
   type PluginTimelineRendererContribution,
   type PluginTimelineTransformerContribution,
+  type PluginNotificationOpenHandler,
   type PluginButtonRegistration,
 } from "@getpaseo/plugin/client";
 import type {
@@ -37,6 +38,7 @@ import type {
   PluginScreenContribution,
   PluginSidebarItemContribution,
   PluginWorkspacePanelContribution,
+  PluginWorkspaceRowBadgeItemContribution,
 } from "./types";
 import type { ComponentType } from "react";
 import { parsePluginIcon, parseSerializablePluginIcon } from "./icons";
@@ -133,6 +135,7 @@ export function runPluginClientBundle(
     sidebarViews: [],
     sidebarItems: { header: [], footer: [] },
     legacySidebarItems: [],
+    workspaceRowBadgeItems: [],
     filePanels: [],
     composerItems: [],
     newWorkspaceItems: [],
@@ -143,6 +146,7 @@ export function runPluginClientBundle(
     themes: [],
     timelineTransformers: [],
     timelineRenderers: [],
+    notificationOpenHandlers: [],
   };
   const surfaceIds = new Set<string>();
   const sidebarViewIds = new Set<string>();
@@ -151,6 +155,7 @@ export function runPluginClientBundle(
     header: new Set(),
     footer: new Set(),
   };
+  const workspaceRowItemIds = new Set<string>();
   const filePanelIds = new Set<string>();
   const composerItemIds = new Set<string>();
   const newWorkspaceItemIds = new Set<string>();
@@ -322,6 +327,23 @@ export function runPluginClientBundle(
     },
     addSidebarFooterItem(contribution: PluginSidebarItemContribution) {
       return addSidebarItem("footer", contribution);
+    },
+    addWorkspaceRowBadgeItem(contribution: PluginWorkspaceRowBadgeItemContribution) {
+      const itemId = requireId(contribution.id, "workspace row badge item id");
+      if (workspaceRowItemIds.has(itemId))
+        throw new Error(`Duplicate workspace row badge item: ${itemId}`);
+      const title = normalizePluginText(contribution.title);
+      if (!title) throw new Error(`Workspace row badge item ${itemId} has no title`);
+      const icon = parsePluginIcon(`Workspace row badge item ${itemId}`, contribution.icon);
+      if (!isComponentType(contribution.Component)) {
+        throw new Error(`Workspace row badge item ${itemId} is not a component`);
+      }
+      workspaceRowItemIds.add(itemId);
+      return register(
+        collector.workspaceRowBadgeItems,
+        { id: itemId, title, icon, Component: contribution.Component },
+        () => workspaceRowItemIds.delete(itemId),
+      );
     },
     // COMPAT(pluginSidebarAliases): added in v0.11.0, remove after 2027-03-29
     // Titled by its id; a legacy item pointing at it lends the header its own title instead.
@@ -545,6 +567,12 @@ export function runPluginClientBundle(
         timelineRendererIds.delete(rendererId),
       );
     },
+    onNotificationOpen(handler: PluginNotificationOpenHandler) {
+      if (typeof handler !== "function") {
+        throw new Error("onNotificationOpen takes a callback function");
+      }
+      return register(collector.notificationOpenHandlers, handler, () => {});
+    },
     addComposerPill(contribution) {
       if (stopped) throw new Error("Plugin has stopped");
       return trackButton(runtime.addComposerPill(contribution));
@@ -634,6 +662,7 @@ export function runPluginClientBundle(
     sidebarViews: collector.sidebarViews,
     sidebarItems: collector.sidebarItems,
     legacySidebarItems: collector.legacySidebarItems,
+    workspaceRowBadgeItems: collector.workspaceRowBadgeItems,
     filePanels: collector.filePanels,
     composerItems: collector.composerItems,
     newWorkspaceItems: collector.newWorkspaceItems,
@@ -644,5 +673,6 @@ export function runPluginClientBundle(
     themes: collector.themes,
     timelineTransformers: collector.timelineTransformers,
     timelineRenderers: collector.timelineRenderers,
+    notificationOpenHandlers: collector.notificationOpenHandlers,
   };
 }

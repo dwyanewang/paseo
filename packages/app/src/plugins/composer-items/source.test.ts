@@ -47,6 +47,7 @@ function plugin(): InstalledPlugin {
     filePanels: [],
     composerItems: [],
     newWorkspaceItems: [],
+    workspaceRowBadgeItems: [],
     workspacePanels: [],
     commandCenterItems: [],
     clientSlashCommands: [],
@@ -67,6 +68,7 @@ function plugin(): InstalledPlugin {
     themes: [],
     timelineTransformers: [],
     timelineRenderers: [],
+    notificationOpenHandlers: [],
   };
 }
 

@@ -33,6 +33,7 @@ import type {
   PluginCleanup,
 } from "../contracts.js";
 import type { PluginIconProps, PluginSerializableIcon } from "../icons.js";
+import type { PluginNotificationOpenHandler } from "./notifications.js";
 
 export interface PluginHostProps {
   theme: PluginTheme;
@@ -46,17 +47,29 @@ export interface PluginHostProps {
   };
 }
 
+export interface PluginHostNavigationActions {
+  readonly openAgent: (input: {
+    readonly agentId: string;
+    readonly serverId?: string;
+    /** Select only the destination host in the sidebar and clear project/label filters. */
+    readonly focusHost?: boolean;
+  }) => void;
+  readonly openWorkspace: (input: {
+    readonly workspaceId: string;
+    readonly serverId?: string;
+    /** Select only the destination host in the sidebar and clear project/label filters. */
+    readonly focusHost?: boolean;
+  }) => void;
+}
+
 interface PluginNavigableHostProps extends PluginHostProps {
   /** Client-owned navigation. Undefined on older hosts; hide dependent affordances when absent. */
-  readonly navigation?: {
+  readonly navigation?: PluginHostNavigationActions & {
+    /** This client supports the focusHost option on agent/workspace navigation. */
+    readonly supportsFocusHost?: boolean;
     /** Present only on Electron. The browser runs locally; serverId selects workspace ownership. */
     readonly openBrowser?: (input: {
       readonly url: string;
-      readonly workspaceId: string;
-      readonly serverId?: string;
-    }) => void;
-    readonly openAgent: (input: { readonly agentId: string; readonly serverId?: string }) => void;
-    readonly openWorkspace: (input: {
       readonly workspaceId: string;
       readonly serverId?: string;
     }) => void;
@@ -119,6 +132,22 @@ export interface PluginSidebarViewContribution<Text extends PluginText = string>
   title: Text;
   description?: Text;
   Component: ComponentType<PluginSidebarViewProps>;
+}
+
+export interface PluginWorkspaceRowBadgeItemProps extends PluginHostProps {
+  workspaceId: string;
+}
+
+/**
+ * Part of the line under a workspace's title in the sidebar, on every workspace of the plugin's host.
+ * Render `WorkspaceRowBadge`, or nothing when there is nothing to say about this workspace.
+ */
+export interface PluginWorkspaceRowBadgeItemContribution<Text extends PluginText = string> {
+  id: string;
+  /** The item's toggle in the sidebar's Show menu. */
+  title: Text;
+  icon: PluginIcon;
+  Component: ComponentType<PluginWorkspaceRowBadgeItemProps>;
 }
 
 /**
@@ -214,6 +243,9 @@ export interface PluginClientContext extends PluginCommandCapabilities, PluginCl
   addSidebarHeaderItem(contribution: PluginSidebarItemContribution<PluginText>): PluginCleanup;
   addSidebarFooterItem(contribution: PluginSidebarItemContribution<PluginText>): PluginCleanup;
   addAgentPanel(contribution: PluginAgentPanelContribution<PluginText>): PluginCleanup;
+  addWorkspaceRowBadgeItem(
+    contribution: PluginWorkspaceRowBadgeItemContribution<PluginText>,
+  ): PluginCleanup;
   addWorkspacePanel(contribution: PluginWorkspacePanelContribution<PluginText>): PluginCleanup;
   addCommandCenterItem(
     contribution: PluginCommandCenterItemContribution<PluginText>,
@@ -236,6 +268,7 @@ export interface PluginClientContext extends PluginCommandCapabilities, PluginCl
   addTimelineRenderer<Schema extends ZodType>(
     contribution: PluginTimelineRendererContribution<Schema>,
   ): PluginCleanup;
+  onNotificationOpen(handler: PluginNotificationOpenHandler): PluginCleanup;
   openPanel(id: string, options: PluginClientOpenPanelOptions): void;
   /**
    * Subscribes to a plugin subscription on this client's host. Paseo re-subscribes after a

@@ -5,14 +5,20 @@ import { StyleSheet } from "react-native-unistyles";
 import { ComboboxItem, type ComboboxOption } from "@/components/ui/combobox";
 import { Shortcut } from "@/components/ui/shortcut";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
+import { getForgePresentation } from "@/git/forge";
+import { PullRequestStateIcon } from "@/git/pull-request-state-icon";
+import { useCompactTimeAgo } from "@/hooks/use-time-ago";
 import { getHostProjectSourceDirectory, type HostProjectListItem } from "@/projects/host-projects";
-import type { PickerItem } from "../../new-workspace-picker-item";
+import { ICON_SIZE } from "@/styles/theme";
+import { pickerItemLabel, type PickerItem } from "../../new-workspace-picker-item";
+import type { ExistingWorktree } from "../existing-worktrees";
 import {
   addProjectIcon,
   branchIcon,
+  existingWorktreeIcon,
+  folderIcon,
   ProjectIcon,
   pullRequestIcon,
-  workspaceModeIcon,
 } from "./icons";
 
 interface OptionRowState {
@@ -89,25 +95,29 @@ export function AddProjectOption({ onPress }: { onPress: () => void }): ReactEle
   );
 }
 
-export function WorkspaceModeOption({
+const ISOLATION_LEADING: Record<string, ReactElement> = {
+  local: <IconBox>{folderIcon}</IconBox>,
+  worktree: <IconBox>{branchIcon}</IconBox>,
+  existing: <IconBox>{existingWorktreeIcon}</IconBox>,
+};
+
+export function IsolationOption({
   option,
   selected,
   active,
   onPress,
   disabled,
-  description,
-}: OptionRowState & { disabled: boolean; description?: string }): ReactElement {
-  const leadingSlot = useMemo(() => <IconBox>{workspaceModeIcon(option.id)}</IconBox>, [option.id]);
+}: OptionRowState & { disabled: boolean }): ReactElement {
   return (
     <ComboboxItem
-      testID={`workspace-create-mode-${option.id}`}
+      testID={`workspace-create-isolation-${option.id}`}
       label={option.label}
+      description={option.description}
       selected={selected}
       active={active}
       disabled={disabled}
       onPress={onPress}
-      leadingSlot={leadingSlot}
-      description={description}
+      leadingSlot={ISOLATION_LEADING[option.id]}
     />
   );
 }
@@ -115,51 +125,116 @@ export function WorkspaceModeOption({
 const branchLeading = <IconBox>{branchIcon}</IconBox>;
 const pullRequestLeading = <IconBox>{pullRequestIcon}</IconBox>;
 
+type PullRequestState = "open" | "merged" | "closed";
+const PULL_REQUEST_STATES: Record<string, PullRequestState> = {
+  open: "open",
+  opened: "open",
+  merged: "merged",
+  closed: "closed",
+};
+
+function PullRequestLeading({ state }: { state: string }): ReactElement {
+  const known = PULL_REQUEST_STATES[state.toLowerCase()];
+  if (!known) return pullRequestLeading;
+  return (
+    <IconBox>
+      <PullRequestStateIcon state={known} size={ICON_SIZE.sm} />
+    </IconBox>
+  );
+}
+
+function WorktreeAge({ createdAt }: { createdAt: Date | null }): ReactElement {
+  return <Text style={styles.divergenceLabel}>{useCompactTimeAgo(createdAt)}</Text>;
+}
+
+export function WorktreeOption({
+  option,
+  selected,
+  active,
+  onPress,
+  worktree,
+  disabled,
+}: OptionRowState & { worktree: ExistingWorktree | undefined; disabled: boolean }): ReactElement {
+  const createdAt = worktree?.createdAt ?? null;
+  const trailingSlot = useMemo(() => <WorktreeAge createdAt={createdAt} />, [createdAt]);
+  if (!worktree) return <View key={option.id} />;
+  return (
+    <ComboboxItem
+      testID={`new-workspace-worktree-picker-option-${worktree.name}`}
+      label={worktree.name}
+      selected={selected}
+      active={active}
+      disabled={disabled}
+      onPress={onPress}
+      leadingSlot={branchLeading}
+      trailingSlot={trailingSlot}
+    />
+  );
+}
+
+/** Where a branch is already checked out, when checking it out means working there. */
+export type BranchHolder = "project-directory" | "worktree" | null;
+
 export function RefOption({
   option,
   selected,
   active,
   onPress,
   item,
+  heldIn,
   disabled,
-  changeRequestBranchOffDisabled,
 }: OptionRowState & {
   item: PickerItem | undefined;
+  heldIn: BranchHolder;
   disabled: boolean;
-  changeRequestBranchOffDisabled: boolean;
 }): ReactElement {
   const { t } = useTranslation();
-  const divergenceLabel = item?.kind === "branch" ? item.divergenceLabel : undefined;
+  const branchNote = item?.kind === "branch" ? item.divergenceLabel : undefined;
+  const heldLabel = {
+    "project-directory": t("newWorkspace.refPicker.inProjectDirectory"),
+    worktree: t("newWorkspace.refPicker.inWorktree"),
+  };
+  const divergenceLabel = heldIn ? heldLabel[heldIn] : branchNote;
   const trailingSlot = useMemo(
     () =>
       divergenceLabel ? <Text style={styles.divergenceLabel}>{divergenceLabel}</Text> : undefined,
     [divergenceLabel],
   );
+  const pullRequestState = item?.kind === "github-pr" ? item.item.state : null;
+  const pullRequestLeadingSlot = useMemo(
+    () => (pullRequestState === null ? undefined : <PullRequestLeading state={pullRequestState} />),
+    [pullRequestState],
+  );
   if (!item) return <View key={option.id} />;
 
-  const isBranch = item.kind === "branch";
-  let description: string | undefined;
-  if (!isBranch && changeRequestBranchOffDisabled) {
-    description = t("newWorkspace.branchMode.updateHost");
-  } else if (!isBranch && item.item.baseRefName) {
-    description = t("newWorkspace.refPicker.intoBase", { baseRef: item.item.baseRefName });
+  if (item.kind === "branch") {
+    return (
+      <ComboboxItem
+        testID={`new-workspace-ref-picker-branch-${item.name}`}
+        label={item.name}
+        selected={selected}
+        active={active}
+        disabled={disabled}
+        onPress={onPress}
+        leadingSlot={branchLeading}
+        trailingSlot={trailingSlot}
+        accessibilityLabel={item.accessibilityLabel}
+      />
+    );
   }
+  // The number is the row's identity and the title its name, so they read as two things.
+  const { numberPrefix } = getForgePresentation(item.item.forge ?? "github");
   return (
     <ComboboxItem
-      testID={
-        isBranch
-          ? `new-workspace-ref-picker-branch-${item.name}`
-          : `new-workspace-ref-picker-pr-${item.item.number}`
-      }
-      label={option.label}
-      description={description}
+      testID={`new-workspace-ref-picker-pr-${item.item.number}`}
+      labelPrefix={`${numberPrefix}${item.item.number}`}
+      label={item.item.title}
       selected={selected}
       active={active}
-      disabled={disabled || (!isBranch && changeRequestBranchOffDisabled)}
+      disabled={disabled}
       onPress={onPress}
-      leadingSlot={isBranch ? branchLeading : pullRequestLeading}
-      trailingSlot={trailingSlot}
-      accessibilityLabel={isBranch ? item.accessibilityLabel : undefined}
+      leadingSlot={pullRequestLeadingSlot}
+      accessibilityLabel={pickerItemLabel(item)}
     />
   );
 }

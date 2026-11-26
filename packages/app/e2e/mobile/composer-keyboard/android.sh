@@ -582,8 +582,8 @@ run_host_scroll() {
   local prefix="${ARTIFACTS_DIR}/${host}-native-scroll"
   prepare_composer closed
   if [[ "${host}" == new-workspace ]]; then
-    ad press 'id="workspace-create-mode-trigger"' --settle
-    ad press 'text="Local"' --settle
+    ad press 'id="workspace-create-isolation-trigger"' --settle
+    ad press 'text="Project directory"' --settle
   fi
   # Submit through each real host; draft/workspace creation then mounts its chat.
   # A selectable mock model keeps this test independent of provider credentials.

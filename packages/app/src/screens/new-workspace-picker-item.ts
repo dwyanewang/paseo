@@ -31,6 +31,16 @@ export type PickerCheckoutRequest = Pick<
   "action" | "refName" | "checkoutSource" | "githubPrNumber"
 >;
 
+/** What a new worktree does with the picked ref: start a new branch from it, or work on it. */
+export type RefAction = "branch-off" | "checkout";
+export type BranchWorktreeMode = RefAction;
+
+/** A branch is a base to branch off by default; a pull request is checked out. */
+export const DEFAULT_REF_ACTION: Record<PickerItem["kind"], RefAction> = {
+  branch: "branch-off",
+  "github-pr": "checkout",
+};
+
 const BRANCH_OPTION_PREFIX = "branch:";
 const PR_OPTION_PREFIX = "github-pr:";
 const REMOTE_TRACKING_PREFIX = "refs/remotes/";
@@ -178,27 +188,19 @@ export function defaultBasePickerItem(status: BaseRefCheckoutStatus): PickerItem
   };
 }
 
-// How a new worktree is created from the selected branch or change request:
-// - "branch-off" (default): cut a fresh branch based on it, so commits land on
-//   the copy and the original branch stays untouched.
-// - "checkout": check the branch out directly, so commits land on the real
-//   branch (the daemon runs `git worktree add <branch>`).
-// The values mirror the wire `action` enum (packages/protocol/src/messages.ts).
-export type BranchWorktreeMode = "branch-off" | "checkout";
-
 export function pickerItemToCheckoutRequest(
   item: PickerItem | null,
-  branchMode: BranchWorktreeMode,
+  action: RefAction = item ? DEFAULT_REF_ACTION[item.kind] : "branch-off",
 ): PickerCheckoutRequest | undefined {
   if (!item) return undefined;
   switch (item.kind) {
     case "branch":
-      return { action: branchMode, refName: item.refName };
+      return { action, refName: item.refName };
     case "github-pr": {
       const headRefName = item.item.headRefName?.trim();
       const forge = item.item.forge ?? "github";
       return {
-        action: branchMode,
+        action,
         ...(headRefName ? { refName: headRefName } : {}),
         checkoutSource: {
           kind: "change_request",
@@ -220,14 +222,40 @@ export function pickerItemToCheckoutRequest(
 }
 
 /**
- * Whether creating a worktree from this request cuts a new branch, which is what the daemon does
- * for anything but a checkout. No request at all (a detached HEAD gives the screen no default
- * base) cuts one from the repository's default branch.
+ * Whether creating a worktree from this request cuts a new branch. No request at all (a detached
+ * HEAD gives the screen no default base) cuts one from the repository's default branch. A request
+ * with no action is read as the daemon reads it: a change request is checked out.
  */
 export function startsNewBranch(request: PickerCheckoutRequest | undefined): boolean {
   if (!request) return true;
-  if (request.action === "checkout") return false;
+  if (request.action) return request.action === "branch-off";
   return !request.checkoutSource && request.githubPrNumber === undefined;
+}
+
+/**
+ * The rows of one ref list. Checking out works on the local branch, so the origin and local rows
+ * of a branch are one choice there: one row per branch, named by the branch, keeping the selected
+ * row's id so its checkmark stays.
+ */
+export function refListOptions(input: {
+  options: readonly ComboboxOptionModel[];
+  itemById: ReadonlyMap<string, PickerItem>;
+  selectedOptionId: string;
+  kind: PickerItem["kind"];
+  action: RefAction;
+}): ComboboxOptionModel[] {
+  const { options, itemById, selectedOptionId, kind, action } = input;
+  const ofKind = options.filter((option) => itemById.get(option.id)?.kind === kind);
+  if (kind !== "branch" || action !== "checkout") return ofKind;
+  const rowByBranch = new Map<string, ComboboxOptionModel>();
+  for (const option of ofKind) {
+    const item = itemById.get(option.id);
+    if (item?.kind !== "branch") continue;
+    const branchName = branchNameFromRef(item.refName);
+    if (rowByBranch.has(branchName) && option.id !== selectedOptionId) continue;
+    rowByBranch.set(branchName, { ...option, label: branchName });
+  }
+  return [...rowByBranch.values()];
 }
 
 export function prPickerOptionId(number: number): string {

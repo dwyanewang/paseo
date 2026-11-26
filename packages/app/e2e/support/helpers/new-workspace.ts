@@ -232,12 +232,23 @@ export async function expectNewWorkspaceControlsEnabled(page: Page): Promise<voi
   });
 }
 
-export async function openNewWorkspaceProjectPickerWithShortcut(page: Page): Promise<void> {
-  await page.keyboard.press("Control+P");
+export async function openNewWorkspaceProjectPickerWithShortcut(
+  page: Page,
+  shortcut = "Control+P",
+): Promise<void> {
+  await page.keyboard.press(shortcut);
 
   const searchInput = page.getByPlaceholder("Search projects");
   await expect(searchInput).toBeVisible({ timeout: 30_000 });
   await expect(searchInput).toBeFocused();
+}
+
+export async function chooseProjectWithKeyboard(page: Page, projectName: string): Promise<void> {
+  const searchInput = page.getByPlaceholder("Search projects");
+  await expect(searchInput).toBeFocused({ timeout: 30_000 });
+  await page.keyboard.type(projectName);
+  await page.keyboard.press("Enter");
+  await expect(searchInput).toBeHidden({ timeout: 10_000 });
 }
 
 export async function expectNewWorkspaceProjectSelected(
@@ -331,32 +342,60 @@ export async function selectNewWorkspaceProject(
   await expectNewWorkspaceProjectSelected(page, input.projectDisplayName);
 }
 
-export type WorkspaceMode = "local" | "branch-off" | "checkout";
+type IsolationChoice = "local" | "worktree" | "existing";
 
-// The trigger states the result the user will get, so asserting its text proves
-// which Workspace mode is currently selected.
-const WORKSPACE_MODE_TRIGGER_LABEL: Record<WorkspaceMode, string> = {
-  local: "Local",
-  "branch-off": "New branch",
-  checkout: "Check out",
+// The isolation trigger renders the active isolation's label ("Project directory" / "New
+// worktree" / "Existing worktree"), so asserting its text proves what the screen remembers.
+const ISOLATION_TRIGGER_LABEL: Record<IsolationChoice, string> = {
+  local: "Project directory",
+  worktree: "New worktree",
+  existing: "Existing worktree",
 };
 
-export async function expectWorkspaceModeSelected(page: Page, mode: WorkspaceMode): Promise<void> {
-  const trigger = page.getByRole("button", { name: "Workspace mode" });
+export async function expectWorkspaceIsolationSelected(
+  page: Page,
+  isolation: IsolationChoice,
+): Promise<void> {
+  const trigger = page.getByRole("button", { name: "Workspace isolation" });
   await expect(trigger).toBeVisible({ timeout: 30_000 });
-  await expect(trigger).toContainText(WORKSPACE_MODE_TRIGGER_LABEL[mode]);
+  await expect(trigger).toContainText(ISOLATION_TRIGGER_LABEL[isolation]);
 }
 
-export async function selectWorkspaceMode(page: Page, mode: WorkspaceMode): Promise<void> {
-  const trigger = page.getByTestId("workspace-create-mode-trigger");
+export async function selectWorkspaceIsolation(
+  page: Page,
+  isolation: IsolationChoice,
+): Promise<void> {
+  const trigger = page.getByTestId("workspace-create-isolation-trigger");
   await expect(trigger).toBeVisible({ timeout: 30_000 });
   await trigger.click();
 
-  // Workspace mode options are derived from project capability. Wait for the option
+  // Isolation options are derived from project capability. Wait for the option
   // so this helper also covers route-to-project reconciliation.
-  const option = page.getByTestId(`workspace-create-mode-${mode}`);
+  const option = page.getByTestId(`workspace-create-isolation-${isolation}`);
   await expect(option).toBeVisible({ timeout: 30_000 });
   await option.click();
+}
+
+// Exercise the two controls together in existing workflow specs.
+export type WorkspaceMode = "local" | "branch-off" | "checkout";
+
+export async function expectWorkspaceModeSelected(page: Page, mode: WorkspaceMode): Promise<void> {
+  await expectWorkspaceIsolationSelected(page, mode === "local" ? "local" : "worktree");
+  if (mode === "local") return;
+  await openStartingRefPicker(page);
+  await expect(page.getByTestId(`new-workspace-ref-picker-${mode}`)).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await page.keyboard.press("Escape");
+}
+
+export async function selectWorkspaceMode(page: Page, mode: WorkspaceMode): Promise<void> {
+  await selectWorkspaceIsolation(page, mode === "local" ? "local" : "worktree");
+  if (mode === "local") return;
+  await openStartingRefPicker(page);
+  await page.getByTestId(`new-workspace-ref-picker-${mode}`).click();
+  await page.keyboard.press("Escape");
 }
 
 export async function submitNewWorkspaceEmpty(page: Page): Promise<void> {
@@ -379,8 +418,16 @@ export async function selectBranchInPicker(page: Page, name: string): Promise<vo
   await branchRow.click();
 }
 
+// The ref picker lists branches and pull requests separately.
+async function showRefList(page: Page, list: "branches" | "pull-requests"): Promise<void> {
+  const tab = page.getByTestId(`new-workspace-ref-picker-tab-${list}`);
+  await expect(tab).toBeVisible({ timeout: 30_000 });
+  await tab.click();
+}
+
 export async function searchAndSelectBranchInPicker(page: Page, name: string): Promise<void> {
-  const searchInput = page.getByPlaceholder("Search branches and PRs");
+  await showRefList(page, "branches");
+  const searchInput = page.getByPlaceholder("Search branches");
   await expect(searchInput).toBeVisible({ timeout: 30_000 });
   await searchInput.fill(name);
   await selectBranchInPicker(page, name);
@@ -404,6 +451,7 @@ export async function captureStartingRefPicker(page: Page, screenshotPath: strin
 }
 
 export async function selectGitHubPrInPicker(page: Page, number: number): Promise<void> {
+  await showRefList(page, "pull-requests");
   const prRow = page.getByTestId(`new-workspace-ref-picker-pr-${number}`);
   await expect(prRow).toBeVisible({ timeout: 30_000 });
   await prRow.click();
@@ -426,7 +474,7 @@ export async function openBranchPicker(page: Page): Promise<void> {
 }
 
 export async function selectPickerOptionByKeyboard(page: Page, label: string): Promise<void> {
-  const searchInput = page.getByPlaceholder("Search branches and PRs");
+  const searchInput = page.getByPlaceholder("Search branches");
   await expect(searchInput).toBeVisible({ timeout: 30_000 });
   await page.keyboard.type(label);
   await expect(page.getByTestId(`new-workspace-ref-picker-branch-${label}`)).toBeVisible({

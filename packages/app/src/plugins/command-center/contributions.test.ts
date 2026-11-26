@@ -25,6 +25,7 @@ const workspace: PluginWorkspaceSnapshot = {
   createdAt: null,
   lastPromptAt: null,
   parentAgent: null,
+  parentWorkspace: null,
   indicator: "running",
   indicatorLabel: "Running",
   id: "workspace-1",
@@ -51,6 +52,8 @@ const agent: PluginAgentSnapshot = {
   workspaceId: workspace.id,
   provider: "codex",
   status: "running",
+  backgroundWork: { count: 0 },
+  background: false,
   createdAt: "2026-08-16T10:00:00.000Z",
   updatedAt: "2026-08-16T10:00:00.000Z",
   lastActivityAt: "2026-08-16T10:00:00.000Z",
@@ -103,6 +106,7 @@ function plugin(onAgentSelect: AgentCommandItem["onSelect"]): InstalledPlugin {
     sidebarViews: [],
     sidebarItems: { header: [], footer: [] },
     legacySidebarItems: [],
+    workspaceRowBadgeItems: [],
     filePanels: [],
     composerItems: [],
     newWorkspaceItems: [],
@@ -144,6 +148,7 @@ function plugin(onAgentSelect: AgentCommandItem["onSelect"]): InstalledPlugin {
     themes: [],
     timelineTransformers: [],
     timelineRenderers: [],
+    notificationOpenHandlers: [],
   };
 }
 

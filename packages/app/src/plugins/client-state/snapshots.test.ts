@@ -1,7 +1,8 @@
 import { i18n } from "@/i18n/i18next";
 import { fr } from "@/i18n/resources/fr";
 import { describe, expect, it } from "vitest";
-import type { WorkspaceDescriptor } from "@/stores/session-store";
+import type { Agent, WorkspaceDescriptor } from "@/stores/session-store";
+import { normalizeAgentSnapshot, projectAgentSnapshot } from "@/utils/agent-snapshots";
 import {
   createPluginAgentSnapshot,
   createPluginWorkspaceSnapshot,
@@ -107,6 +108,36 @@ describe("sidebar entity snapshots", () => {
     expect(
       createPluginWorkspaceSnapshot(idle, "host-1", { workspaceAgentActivity: activity }),
     ).toBe(after);
+  });
+
+  it("carries the background work count the host publishes for the agent", () => {
+    // Round-trip through the wire payload, the way the app receives each agent update.
+    const published = (backgroundWork: Agent["backgroundWork"]) =>
+      createPluginAgentSnapshot(
+        normalizeAgentSnapshot({ ...projectAgentSnapshot(agent), backgroundWork }, agent.serverId),
+        workspace.id,
+      ).backgroundWork;
+    expect(published(undefined)).toEqual({ count: 0 });
+    expect(published({ count: 2 })).toEqual({ count: 2 });
+    expect(published({ count: 0 })).toEqual({ count: 0 });
+    expect(Object.isFrozen(published({ count: 1 }))).toBe(true);
+  });
+
+  it("marks a background agent", () => {
+    expect(createPluginAgentSnapshot(agent, workspace.id).background).toBe(false);
+    expect(createPluginAgentSnapshot({ ...agent, background: true }, workspace.id).background).toBe(
+      true,
+    );
+  });
+
+  it("points a dispatched workspace at its parent's ref, and a root workspace at null", () => {
+    const parent = createPluginWorkspaceSnapshot(workspace, "host-1");
+    const child = createPluginWorkspaceSnapshot(
+      { ...workspace, id: "workspace-2", parentWorkspaceId: workspace.id },
+      "host-1",
+    );
+    expect(parent.parentWorkspace).toBeNull();
+    expect(child.parentWorkspace).toBe(parent.ref);
   });
 
   it("reads projects without requiring a workspace", () => {

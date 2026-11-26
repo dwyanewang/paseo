@@ -14,6 +14,7 @@ const entries = {
   "./server/usage": "server",
   "./server/acp": "server",
   "./internal/lifecycle": "server",
+  "./internal/windows-command": "server",
   "./client": "client",
   "./client/host": "client",
   "./client/ui": "client",
@@ -230,6 +231,7 @@ describe("plugin composer SDK boundary", () => {
         composer.setOptions({ effort: null });
         composer.setMetadata({ flag: true, stale: null });
         composer.insertText("text");
+        composer.focus({ selection: { start: 0, end: composer.prompt.length } }).then(() => composer.focus());
         composer.addAttachment({ sourceId: "issues", item: { id: "1", identifier: "1", title: "t", url: "https://e.com", text: "t", resourceType: "issue" } });
         // @ts-expect-error commands take JSON values
         composer.setMetadata({ fn: () => {} });
@@ -369,6 +371,17 @@ describe("plugin agent tools SDK boundary", () => {
             ...request.mcpServers, company: { type: "http", url: "https://tools.example.com/mcp" },
           } };
         });
+        server.addHook("agent.open.before", async ({ request }) => {
+          const background: boolean = request.background;
+          if (background) return;
+          // A hook written before background and metadata returns its own object without them.
+          return {
+            agentId: request.agentId, workspaceId: request.workspaceId, provider: request.provider,
+            cwd: request.cwd, reason: request.reason, purpose: request.purpose, title: request.title,
+            labels: request.labels, tools: request.tools, env: request.env,
+            mcpServers: request.mcpServers,
+          };
+        });
         return () => {};
       }
     `),
@@ -380,7 +393,8 @@ describe("lifecycle hook SDK types", () => {
   it("infers payloads and replacement requests and requires async handlers and new names", () => {
     expect(
       typeErrors(`
-      import type { PluginServerContext, PluginHooks, PluginHookPayload, PluginHookResult } from "@getpaseo/plugin/server";
+      import type { PluginServerContext, PluginHooks, PluginHookPayload, PluginHookResult, PluginLaunchWrap } from "@getpaseo/plugin/server";
+      import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
       export default function contribute(server: PluginServerContext) {
         server.addHook("worktree.create.before", async ({ request }) => {
           if (request.kind === "checkout-branch") {
@@ -414,8 +428,49 @@ describe("lifecycle hook SDK types", () => {
           const { metadata, ...withoutMetadata } = request;
           return withoutMetadata;
         });
-        server.addHook("agent.turn.after", async ({ agent, outcome, timeline }, { paseo, signal }) => {
+        server.addHook("agent.create.before", async ({ request }) => {
+          const workspace: string | null = request.workspaceId;
+          // @ts-expect-error The agent's workspace is read-only.
+          request.workspaceId = "wks_other";
+        });
+        // Results built before workspaceId existed still typecheck; the daemon keeps the id.
+        server.addHook("agent.create.before", async ({ request }) => ({ config: request.config, env: request.env }));
+        server.before("agent.create", ({ request }) => ({ config: request.config, env: request.env }));
+        server.addHook("terminal.create.before", async ({ request }) => {
+          const source: "client" | "agent" | "script" | "worktree" = request.source;
+          const input: string | null = request.input;
+          const program: string | null = request.command;
+          // @ts-expect-error The terminal's workspace is read-only.
+          request.workspaceId = "wks_other";
+          // @ts-expect-error The terminal's program is read-only; return a wrap instead.
+          request.command = "/usr/bin/other";
+          const wrap: PluginLaunchWrap = ["/usr/bin/sandbox", "--workspace", request.workspaceId];
+          return { ...request, env: { A: "1" }, wrap };
+        });
+        server.addHook("command.run.before", async ({ request }) => {
+          const workspace: string | null = request.workspaceId;
+          const purpose: "setup" | "teardown" = request.purpose;
+          // @ts-expect-error A command's purpose is read-only.
+          request.purpose = "setup";
+          // @ts-expect-error The configured command is read-only; return a wrap instead.
+          request.command = "wrapper " + request.command;
+          return { ...request, wrap: ["/usr/bin/sandbox"] };
+        });
+        server.addHook("agent.open.before", async ({ request }) => ({
+          ...request,
+          wrap: ["/usr/bin/sandbox", "--workspace", request.workspaceId ?? "none"],
+        }));
+        server.addHook("agent.turn.after", async (event, { paseo, signal }) => {
+          const { agent, outcome } = event;
           const kind: "completed" | "failed" | "canceled" = outcome.kind;
+          // @ts-expect-error Turn payloads carry no history; read it from the agent's timeline.
+          event.timeline;
+          const turn = await paseo.agents
+            .ref(agent.id)
+            .timeline.refetch({ direction: "tail", limit: 1, wholeTurns: true });
+          const items: readonly AgentTimelineItem[] = turn.entries
+            .filter((entry) => entry.turnId === event.turnId)
+            .map(({ item }) => item);
           // @ts-expect-error Notification payloads have no creation request.
           outcome.request;
         });
@@ -428,6 +483,12 @@ describe("lifecycle hook SDK types", () => {
         // @ts-expect-error A prepare handler must return the whole request or undefined.
         server.addHook("agent.create.before", async () => ({ invalid: true }));
         server.before("agent.session_open", ({ request }) => request);
+        server.before("agent.session_open", ({ request }) => ({
+          agentId: request.agentId, workspaceId: request.workspaceId, provider: request.provider,
+          cwd: request.cwd, reason: request.reason, purpose: request.purpose, title: request.title,
+          labels: request.labels, metadata: request.metadata, tools: request.tools, env: request.env,
+          mcpServers: request.mcpServers,
+        }));
         server.on("agent.turn_ended", () => {});
         return () => {};
       }
@@ -556,6 +617,163 @@ describe("sidebar data SDK boundary", () => {
         }
         const query: Query<PluginWorkspaceSnapshot> = { hosts: [workspace.hostId], orderBy: ["name", "desc"] };
         return null;
+      }
+    `),
+    ).toEqual([]);
+  });
+});
+
+describe("worktree manager SDK boundary", () => {
+  it("types create, remove, and restore handlers with discriminated results and cleanup", () => {
+    expect(
+      typeErrors(`
+      import type {
+        PluginServerContext,
+        WorktreeManagerRegistration,
+        PluginWorktreeCreateInput,
+        PluginWorktreeCreateResult,
+        PluginWorktreeRemoveRequest,
+        PluginWorktreeRemoveResult,
+        PluginWorktreeRestoreRequest,
+        PluginWorktreeRestoreResult,
+      } from "@getpaseo/plugin/server";
+
+      export default function contribute(server: PluginServerContext) {
+        const manager: WorktreeManagerRegistration = {
+          async create(request: PluginWorktreeCreateInput, { paseo, signal }) {
+            const untrusted: boolean = request.untrusted;
+            const headSha: string | undefined = request.headSha;
+            void headSha;
+            // @ts-expect-error untrusted is read-only
+            request.untrusted = true;
+            // @ts-expect-error headSha is read-only
+            request.headSha = "deadbeef";
+            if (request.kind === "branch-off") {
+              const start: string = request.startPoint ?? request.baseRef;
+              // @ts-expect-error startPoint is read-only
+              request.startPoint = "other";
+              if (!start || untrusted) return;
+            }
+            if (signal.aborted) return;
+            void paseo;
+            const result: PluginWorktreeCreateResult = { type: "created", path: request.path };
+            return result;
+          },
+          async remove(request: PluginWorktreeRemoveRequest, { signal }) {
+            const reason: "archive" | "rollback" = request.reason;
+            const force: boolean = request.force;
+            const untrusted: boolean = request.untrusted;
+            // @ts-expect-error remove request fields are read-only
+            request.path = "/other";
+            if (!reason || !force || untrusted || signal.aborted) return;
+            const result: PluginWorktreeRemoveResult = { type: "removed" };
+            return result;
+          },
+          async restore(request: PluginWorktreeRestoreRequest) {
+            const untrusted: boolean = request.untrusted;
+            void untrusted;
+            if (request.target.type === "commit") return;
+            if (request.target.type === "from-base") {
+              const base: string = request.target.baseRef;
+              void base;
+            }
+            const result: PluginWorktreeRestoreResult = { type: "restored", path: request.path };
+            return result;
+          },
+        };
+        const dispose: () => void = server.registerWorktreeManager(manager);
+        server.registerWorktreeManager({
+          // @ts-expect-error create result requires discriminant
+          async create() {
+            return { path: "/tmp/wt" };
+          },
+        });
+        return dispose;
+      }
+    `),
+    ).toEqual([]);
+  });
+});
+
+describe("plugin notifications SDK boundary", () => {
+  it("types server notification sends and client tap handlers with capabilities and cleanup", () => {
+    expect(
+      typeErrors(`
+      import type {
+        PluginServerContext,
+        PluginNotifications,
+        PluginNotificationSendInput,
+        PluginNotificationSendResult,
+        PluginNotificationOpenTarget,
+      } from "@getpaseo/plugin/server";
+      import type {
+        PluginClientContext,
+        PluginHostNavigationActions,
+        PluginNotificationOpenContext,
+        PluginNotificationOpenEvent,
+        PluginNotificationOpenHandler,
+      } from "@getpaseo/plugin/client";
+
+      export async function sendFromServer(server: PluginServerContext) {
+        const notifications: PluginNotifications = server.notifications;
+        const target: PluginNotificationOpenTarget = {
+          type: "screen",
+          screenId: "details",
+          params: { id: "42" },
+        };
+        const input: PluginNotificationSendInput = {
+          title: "Build failed",
+          body: "Check the logs",
+          key: "build:42",
+          open: target,
+          data: { buildId: 42, ok: false, tags: ["ci"] },
+        };
+        const result: PluginNotificationSendResult = await notifications.send(input);
+        if (result.status === "sent") {
+          const id: string = result.notificationId;
+          void id;
+        }
+        await server.notifications.send({
+          title: "Agent ready",
+          body: "Done",
+          open: { type: "agent", agentId: "agent-1" },
+        });
+        await server.notifications.send({
+          title: "Workspace ready",
+          body: "Done",
+          open: { type: "workspace", workspaceId: "ws-1" },
+        });
+        // @ts-expect-error data must be JSON values
+        await server.notifications.send({ title: "Bad", body: "Bad", data: { fn: () => {} } });
+        // @ts-expect-error open target requires a known type discriminant
+        await server.notifications.send({ title: "Bad", body: "Bad", open: { type: "unknown" } });
+      }
+
+      export function contributeClient(client: PluginClientContext) {
+        const handler: PluginNotificationOpenHandler = (context: PluginNotificationOpenContext) => {
+          const navigation: PluginHostNavigationActions = context.navigation;
+          void navigation;
+          const event: PluginNotificationOpenEvent = context.event;
+          const kind: "opened" = event.type;
+          const id: string = event.notificationId;
+          void kind;
+          void id;
+          // @ts-expect-error event fields are read-only
+          event.notificationId = "other";
+          if (event.data) {
+            // @ts-expect-error event data record is read-only
+            event.data.extra = "nope";
+          }
+          if (typeof event.data?.agentId === "string") {
+            context.navigation.openAgent({ agentId: event.data.agentId, focusHost: true });
+          } else if (typeof event.data?.workspaceId === "string") {
+            context.navigation.openWorkspace({ workspaceId: event.data.workspaceId });
+          } else {
+            context.openScreen({ screenId: "main", params: { from: "notification" } });
+          }
+        };
+        const cleanup = client.onNotificationOpen(handler);
+        return cleanup;
       }
     `),
     ).toEqual([]);

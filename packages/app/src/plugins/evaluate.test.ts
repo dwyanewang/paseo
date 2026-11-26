@@ -101,6 +101,7 @@ describe("evaluatePluginClientBundle", () => {
           plugin.addSettingsScreen({ id: "display", title: "Display", icon: "Settings", Component }),
           plugin.addSidebarHeaderItem({ id: "main", title: "Main", Component }),
           plugin.addSidebarFooterItem({ id: "status", title: "Status", Component }),
+          plugin.addWorkspaceRowBadgeItem({ id: "status", title: "Status", icon: "Blocks", Component }),
           plugin.addWorkspacePanel({ id: "panel", title: "Panel", icon: "Blocks", context: "workspace", Component }),
           plugin.addCommandCenterItem({ id: "command", title: "Command", icon: "Blocks", context: "global", onSelect() {} }),
           plugin.addSlashCommand({ name: "review", description: "Review", argumentHint: "", context: "workspace", onSubmit() {} }),
@@ -109,6 +110,7 @@ describe("evaluatePluginClientBundle", () => {
           plugin.addTheme({ id: "night", name: "Night", appearance: "dark", colors: { background: "#000", foreground: "#fff", raised: "#111", control: "#222", border: "#333", mutedForeground: "#aaa", ring: "#555" } }),
           plugin.addTimelineTransformer({ id: "transformer", query: { itemType: "tool_call" }, transform() { return { items: [] }; } }),
           plugin.addTimelineRenderer({ kind: "card", version: 1, schema, Component }),
+          plugin.onNotificationOpen(function handleOpen() {}),
         ];
       `),
       {
@@ -132,6 +134,7 @@ describe("evaluatePluginClientBundle", () => {
         plugin.settingsScreens,
         plugin.sidebarItems.header,
         plugin.sidebarItems.footer,
+        plugin.workspaceRowBadgeItems,
         plugin.workspacePanels,
         plugin.commandCenterItems,
         plugin.clientSlashCommands,
@@ -139,6 +142,7 @@ describe("evaluatePluginClientBundle", () => {
         plugin.themes,
         plugin.timelineTransformers,
         plugin.timelineRenderers,
+        plugin.notificationOpenHandlers,
       ].every((items) => items.length === 1),
     ).toBe(true);
     expect(pillCount).toBe(1);
@@ -152,6 +156,7 @@ describe("evaluatePluginClientBundle", () => {
         plugin.settingsScreens,
         plugin.sidebarItems.header,
         plugin.sidebarItems.footer,
+        plugin.workspaceRowBadgeItems,
         plugin.workspacePanels,
         plugin.commandCenterItems,
         plugin.clientSlashCommands,
@@ -159,6 +164,7 @@ describe("evaluatePluginClientBundle", () => {
         plugin.themes,
         plugin.timelineTransformers,
         plugin.timelineRenderers,
+        plugin.notificationOpenHandlers,
       ].every((items) => items.length === 0),
     ).toBe(true);
     expect(pillCount).toBe(0);
@@ -280,6 +286,44 @@ describe("evaluatePluginClientBundle", () => {
         ),
       ),
     ).toThrow("Sidebar item main has no title");
+  });
+
+  it("collects workspace row badge items and rejects duplicate and malformed ones", () => {
+    const plugin = evaluatePluginClientBundle(
+      "example",
+      bundle(`
+        function Item() { return null; }
+        plugin.addWorkspaceRowBadgeItem({ id: "status", title: " Status ", icon: "Blocks", Component: Item });
+      `),
+    );
+    expect(
+      plugin.workspaceRowBadgeItems.map(({ id, title, icon }) => ({ id, title, icon })),
+    ).toEqual([{ id: "status", title: "Status", icon: "Blocks" }]);
+
+    const row = (fields: string) =>
+      bundle(`function Item() { return null; } plugin.addWorkspaceRowBadgeItem({ ${fields} });`);
+    expect(() =>
+      evaluatePluginClientBundle(
+        "example",
+        bundle(`
+          function Item() { return null; }
+          plugin.addWorkspaceRowBadgeItem({ id: "status", title: "One", icon: "Blocks", Component: Item });
+          plugin.addWorkspaceRowBadgeItem({ id: "status", title: "Two", icon: "Blocks", Component: Item });
+        `),
+      ),
+    ).toThrow("Duplicate workspace row badge item: status");
+    expect(() =>
+      evaluatePluginClientBundle(
+        "example",
+        row(`id: "status", title: " ", icon: "Blocks", Component: Item`),
+      ),
+    ).toThrow("Workspace row badge item status has no title");
+    expect(() =>
+      evaluatePluginClientBundle(
+        "example",
+        row(`id: "status", title: "Status", icon: "Blocks", Component: "Item"`),
+      ),
+    ).toThrow("Workspace row badge item status is not a component");
   });
 
   it("expands the addSurface and addSidebarItem aliases to a screen and a legacy header item", () => {

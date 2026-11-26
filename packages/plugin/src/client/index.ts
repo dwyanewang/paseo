@@ -1,5 +1,6 @@
 export type {
   PluginHostProps,
+  PluginHostNavigationActions,
   PluginTab,
   PluginPanelProps,
   PluginWorkspacePanelParams,
@@ -18,6 +19,8 @@ export type {
   PluginSidebarViewProps,
   PluginSidebarViewContribution,
   PluginSidebarItemContribution,
+  PluginWorkspaceRowBadgeItemProps,
+  PluginWorkspaceRowBadgeItemContribution,
   PluginIcon,
   PluginPanelLocation,
   PluginOpenPanelOptions,
@@ -43,6 +46,11 @@ export type {
   PluginClientSlashCommandContribution,
   SettingsState,
 } from "./contracts.js";
+export type {
+  PluginNotificationOpenEvent,
+  PluginNotificationOpenContext,
+  PluginNotificationOpenHandler,
+} from "./notifications.js";
 export type {
   PluginButton,
   PluginButtonBehavior,
@@ -86,6 +94,7 @@ export { useComposer, useComposers } from "./composer.js";
 export type {
   PluginComposer,
   PluginComposerAttachment,
+  PluginComposerFocusOptions,
   PluginComposerItemContribution,
   PluginComposerItemProps,
   PluginComposerSelector,

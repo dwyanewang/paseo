@@ -1,8 +1,17 @@
+import { DaemonClient } from "./test-utils/daemon-client.js";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+  renameSync,
+  mkdirSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, expect, test } from "vitest";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
 import { getFullAccessConfig } from "./daemon-e2e/agent-configs.js";
 import { createDaemonTestContext, type DaemonTestContext } from "./test-utils/index.js";
@@ -125,6 +134,55 @@ test.skipIf(process.platform === "win32")(
 );
 
 test.skipIf(process.platform === "win32")(
+  "an undo during a teardown that never exits returns once the deadline stops it",
+  async () => {
+    const tempRoot = mkdtempSync(path.join(tmpdir(), "workspace-archive-undo-hang-"));
+    tempRoots.push(tempRoot);
+    const repoDir = path.join(tempRoot, "repo");
+    const pidFile = path.join(tempRoot, "sleep.pid");
+    execFileSync("git", ["init", "-b", "main", repoDir], { stdio: "pipe" });
+    git(repoDir, ["config", "user.email", "test@getpaseo.local"]);
+    git(repoDir, ["config", "user.name", "Paseo Test"]);
+    writeFileSync(
+      path.join(repoDir, "paseo.json"),
+      JSON.stringify({
+        worktree: {
+          teardown: `sleep 600 & echo $! > ${JSON.stringify(pidFile)}; wait`,
+          teardownTimeoutMs: 2000,
+        },
+      }),
+    );
+    git(repoDir, ["add", "paseo.json"]);
+    git(repoDir, ["-c", "commit.gpgsign=false", "commit", "-m", "hanging teardown"]);
+    const { workspaceId, directory, agentId } = await createWorktreeWorkspaceWithAgent(
+      repoDir,
+      "undo-during-hanging-teardown",
+    );
+    try {
+      const archive = ctx.client.archiveWorkspace(workspaceId);
+      await expect.poll(() => existsSync(pidFile), { timeout: 15000 }).toBe(true);
+      await Promise.all([archive, ctx.client.undoWorkspaceArchive(workspaceId)]);
+
+      expect({
+        workspaceActive: await isWorkspaceActive(workspaceId),
+        directoryExists: existsSync(directory),
+        agentArchived: await isAgentArchived(agentId),
+      }).toEqual({ workspaceActive: true, directoryExists: true, agentArchived: false });
+    } finally {
+      if (existsSync(pidFile)) {
+        const sleepPid = Number(readFileSync(pidFile, "utf8").trim());
+        try {
+          process.kill(sleepPid, "SIGKILL");
+        } catch {
+          // Already stopped by the teardown deadline.
+        }
+      }
+    }
+  },
+  30000,
+);
+
+test.skipIf(process.platform === "win32")(
   "an undo after the archive finished recreates the worktree and its agents",
   async () => {
     const repo = createRepoWithGatedTeardown();
@@ -146,6 +204,40 @@ test.skipIf(process.platform === "win32")(
       directoryExists: existsSync(directory),
       agentArchived: await isAgentArchived(agentId),
     }).toEqual({ workspaceActive: true, directoryExists: true, agentArchived: false });
+  },
+  60000,
+);
+
+test.skipIf(process.platform === "win32").each([
+  ["branch", "restore"],
+  ["branch", "undo"],
+  ["detached", "restore"],
+  ["detached", "undo"],
+] as const)(
+  "%s checkout survives archive and %s",
+  async (checkout, action) => {
+    const repo = createRepoWithGatedTeardown();
+    repo.releaseTeardown();
+    const { workspaceId, directory } = await createWorktreeWorkspaceWithAgent(
+      repo.repoDir,
+      `keep-${checkout}-${action}`,
+    );
+    if (checkout === "detached") git(directory, ["switch", "--detach"]);
+    writeFileSync(path.join(directory, "change.txt"), `${checkout}\n`);
+    git(directory, ["add", "change.txt"]);
+    git(directory, ["-c", "commit.gpgsign=false", "commit", "-m", "workspace commit"]);
+    const readHead = (args: string[]) =>
+      execFileSync("git", args, { cwd: directory, encoding: "utf8" }).trim();
+    const commit = readHead(["rev-parse", "HEAD"]);
+    const branch = readHead(["rev-parse", "--abbrev-ref", "HEAD"]);
+    expect((await ctx.client.archiveWorkspace(workspaceId)).error).toBeNull();
+    expect(existsSync(directory)).toBe(false);
+    git(repo.repoDir, ["reflog", "expire", "--expire=now", "--all"]);
+    git(repo.repoDir, ["gc", "--prune=now"]);
+    if (action === "undo") await ctx.client.undoWorkspaceArchive(workspaceId);
+    else await ctx.client.restoreWorkspace(workspaceId);
+    expect(readHead(["rev-parse", "HEAD"])).toBe(commit);
+    expect(readHead(["rev-parse", "--abbrev-ref", "HEAD"])).toBe(branch);
   },
   60000,
 );
@@ -273,3 +365,289 @@ test("an undo on a workspace that was never archived leaves it as it was", async
     agentArchived: await isAgentArchived(agentId),
   }).toEqual({ workspaceActive: true, directoryExists: true, agentArchived: false });
 }, 60000);
+
+test.each(["restore", "undo", "reopen", "refresh", "legacy"] as const)(
+  "%s after a daemon restart returns the archive's agents and leaves earlier closed agents archived",
+  async (route) => {
+    const artifacts = path.resolve(import.meta.dirname, "../../../../.artifacts");
+    mkdirSync(artifacts, { recursive: true });
+    const tempRoot = mkdtempSync(path.join(artifacts, "archive-restart-"));
+    tempRoots.push(tempRoot);
+    const repoDir = path.join(tempRoot, "repo");
+    git(tempRoot, ["init", "-b", "main", repoDir]);
+    git(repoDir, [
+      "-c",
+      "user.name=Test",
+      "-c",
+      "user.email=test@example.com",
+      "-c",
+      "commit.gpgsign=false",
+      "commit",
+      "--allow-empty",
+      "-m",
+      "initial",
+    ]);
+    await ctx.cleanup();
+    ctx = await createDaemonTestContext({
+      paseoHomeRoot: path.join(tempRoot, "home"),
+      cleanup: false,
+    });
+    const created = await ctx.client.createWorkspace({
+      source: { kind: "directory", path: repoDir },
+    });
+    const workspaceId = created.workspace!.id;
+    const agents = [];
+    for (const title of ["A", "B", "C"]) {
+      agents.push(
+        await ctx.client.createAgent({
+          ...getFullAccessConfig("codex"),
+          cwd: repoDir,
+          workspaceId,
+          title,
+        }),
+      );
+    }
+    const [a, b, c] = agents;
+    if (!a || !b || !c) throw new Error("Expected three agents");
+    await ctx.daemon.daemon.agentManager.archiveAgent(c.id, "2020-01-01T00:00:00.000Z");
+    const archive = await ctx.client.archiveWorkspace(workspaceId);
+    if (route === "legacy") {
+      const stamp = new Date(Date.parse(archive.archivedAt!) - 1000).toISOString();
+      await ctx.daemon.daemon.agentManager.archiveSnapshot(a.id, stamp);
+      await ctx.daemon.daemon.agentManager.archiveSnapshot(b.id, stamp);
+    }
+    await ctx.cleanup();
+    ctx = await createDaemonTestContext({
+      paseoHomeRoot: path.join(tempRoot, "home"),
+      cleanup: false,
+    });
+    expect(await isAgentArchived(a.id)).toBe(true);
+    if (route === "restore" || route === "legacy") await ctx.client.restoreWorkspace(workspaceId);
+    if (route === "undo") await ctx.client.undoWorkspaceArchive(workspaceId);
+    if (route === "reopen") await ctx.client.openProject(repoDir);
+    if (route === "refresh") {
+      const legacy = new DaemonClient({
+        url: `ws://127.0.0.1:${ctx.daemon.port}/ws`,
+        appVersion: "0.1.104",
+      });
+      await legacy.connect();
+      try {
+        await legacy.refreshAgent(a.id);
+      } finally {
+        await legacy.close();
+      }
+    }
+    expect(await isWorkspaceActive(workspaceId)).toBe(true);
+    expect(await isAgentArchived(a.id)).toBe(false);
+    expect(await isAgentArchived(b.id)).toBe(false);
+    expect(await isAgentArchived(c.id)).toBe(true);
+  },
+  60000,
+);
+
+test.skipIf(process.platform === "win32")(
+  "a failed worktree restore leaves every agent archived until retry succeeds",
+  async () => {
+    const repo = createRepoWithGatedTeardown();
+    repo.releaseTeardown();
+    const { workspaceId, agentId } = await createWorktreeWorkspaceWithAgent(
+      repo.repoDir,
+      "restore-retry",
+    );
+    await ctx.client.archiveWorkspace(workspaceId);
+    const displaced = repo.repoDir + "-unavailable";
+    renameSync(repo.repoDir, displaced);
+    try {
+      await expect(ctx.client.restoreWorkspace(workspaceId)).rejects.toThrow("source repository");
+      expect(await isWorkspaceActive(workspaceId)).toBe(false);
+      expect(await isAgentArchived(agentId)).toBe(true);
+    } finally {
+      renameSync(displaced, repo.repoDir);
+    }
+    await ctx.client.restoreWorkspace(workspaceId);
+    expect(await isWorkspaceActive(workspaceId)).toBe(true);
+    expect(await isAgentArchived(agentId)).toBe(false);
+  },
+  60000,
+);
+
+test("restoring an archived workspace and project delivers all agent upserts before workspace upsert without removals", async () => {
+  const tempRoot = mkdtempSync(path.join(tmpdir(), "paseo-atomic-restore-"));
+  const repoDir = path.join(tempRoot, "multi-agent-atomic-restore");
+  mkdirSync(repoDir, { recursive: true });
+  execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repoDir });
+  execFileSync(
+    "git",
+    [
+      "-c",
+      "user.name=Test",
+      "-c",
+      "user.email=test@example.com",
+      "-c",
+      "commit.gpgsign=false",
+      "commit",
+      "--allow-empty",
+      "-m",
+      "initial",
+    ],
+    { cwd: repoDir },
+  );
+  const created = await ctx.client.createWorkspace({
+    source: { kind: "directory", path: repoDir },
+  });
+  const workspaceId = created.workspace!.id;
+  const a = await ctx.client.createAgent({
+    ...getFullAccessConfig("codex"),
+    cwd: repoDir,
+    workspaceId,
+    title: "Agent A",
+  });
+  const b = await ctx.client.createAgent({
+    ...getFullAccessConfig("codex"),
+    cwd: repoDir,
+    workspaceId,
+    title: "Agent B",
+  });
+  const c = await ctx.client.createAgent({
+    ...getFullAccessConfig("codex"),
+    cwd: repoDir,
+    workspaceId,
+    title: "Agent C (pre-archived)",
+  });
+  await ctx.daemon.daemon.agentManager.archiveAgent(c.id, "2020-01-01T00:00:00.000Z");
+  await ctx.client.archiveWorkspace(workspaceId);
+
+  // Subscribe a fresh observer client (simulating reload/second client) to both directories.
+  const observer = new DaemonClient({
+    url: `ws://127.0.0.1:${ctx.daemon.port}/ws`,
+  });
+  await observer.connect();
+  const events: string[] = [];
+  const unsubAgent = observer.on("agent_update", (msg) => {
+    if (msg.type !== "agent_update") return;
+    const p = msg.payload;
+    if (p.kind === "remove") {
+      events.push(`agent:remove:${p.agentId}`);
+    } else {
+      events.push(`agent:upsert:${p.agent.id}:${p.agent.archivedAt ?? "null"}`);
+    }
+  });
+  const unsubWorkspace = observer.on("workspace_update", (msg) => {
+    if (msg.type !== "workspace_update") return;
+    const p = msg.payload;
+    if (p.kind === "upsert" && p.workspace.id === workspaceId) {
+      events.push(`workspace:upsert:${p.workspace.id}`);
+    }
+  });
+  try {
+    await observer.fetchAgents({ subscribe: {} });
+    await observer.fetchWorkspaces({ subscribe: {} });
+    events.length = 0;
+
+    await ctx.client.restoreWorkspace(workspaceId);
+    // Wait for observer to receive the workspace upsert.
+    await vi.waitFor(() => {
+      expect(events).toContain(`workspace:upsert:${workspaceId}`);
+    });
+
+    const aIdx = events.indexOf(`agent:upsert:${a.id}:null`);
+    const bIdx = events.indexOf(`agent:upsert:${b.id}:null`);
+    const wsIdx = events.indexOf(`workspace:upsert:${workspaceId}`);
+    expect(aIdx).toBeGreaterThanOrEqual(0);
+    expect(bIdx).toBeGreaterThanOrEqual(0);
+    expect(wsIdx).toBeGreaterThan(aIdx);
+    expect(wsIdx).toBeGreaterThan(bIdx);
+    expect(events.filter((e) => e.startsWith("agent:remove:"))).toEqual([]);
+    expect(await isAgentArchived(c.id)).toBe(true);
+  } finally {
+    unsubAgent();
+    unsubWorkspace();
+    await observer.close();
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+}, 60000);
+
+test.skipIf(process.platform === "win32")(
+  "undoing an in-flight archive restores only workspace-archived agents before publishing workspace upsert",
+  async () => {
+    const repo = createRepoWithGatedTeardown();
+    const { workspaceId, directory, agentId } = await createWorktreeWorkspaceWithAgent(
+      repo.repoDir,
+      "undo-restoring-stamp",
+    );
+    const secondActive = await ctx.client.createAgent({
+      ...getFullAccessConfig("codex"),
+      cwd: directory,
+      workspaceId,
+      title: "Second active",
+    });
+    const preArchived = await ctx.client.createAgent({
+      ...getFullAccessConfig("codex"),
+      cwd: directory,
+      workspaceId,
+      title: "Pre-archived",
+    });
+    await ctx.daemon.daemon.agentManager.archiveAgent(preArchived.id, "2020-01-01T00:00:00.000Z");
+
+    const observer = new DaemonClient({
+      url: `ws://127.0.0.1:${ctx.daemon.port}/ws`,
+    });
+    await observer.connect();
+    const events: string[] = [];
+    const unsubAgent = observer.on("agent_update", (msg) => {
+      if (msg.type !== "agent_update") return;
+      const p = msg.payload;
+      events.push(
+        p.kind === "remove"
+          ? `agent:remove:${p.agentId}`
+          : `agent:upsert:${p.agent.id}:${p.agent.archivedAt ?? "null"}`,
+      );
+    });
+    const unsubWorkspace = observer.on("workspace_update", (msg) => {
+      if (msg.type !== "workspace_update") return;
+      const p = msg.payload;
+      if (p.kind === "upsert" && p.workspace.id === workspaceId) {
+        events.push(`workspace:upsert:${p.workspace.id}`);
+      }
+    });
+    let archivePromise: Promise<unknown> | null = null;
+    try {
+      await observer.fetchAgents({ subscribe: {} });
+      await observer.fetchWorkspaces({ subscribe: {} });
+      archivePromise = ctx.client.archiveWorkspace(workspaceId);
+      await expect.poll(() => existsSync(repo.teardownStartedPath), { timeout: 15000 }).toBe(true);
+
+      const agentSnapshot = await ctx.client.fetchAgent(agentId);
+      const workspaceArchiveStamp = agentSnapshot?.agent?.archivedAt ?? null;
+      expect(workspaceArchiveStamp).not.toBeNull();
+      expect(workspaceArchiveStamp).not.toBe("2020-01-01T00:00:00.000Z");
+
+      events.length = 0;
+      const undoPromise = ctx.client.undoWorkspaceArchive(workspaceId);
+      repo.releaseTeardown();
+      await Promise.all([archivePromise, undoPromise]);
+
+      await vi.waitFor(() => {
+        expect(events).toContain(`workspace:upsert:${workspaceId}`);
+      });
+
+      const agent1UpsertIdx = events.indexOf(`agent:upsert:${agentId}:null`);
+      const agent2UpsertIdx = events.indexOf(`agent:upsert:${secondActive.id}:null`);
+      const wsUpsertIdx = events.indexOf(`workspace:upsert:${workspaceId}`);
+      expect(agent1UpsertIdx).toBeGreaterThanOrEqual(0);
+      expect(agent2UpsertIdx).toBeGreaterThanOrEqual(0);
+      expect(wsUpsertIdx).toBeGreaterThan(Math.max(agent1UpsertIdx, agent2UpsertIdx));
+      expect(events.filter((e) => e.includes(preArchived.id))).toEqual([]);
+      expect(await isAgentArchived(agentId)).toBe(false);
+      expect(await isAgentArchived(secondActive.id)).toBe(false);
+      expect(await isAgentArchived(preArchived.id)).toBe(true);
+    } finally {
+      repo.releaseTeardown();
+      await archivePromise?.catch(() => undefined);
+      unsubAgent();
+      unsubWorkspace();
+      await observer.close();
+    }
+  },
+  60000,
+);

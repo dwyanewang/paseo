@@ -27,6 +27,7 @@ function plugin(input: {
     sidebarViews: [],
     sidebarItems: { header: [], footer: [] },
     legacySidebarItems: [],
+    workspaceRowBadgeItems: [],
     filePanels: [],
     composerItems: [],
     newWorkspaceItems: [],
@@ -46,6 +47,7 @@ function plugin(input: {
       },
     ],
     timelineRenderers: [],
+    notificationOpenHandlers: [],
   };
 }
 

@@ -235,7 +235,7 @@ describe("applyCheckoutStatusUpdateFromEvent", () => {
     ).toBe(false);
   });
 
-  it("invalidates draft command caches when the checkout branch changes", () => {
+  it("marks draft slash commands stale without clearing them when the branch changes", () => {
     const queryClient = createQueryClient();
     const draftCommandsKey = draftAgentCommandsQueryKey({
       serverId,
@@ -255,6 +255,7 @@ describe("applyCheckoutStatusUpdateFromEvent", () => {
       message: checkoutStatusUpdate(checkoutStatus({ currentBranch: "feature/skills" })),
     });
 
+    expect(queryClient.getQueryData(draftCommandsKey)).toEqual([]);
     expect(queryClient.getQueryState(draftCommandsKey)?.isInvalidated).toBe(true);
     expect(queryClient.getQueryState(otherDraftCommandsKey)?.isInvalidated).toBe(false);
   });

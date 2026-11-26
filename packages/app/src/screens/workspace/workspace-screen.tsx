@@ -13,7 +13,6 @@ import {
 import { useFileExplorerActions } from "@/hooks/use-file-explorer-actions";
 import { useWindowLayout, resolveWorkspaceActionPlacement } from "@/window-layout";
 import { revealWorkspaceTab } from "@/workspace-tabs/navigation";
-import type { LayoutChangeEvent } from "react-native";
 import { ExplorerSidebarDock } from "@/screens/workspace/explorer-sidebar";
 import { ForgeShorthandProvider } from "@/git/forge-shorthand";
 import { ExplorerFrame } from "./explorer-sidebar/frame";
@@ -160,17 +159,8 @@ import {
 } from "@/screens/workspace/workspace-desktop-tabs-row";
 import { useDesktopBrowserNewTabRequests } from "@/desktop/browser/new-tab-requests";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
-import {
-  resolveWorkspaceExplorerToggleOwner,
-  EXPLORER_TOGGLE_KEYS,
-  WorkspaceExplorerSidebarToggle,
-  WorkspaceHeaderExplorerToggle,
-} from "@/screens/workspace/workspace-explorer-toggle";
-import {
-  useHasWindowChromeObstruction,
-  WindowChromeRegion,
-  WindowChromeSafeArea,
-} from "@/utils/desktop-window";
+import { useWorkspaceExplorerControls } from "@/screens/workspace/workspace-explorer-toggle";
+import { WindowChromeRegion, WindowChromeSafeArea } from "@/utils/desktop-window";
 import {
   resolveWorkspaceHeaderRenderState,
   type WorkspaceHeaderCheckoutState,
@@ -179,6 +169,10 @@ import {
   resolveWorkspaceRouteState,
   type WorkspaceRouteState,
 } from "@/screens/workspace/workspace-route-state";
+import {
+  canSyncVisibleAgents,
+  usePostRestoreWorkspaceRouteState,
+} from "@/screens/workspace/use-post-restore-handoff";
 import { renderWorkspaceRouteGate } from "@/screens/workspace/workspace-route-state-views";
 import { useWorkspaceRecovery } from "@/workspace-recovery/use-workspace-recovery";
 import type { WorkspaceRecoveryModel } from "@/workspace-recovery/model";
@@ -807,9 +801,7 @@ function WorkspacePanelSurface({
   children,
   tabIds,
   workspaceKey,
-  onLayout,
 }: {
-  onLayout: (event: LayoutChangeEvent) => void;
   workspaceKey: string;
   launcher: NewTabLauncher;
   children: ReactNode;
@@ -820,9 +812,7 @@ function WorkspacePanelSurface({
     <WorkspaceComposerEditingSessionsProvider workspaceKey={workspaceKey} tabIds={tabIds}>
       <NewTabLauncherProvider value={launcher}>
         <SheetHostScope enabled={!isCompact}>
-          <View style={styles.threePaneRow} onLayout={onLayout}>
-            {children}
-          </View>
+          <View style={styles.threePaneRow}>{children}</View>
         </SheetHostScope>
       </NewTabLauncherProvider>
     </WorkspaceComposerEditingSessionsProvider>
@@ -1086,15 +1076,10 @@ function WorkspaceScreenContent({
     resolveWorkspaceActionPlacement(useWindowLayout()) === "vertical-bar";
   const toast = useToast();
   const isMobile = useIsCompactFormFactor();
-  const workspacePanelActive = usePanelStore((state) => state.mobilePanel.target === "agent");
   const canRenderDesktopPaneSplits = supportsDesktopPaneSplits();
   const layoutMode = useWorkspaceLayoutStore((state) => state.layoutMode);
-  const hasMacTrafficLights = useHasWindowChromeObstruction("top-left");
-  const explorerToggleOwner = resolveWorkspaceExplorerToggleOwner({
-    isMobile,
-    hasMacTrafficLights,
-  });
   const isFocusModeEnabled = usePanelStore((state) => state.desktop.focusModeEnabled);
+  const desktopFocusModeEnabled = isFocusModeEnabled && !isMobile;
   const toggleFocusMode = usePanelStore((state) => state.toggleFocusMode);
 
   const normalizedServerId = useMemo(() => trimNonEmpty(decodeSegment(serverId)) ?? "", [serverId]);
@@ -1339,11 +1324,6 @@ function WorkspaceScreenContent({
     explorerOpen: isExplorerSidebarShowing,
   });
 
-  const explorerSidebarToggleAccessibilityState = useMemo(
-    () => ({ expanded: isExplorerSidebarShowing }),
-    [isExplorerSidebarShowing],
-  );
-
   useEffect(() => {
     // Back dismisses the compact overlay only. On a wide native layout the
     // explorer is a tab, `showMobileAgent` has no rendered consumer, and
@@ -1435,7 +1415,7 @@ function WorkspaceScreenContent({
       ? (state.pinnedAgentIdsByWorkspace[persistenceKey] ?? EMPTY_PINNED_AGENT_IDS)
       : EMPTY_PINNED_AGENT_IDS,
   );
-  const _hiddenAgentIds = useWorkspaceLayoutStore((state) =>
+  const hiddenAgentIds = useWorkspaceLayoutStore((state) =>
     persistenceKey ? (state.hiddenAgentIdsByWorkspace[persistenceKey] ?? EMPTY_SET) : EMPTY_SET,
   );
   const pendingByDraftId = useCreateFlowStore((state) => state.pendingByDraftId);
@@ -1484,7 +1464,11 @@ function WorkspaceScreenContent({
   const visibleAgentIds = useVisibleAgentIds({
     layout: workspaceLayout,
     tabs: uiTabs,
-    routeFocused: isRouteFocused,
+    routeFocused: canSyncVisibleAgents(
+      isRouteFocused,
+      workspaceRouteState.kind,
+      workspaceDescriptor !== null,
+    ),
     focusedPaneOnly: syncFocusedPaneOnly,
     explorerPaneId: explorerSidebarPaneId,
     explorerVisible: isExplorerSidebarShowing,
@@ -1525,8 +1509,29 @@ function WorkspaceScreenContent({
     return target.terminalId;
   }, [focusedPaneTabState.activeTab]);
 
+  const {
+    displayedRouteState: displayedWorkspaceRouteState,
+    isHoldingHandoff,
+    isPaneRouteFocused,
+    effectivePaneFocusSuspended,
+  } = usePostRestoreWorkspaceRouteState({
+    serverId: normalizedServerId,
+    workspaceId: normalizedWorkspaceId,
+    persistenceKey,
+    hasActiveWorkspace: workspaceDescriptor !== null,
+    hasHydratedWorkspaceLayoutStore,
+    hasHydratedAgents,
+    autoOpenAgentIds: workspaceAgentVisibility.autoOpenAgentIds,
+    hiddenAgentIds,
+    uiTabs,
+    visibleAgentIds,
+    routeState: workspaceRouteState,
+    isRouteFocused,
+    paneFocusSuspended,
+  });
+
   useEffect(() => {
-    if (!isRouteFocused) {
+    if (!isPaneRouteFocused) {
       return;
     }
     setFocusedAgentId(normalizedServerId, focusedPaneAgentId);
@@ -1534,7 +1539,7 @@ function WorkspaceScreenContent({
   }, [
     focusedPaneAgentId,
     focusedPaneTerminalId,
-    isRouteFocused,
+    isPaneRouteFocused,
     normalizedServerId,
     setFocusedAgentId,
     setFocusedTerminalId,
@@ -1851,9 +1856,6 @@ function WorkspaceScreenContent({
     }),
     [t],
   );
-  const explorerSidebarToggleLabel = isExplorerSidebarShowing
-    ? t("workspace.tabs.explorerSidebar.close")
-    : t("workspace.tabs.explorerSidebar.open");
 
   const activeTabKey = useMemo(() => activeTabId ?? "", [activeTabId]);
   const handleCreateDraftTab = useCallback(
@@ -3131,13 +3133,13 @@ function WorkspaceScreenContent({
             workspaceKey: persistenceKey,
             serverId: normalizedServerId,
             workspaceId: normalizedWorkspaceId,
-            isWorkspaceFocused: isRouteFocused,
+            isWorkspaceFocused: isPaneRouteFocused,
             buildContent: buildSheetPaneContentModel,
           }
         : null,
     [
       buildSheetPaneContentModel,
-      isRouteFocused,
+      isPaneRouteFocused,
       normalizedServerId,
       normalizedWorkspaceId,
       persistenceKey,
@@ -3156,9 +3158,9 @@ function WorkspaceScreenContent({
     hasLoadedTerminals: terminalsQuery.isSuccess,
     mountedFocusedPaneTabIds,
     focusedPaneTabDescriptorMap,
-    isRouteFocused,
+    isRouteFocused: isPaneRouteFocused,
     focusedPaneId,
-    paneFocusSuspended,
+    paneFocusSuspended: effectivePaneFocusSuspended,
     onFocusPane: handleFocusPane,
     buildMobilePaneContentModel,
   });
@@ -3245,7 +3247,7 @@ function WorkspaceScreenContent({
   const containerStyle = [styles.container, styles.containerWorkspaceBackground];
 
   const workspaceScreenGate = renderWorkspaceRouteGate({
-    state: workspaceRouteState,
+    state: displayedWorkspaceRouteState,
     actions: {
       onRetryHost: handleRetryHost,
       onManageHost: handleManageHost,
@@ -3259,6 +3261,13 @@ function WorkspaceScreenContent({
     workspaceKey: persistenceKey,
   });
 
+  const explorerControls = useWorkspaceExplorerControls({
+    hasWorkspace: !!workspaceDirectory,
+    compact: isMobile,
+    focusMode: desktopFocusModeEnabled,
+    expanded: isExplorerSidebarShowing,
+    onToggle: handleToggleExplorerSidebar,
+  });
   const headerRight = useMemo(
     () => (
       <View style={styles.headerRight}>
@@ -3285,17 +3294,7 @@ function WorkspaceScreenContent({
         {workspaceDirectory ? (
           <>
             <WorkspaceActions serverId={normalizedServerId} cwd={workspaceDirectory} />
-            {workspaceActionsInBar ? null : (
-              <WorkspaceHeaderExplorerToggle
-                owner={explorerToggleOwner}
-                onPress={handleToggleExplorerSidebar}
-                label={explorerSidebarToggleLabel}
-                tooltipLabel={t("workspace.tabs.explorerSidebar.toggle")}
-                tooltipKeys={EXPLORER_TOGGLE_KEYS}
-                style={styles.compactHeaderActionButton}
-                accessibilityState={explorerSidebarToggleAccessibilityState}
-              />
-            )}
+            {workspaceActionsInBar ? null : explorerControls.headerAction}
           </>
         ) : null}
       </View>
@@ -3310,37 +3309,14 @@ function WorkspaceScreenContent({
       scriptActions,
       handleViewScriptTerminal,
       handleOpenUrlInBrowserTab,
-      handleToggleExplorerSidebar,
-      explorerSidebarToggleLabel,
-      explorerSidebarToggleAccessibilityState,
-      explorerToggleOwner,
+      explorerControls.headerAction,
       workspaceActionsInBar,
-      t,
     ],
   );
 
   const showScreenHeader = useMemo(
     () => shouldShowWorkspaceScreenHeader({ isFocusModeEnabled, isMobile }),
     [isFocusModeEnabled, isMobile],
-  );
-  const renderExplorerSidebarHeaderAction = useCallback(
-    () => (
-      <WorkspaceExplorerSidebarToggle
-        owner={explorerToggleOwner}
-        onPress={handleToggleExplorerSidebar}
-        label={explorerSidebarToggleLabel}
-        tooltipLabel={t("workspace.tabs.explorerSidebar.toggle")}
-        tooltipKeys={EXPLORER_TOGGLE_KEYS}
-        accessibilityState={explorerSidebarToggleAccessibilityState}
-      />
-    ),
-    [
-      explorerSidebarToggleAccessibilityState,
-      explorerSidebarToggleLabel,
-      explorerToggleOwner,
-      handleToggleExplorerSidebar,
-      t,
-    ],
   );
   const createTerminalDisabled = useMemo(
     () => createTerminalMutation.isPending || pendingTerminalCreateInput !== null,
@@ -3364,10 +3340,6 @@ function WorkspaceScreenContent({
     ],
   );
   const focusedPaneIdOrUndefined = useMemo(() => focusedPaneId ?? undefined, [focusedPaneId]);
-  const desktopFocusModeEnabled = useMemo(
-    () => isFocusModeEnabled && !isMobile,
-    [isFocusModeEnabled, isMobile],
-  );
   const workspaceFloatingPanelPortalHostName = useMemo(
     () =>
       `${WORKSPACE_FLOATING_PANEL_PORTAL_HOST_PREFIX}:${normalizedServerId}:${normalizedWorkspaceId}`,
@@ -3496,16 +3468,16 @@ function WorkspaceScreenContent({
       return (
         <CompactWorkspaceHeader
           headerVariant={actionsOnly ? "full" : "compact"}
-          actionsActive={isRouteFocused && (!isMobile || workspacePanelActive)}
+          isRouteFocused={isRouteFocused}
+          isCompact={isMobile}
           tabSwitcher={tabSwitcher}
+          inDesktopTitlebar={explorerControls.inDesktopTitlebar}
+          explorerAction={explorerControls.compactAction}
           isLoading={isWorkspaceHeaderLoading}
           title={workspaceHeaderTitle}
           subtitle={workspaceHeaderSubtitle}
           isSubtitleDistinct={isWorkspaceHeaderSubtitleDistinct}
           serverId={normalizedServerId}
-          onToggleExplorer={handleToggleExplorerSidebar}
-          explorerToggleLabel={explorerSidebarToggleLabel}
-          explorerToggleAccessibilityState={explorerSidebarToggleAccessibilityState}
         >
           <WorkspaceHeaderMenuMobile
             pane={paneTabs?.actions.pane}
@@ -3531,20 +3503,19 @@ function WorkspaceScreenContent({
     },
     [
       renderWorkspaceTabSwitcher,
+      explorerControls.inDesktopTitlebar,
+      explorerControls.compactAction,
       isFocusModeEnabled,
       toggleFocusMode,
       canOpenImportSheet,
       compactHeaderScripts,
       createTerminalDisabled,
       currentBranchName,
-      explorerSidebarToggleAccessibilityState,
-      explorerSidebarToggleLabel,
       handleCopyBranchName,
       handleCopyWorkspacePath,
       handleCreateBrowserTab,
       handleCreateTerminalWithProfile,
       handleOpenSetupTab,
-      handleToggleExplorerSidebar,
       isMobile,
       isRouteFocused,
       isWorkspaceHeaderLoading,
@@ -3557,7 +3528,6 @@ function WorkspaceScreenContent({
       workspaceDirectory,
       workspaceHeaderSubtitle,
       workspaceHeaderTitle,
-      workspacePanelActive,
     ],
   );
   const workspaceCompactHeaderTabs = {
@@ -3590,7 +3560,7 @@ function WorkspaceScreenContent({
         workspaceKey={persistenceKey}
         normalizedServerId={normalizedServerId}
         normalizedWorkspaceId={normalizedWorkspaceId}
-        isWorkspaceFocused={isRouteFocused}
+        isWorkspaceFocused={isPaneRouteFocused}
         uiTabs={uiTabs}
         hoveredCloseTabKey={hoveredCloseTabKey}
         setHoveredCloseTabKey={setHoveredCloseTabKey}
@@ -3627,7 +3597,7 @@ function WorkspaceScreenContent({
     toggleFocusMode,
     normalizedServerId,
     normalizedWorkspaceId,
-    isRouteFocused,
+    isPaneRouteFocused,
     uiTabs,
     hoveredCloseTabKey,
     closingTabIds,
@@ -3743,11 +3713,6 @@ function WorkspaceScreenContent({
     </DesktopCenterColumnChrome>
   );
 
-  const [workspaceViewportWidth, setWorkspaceViewportWidth] = useState(0);
-  const measureWorkspaceWidth = useCallback(
-    (event: LayoutChangeEvent) => setWorkspaceViewportWidth(event.nativeEvent.layout.width),
-    [],
-  );
   const sharedExplorer = useMemo(() => {
     if (!workspaceLayout || !explorerSidebarPaneId || !persistenceKey) return null;
     const explorerPane = findPaneById(workspaceLayout.root, explorerSidebarPaneId);
@@ -3758,7 +3723,8 @@ function WorkspaceScreenContent({
         uiTabs={uiTabs}
         normalizedServerId={normalizedServerId}
         normalizedWorkspaceId={normalizedWorkspaceId}
-        isWorkspaceFocused={isRouteFocused}
+        isWorkspaceFocused={isPaneRouteFocused}
+        paneFocusSuspended={effectivePaneFocusSuspended}
         closingTabIds={closingTabIds}
         hoveredCloseTabKey={hoveredCloseTabKey}
         setHoveredCloseTabKey={setHoveredCloseTabKey}
@@ -3777,7 +3743,7 @@ function WorkspaceScreenContent({
         onExitFocusMode={toggleFocusMode}
         onReorderTabsInPane={handleReorderTabsInPane}
         buildPaneContentModel={buildDesktopPaneContentModel}
-        headerAction={renderExplorerSidebarHeaderAction()}
+        headerAction={explorerControls.dockAction}
       />
     );
     return (
@@ -3785,7 +3751,6 @@ function WorkspaceScreenContent({
         presentation={isMobile ? "overlay" : "dock"}
         isWorkspaceActive={isRouteFocused}
         persistenceKey={persistenceKey}
-        containerWidth={workspaceViewportWidth}
         isOpen={isExplorerSidebarShowing && !desktopFocusModeEnabled}
       >
         {dock}
@@ -3800,6 +3765,8 @@ function WorkspaceScreenContent({
     normalizedServerId,
     normalizedWorkspaceId,
     isRouteFocused,
+    isPaneRouteFocused,
+    effectivePaneFocusSuspended,
     isExplorerSidebarShowing,
     closingTabIds,
     hoveredCloseTabKey,
@@ -3818,8 +3785,7 @@ function WorkspaceScreenContent({
     toggleFocusMode,
     handleReorderTabsInPane,
     buildDesktopPaneContentModel,
-    renderExplorerSidebarHeaderAction,
-    workspaceViewportWidth,
+    explorerControls.dockAction,
     desktopFocusModeEnabled,
   ]);
 
@@ -3877,7 +3843,6 @@ function WorkspaceScreenContent({
           isRouteFocused={isRouteFocused}
         />
         <WorkspacePanelSurface
-          onLayout={measureWorkspaceWidth}
           launcher={newTabLauncher}
           workspaceKey={workspacePanelKey}
           tabIds={workspacePanelTabIds}
@@ -3894,6 +3859,7 @@ function WorkspaceScreenContent({
               onReorderTabsInPane={handleReorderTabsInPane}
               onSplitPane={handleSplitPane}
             >
+              {explorerControls.titlebarAction}
               {workspaceCenterColumn}
               {sharedExplorer}
             </WorkspaceTabDragScope>
@@ -3919,12 +3885,10 @@ function WorkspaceScreenContent({
     </RenderProfile>
   );
 
-  if (gatedWorkspaceScreen) {
-    return gatedWorkspaceScreen;
-  }
   return (
-    <WorkspaceContentProviders
-      key={persistenceKey}
+    <PostRestoreOverlayShell
+      isHoldingHandoff={isHoldingHandoff}
+      overlay={gatedWorkspaceScreen}
       workspaceKey={persistenceKey}
       sheetPaneHost={sheetPaneHost}
     >
@@ -3938,7 +3902,47 @@ function WorkspaceScreenContent({
       >
         {renderedWorkspaceScreen}
       </WorkspaceMarkdownLinks>
-    </WorkspaceContentProviders>
+    </PostRestoreOverlayShell>
+  );
+}
+
+/** Keeps mounted workspace chrome hidden beneath the restoring gate during layout settle. */
+function PostRestoreOverlayShell({
+  isHoldingHandoff,
+  overlay,
+  workspaceKey,
+  sheetPaneHost,
+  children,
+}: {
+  isHoldingHandoff: boolean;
+  overlay: ReactNode;
+  workspaceKey: string | null;
+  sheetPaneHost: Parameters<typeof WorkspaceContentProviders>[0]["sheetPaneHost"];
+  children: ReactNode;
+}) {
+  const showContent = !overlay || isHoldingHandoff;
+  return (
+    <View style={styles.postRestoreOverlayHost}>
+      {showContent ? (
+        <View
+          style={
+            isHoldingHandoff ? styles.postRestoreHiddenContent : styles.postRestoreVisibleContent
+          }
+          pointerEvents={isHoldingHandoff ? "none" : "auto"}
+          accessibilityElementsHidden={isHoldingHandoff}
+          importantForAccessibility={isHoldingHandoff ? "no-hide-descendants" : "auto"}
+        >
+          <WorkspaceContentProviders
+            key={workspaceKey}
+            workspaceKey={workspaceKey}
+            sheetPaneHost={sheetPaneHost}
+          >
+            {children}
+          </WorkspaceContentProviders>
+        </View>
+      ) : null}
+      {overlay ? <View style={styles.postRestoreOverlay}>{overlay}</View> : null}
+    </View>
   );
 }
 
@@ -3950,7 +3954,11 @@ function WorkspaceMarkdownLinks({
 }: AssistantFileLinkResolverProviderProps & { workspace: WorkspaceDescriptor | null | undefined }) {
   return (
     <AssistantFileLinkResolverProvider {...fileLinks}>
-      <ForgeShorthandProvider forge={workspace?.forge} remoteUrl={workspace?.gitRuntime?.remoteUrl}>
+      <ForgeShorthandProvider
+        forge={workspace?.forge}
+        remoteUrl={workspace?.gitRuntime?.remoteUrl}
+        forgeWeb={workspace?.forgeWeb}
+      >
         {children}
       </ForgeShorthandProvider>
     </AssistantFileLinkResolverProvider>
@@ -4025,12 +4033,6 @@ const styles = StyleSheet.create((theme) => ({
     gap: {
       xs: theme.spacing[1],
       md: theme.spacing[2],
-    },
-  },
-  compactHeaderActionButton: {
-    marginRight: {
-      xs: 0,
-      md: -theme.spacing[2],
     },
   },
   compactHeaderMenuCluster: {
@@ -4176,6 +4178,27 @@ const styles = StyleSheet.create((theme) => ({
   contentPlaceholder: {
     flex: 1,
     minHeight: 0,
+    backgroundColor: theme.colors.surface0,
+  },
+  postRestoreOverlayHost: {
+    flex: 1,
+    minHeight: 0,
+    position: "relative",
+    // Isolate the overlay stacking context so the left sidebar overlay stays above gated screens on web.
+    zIndex: 0,
+  },
+  postRestoreVisibleContent: {
+    flex: 1,
+    minHeight: 0,
+  },
+  postRestoreHiddenContent: {
+    flex: 1,
+    minHeight: 0,
+    ...(isWeb ? ({ visibility: "hidden" } as const) : { opacity: 0 }),
+  },
+  postRestoreOverlay: {
+    ...StyleSheet.absoluteFill,
+    zIndex: 1,
     backgroundColor: theme.colors.surface0,
   },
   emptyState: {

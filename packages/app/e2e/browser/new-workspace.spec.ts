@@ -1,5 +1,6 @@
-import { execFileSync } from "node:child_process";
+import { execSync } from "node:child_process";
 import { existsSync } from "node:fs";
+import { realpath } from "node:fs/promises";
 import path from "node:path";
 import { buildHostWorkspaceRoute } from "@/utils/host-routes";
 import { expect, test } from "../support/fixtures";
@@ -33,7 +34,7 @@ import {
   selectBranchInPicker,
   selectGitHubPrInPicker,
   selectPickerOptionByKeyboard,
-  selectWorkspaceMode,
+  selectWorkspaceIsolation,
   submitNewWorkspacePrompt,
 } from "../support/helpers/new-workspace";
 import {
@@ -54,7 +55,7 @@ import {
 import { getServerId } from "../support/helpers/server-id";
 import { selectSidebarStatusGrouping } from "../support/helpers/sidebar";
 import { getE2EDaemonPort } from "../support/helpers/daemon-port";
-import { chooseAddProjectMethod, expectAddProjectPage } from "../support/helpers/add-project-flow";
+import { expectAddProjectTab } from "../support/helpers/add-project-flow";
 import { seedSavedSettingsHosts } from "../support/helpers/settings";
 import {
   expectSidebarWorkspaceSelected,
@@ -290,8 +291,7 @@ test.describe("New workspace flow", () => {
       await expect(addProject).toContainText(/(?:⌘|Ctrl\+)O/);
       await addProject.click();
 
-      await expectAddProjectPage(page, "method");
-      await chooseAddProjectMethod(page, "directory-search");
+      await expectAddProjectTab(page, "existing");
     } finally {
       await repo.cleanup();
     }
@@ -696,7 +696,7 @@ test.describe("New workspace flow", () => {
     }
   });
 
-  test("New branch uses the selected branch as its base", async ({ page }) => {
+  test("selected branch becomes the base of a new workspace worktree", async ({ page }) => {
     const serverId = getServerId();
 
     const tempRepo = await createTempGitRepo("new-workspace-ref-", {
@@ -724,7 +724,7 @@ test.describe("New workspace flow", () => {
         projectKey: openedProject.projectKey,
         projectDisplayName: openedProject.projectDisplayName,
       });
-      await selectWorkspaceMode(page, "branch-off");
+      await selectWorkspaceIsolation(page, "worktree");
       await openStartingRefPicker(page);
       await selectBranchInPicker(page, "dev");
 
@@ -755,42 +755,6 @@ test.describe("New workspace flow", () => {
     }
   });
 
-  test("Check out requires a target when the project has a detached HEAD", async ({ page }) => {
-    const tempRepo = await createTempGitRepo("new-workspace-detached-head-");
-
-    try {
-      execFileSync("git", ["checkout", "--detach", "HEAD"], {
-        cwd: tempRepo.path,
-        stdio: "ignore",
-      });
-      const openedProject = await openProjectViaDaemon(client, tempRepo.path);
-      localWorkspaceIds.add(openedProject.workspaceId);
-      const workspaceIdsBefore = (
-        await client.fetchWorkspaces({ filter: { projectId: openedProject.projectId } })
-      ).entries.map((workspace) => workspace.id);
-
-      await gotoAppShell(page);
-      await waitForSidebarHydration(page);
-      await openNewWorkspaceComposer(page, {
-        projectKey: openedProject.projectKey,
-        projectDisplayName: openedProject.projectDisplayName,
-      });
-      await selectWorkspaceMode(page, "checkout");
-      await submitNewWorkspaceWithoutPrompt(page);
-
-      await expect(page).toHaveURL(/\/new(?:\?.*)?$/u);
-      await expect(
-        page.getByText("Choose where to start from", { exact: true }).last(),
-      ).toBeVisible();
-      const workspaceIdsAfter = (
-        await client.fetchWorkspaces({ filter: { projectId: openedProject.projectId } })
-      ).entries.map((workspace) => workspace.id);
-      expect(workspaceIdsAfter).toEqual(workspaceIdsBefore);
-    } finally {
-      await tempRepo.cleanup();
-    }
-  });
-
   // The starting ref the daemon actually cuts from is the thing that broke: the picker said
   // one ref and the worktree was created from another. Every assertion here reads the
   // created worktree's commits or its recorded base, never the trigger text alone.
@@ -808,7 +772,7 @@ test.describe("New workspace flow", () => {
         projectKey: openedProject.projectKey,
         projectDisplayName: openedProject.projectDisplayName,
       });
-      await selectWorkspaceMode(page, "branch-off");
+      await selectWorkspaceIsolation(page, "worktree");
       return openedProject;
     }
 
@@ -927,6 +891,53 @@ test.describe("New workspace flow", () => {
     });
   });
 
+  test("existing worktree starts the first agent in the chosen worktree", async ({ page }) => {
+    const tempRepo = await createTempGitRepo("existing-worktree-");
+    // Made with git, not Paseo: the list holds every git worktree of the repository.
+    const worktreePath = path.join(tempRepo.path, "manual-worktree");
+    execSync(`git worktree add -b e2e/manual ${JSON.stringify(worktreePath)}`, {
+      cwd: tempRepo.path,
+      stdio: "ignore",
+    });
+
+    try {
+      const openedProject = await openProjectViaDaemon(client, tempRepo.path);
+      localWorkspaceIds.add(openedProject.workspaceId);
+      localProjectIds.add(openedProject.projectId);
+
+      await gotoAppShell(page);
+      await waitForSidebarHydration(page);
+      await openNewWorkspaceComposer(page, {
+        projectKey: openedProject.projectKey,
+        projectDisplayName: openedProject.projectDisplayName,
+      });
+      await selectWorkspaceIsolation(page, "existing");
+      await expect(page.getByTestId("new-workspace-worktree-picker-trigger")).toContainText(
+        "e2e/manual",
+      );
+      await submitNewWorkspacePrompt(page);
+
+      const createdWorkspace = await assertNewWorkspaceSidebarAndHeader(page, {
+        serverId: getServerId(),
+        client,
+        previousWorkspaceId: openedProject.workspaceId,
+        projectDisplayName: openedProject.projectDisplayName,
+      });
+      localWorkspaceIds.add(createdWorkspace.workspaceId);
+      expect(await realpath(createdWorkspace.workspaceDirectory)).toBe(
+        await realpath(worktreePath),
+      );
+
+      const agentTabs = page
+        .getByTestId(`workspace-deck-entry-${getServerId()}:${createdWorkspace.workspaceId}`)
+        .filter({ visible: true })
+        .locator('[data-testid^="workspace-tab-agent_"]');
+      await expect(agentTabs).toHaveCount(1, { timeout: 30_000 });
+    } finally {
+      await tempRepo.cleanup();
+    }
+  });
+
   test("branch picker opens via keyboard and selects the filtered option on Enter", async ({
     page,
   }) => {
@@ -942,7 +953,7 @@ test.describe("New workspace flow", () => {
         projectKey: openedProject.projectKey,
         projectDisplayName: openedProject.projectDisplayName,
       });
-      await selectWorkspaceMode(page, "branch-off");
+      await selectWorkspaceIsolation(page, "worktree");
 
       await openBranchPicker(page);
       await expectPickerOpen(page);
@@ -967,7 +978,7 @@ test.describe("New workspace flow", () => {
         projectKey: openedProject.projectKey,
         projectDisplayName: openedProject.projectDisplayName,
       });
-      await selectWorkspaceMode(page, "branch-off");
+      await selectWorkspaceIsolation(page, "worktree");
 
       await openBranchPicker(page);
       await expectPickerOpen(page);
@@ -997,7 +1008,7 @@ test.describe("New workspace flow", () => {
         projectKey: openedProject.projectKey,
         projectDisplayName: openedProject.projectDisplayName,
       });
-      await selectWorkspaceMode(page, "checkout");
+      await selectWorkspaceIsolation(page, "worktree");
       await openStartingRefPicker(page);
       await selectGitHubPrInPicker(page, pr.number);
 
@@ -1015,7 +1026,7 @@ test.describe("New workspace flow", () => {
     }
   });
 
-  test("pasted GitHub PR replaces a selected branch and is checked out in its worktree", async ({
+  test("pasted GitHub PR replaces a selected branch and creates its worktree", async ({
     page,
     context,
   }) => {
@@ -1033,7 +1044,7 @@ test.describe("New workspace flow", () => {
       projectKey: openedProject.projectKey,
       projectDisplayName: openedProject.projectDisplayName,
     });
-    await selectWorkspaceMode(page, "checkout");
+    await selectWorkspaceIsolation(page, "worktree");
     await openStartingRefPicker(page);
     await selectBranchInPicker(page, "main");
 
@@ -1073,7 +1084,7 @@ test.describe("New workspace flow", () => {
     expect(existsSync(path.join(worktree.workspaceDirectory, "pr-1.txt"))).toBe(true);
   });
 
-  test("reselecting a branch after a pasted PR uses New branch for the created worktree", async ({
+  test("branches remain searchable after a pasted PR and determine the created worktree", async ({
     page,
     context,
   }) => {
@@ -1091,7 +1102,7 @@ test.describe("New workspace flow", () => {
       projectKey: openedProject.projectKey,
       projectDisplayName: openedProject.projectDisplayName,
     });
-    await selectWorkspaceMode(page, "checkout");
+    await selectWorkspaceIsolation(page, "worktree");
     await pasteGithubPrUrl(page, context, pr.url);
     await expectStartingRefPickerTriggerPr(page, {
       number: pr.number,
@@ -1101,7 +1112,6 @@ test.describe("New workspace flow", () => {
 
     await openStartingRefPicker(page);
     await searchAndSelectBranchInPicker(page, "main");
-    await selectWorkspaceMode(page, "branch-off");
     await expectPickerSelected(page, "main");
     await fillNewWorkspaceDraft(page, `${pr.url}\nKeep this checkout on main`);
     await expectPickerSelected(page, "main");
@@ -1118,7 +1128,7 @@ test.describe("New workspace flow", () => {
     expect(existsSync(path.join(worktree.workspaceDirectory, "pr-1.txt"))).toBe(false);
   });
 
-  test("Check out creates the worktree from the selected PR head even when it is not fetched", async ({
+  test("selected GitHub PR creates the worktree from the PR head even when the head branch is not fetched", async ({
     page,
   }) => {
     test.skip(!hasGithubAuth(), "Requires GitHub authentication (gh auth login)");
@@ -1140,7 +1150,7 @@ test.describe("New workspace flow", () => {
         projectKey: openedProject.projectKey,
         projectDisplayName: openedProject.projectDisplayName,
       });
-      await selectWorkspaceMode(page, "checkout");
+      await selectWorkspaceIsolation(page, "worktree");
       await openStartingRefPicker(page);
       await selectGitHubPrInPicker(page, pr.number);
       await submitNewWorkspaceWithoutPrompt(page);
