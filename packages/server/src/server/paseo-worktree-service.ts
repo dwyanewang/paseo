@@ -286,11 +286,7 @@ async function maybeMarkFirstAgentBranchAutoNameEligible(options: {
   input: Pick<CreatePaseoWorktreeInput, "branchName">;
 }): Promise<void> {
   const { createdWorktree, input } = options;
-  if (
-    !createdWorktree.created ||
-    (createdWorktree.intent.kind !== "branch-off" &&
-      createdWorktree.intent.kind !== "branch-off-change-request")
-  ) {
+  if (!createdWorktree.created || createdWorktree.intent.kind !== "branch-off") {
     return;
   }
   // A worktree manager plugin owns branch and directory naming, so skip silent renames.

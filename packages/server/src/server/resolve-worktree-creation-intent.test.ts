@@ -139,12 +139,9 @@ describe("resolveWorktreeCreationIntent", () => {
         deps,
       ),
     ).resolves.toEqual({
-      kind: "branch-off-change-request",
-      forge: "github",
-      changeRequestNumber: 42,
-      headRef: "pr-42",
-      baseRefName: "main",
-      checkoutRefs: [{ remoteName: "origin", remoteRef: "refs/pull/42/head" }],
+      kind: "branch-off",
+      baseBranch: "refs/remotes/origin/pr-42",
+      startPoint: "refs/paseo/change-requests/42",
       branchName: "follow-up",
     });
     expect(deps.headRefLookups).toEqual([]);

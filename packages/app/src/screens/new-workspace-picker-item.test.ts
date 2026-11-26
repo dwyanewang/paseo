@@ -131,7 +131,7 @@ describe("pickerItemToCheckoutRequest", () => {
 });
 
 describe("pickerItemToCheckoutRequest with an action", () => {
-  it("checks a branch out by its branch name, whichever ref the row stands for", () => {
+  it("keeps the selected remote ref when checking out a branch", () => {
     const item: PickerItem = {
       kind: "branch",
       name: "dev",
@@ -140,7 +140,7 @@ describe("pickerItemToCheckoutRequest with an action", () => {
     };
     expect(pickerItemToCheckoutRequest(item, "checkout")).toEqual({
       action: "checkout",
-      refName: "dev",
+      refName: "refs/remotes/origin/dev",
     });
   });
 
