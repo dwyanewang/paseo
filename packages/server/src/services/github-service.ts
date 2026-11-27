@@ -2444,6 +2444,10 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
           return toPullRequestCheckoutTarget({
             cwd: input.cwd,
             parsed,
+            queriedRepository: {
+              host: (await resolveRepoHostCached(input.cwd)) ?? process.env.GH_HOST ?? "github.com",
+              repo: `${owner}/${name}`.toLowerCase(),
+            },
             resolveSshHostname: deps.resolveSshHostname,
           });
         },
@@ -3921,6 +3925,7 @@ function normalizeRepositorySummary(repository: {
 async function toPullRequestCheckoutTarget(options: {
   cwd: string;
   parsed: z.infer<typeof PullRequestCheckoutTargetSchema>;
+  queriedRepository: { host: string; repo: string };
   resolveSshHostname: (host: string) => Promise<string | null>;
 }): Promise<PullRequestCheckoutTarget> {
   const { parsed } = options;
@@ -3928,16 +3933,20 @@ async function toPullRequestCheckoutTarget(options: {
   if (!pullRequest) {
     throw new Error("Pull request not found");
   }
-  const remoteName = await resolveGitHubBaseRepositoryRemote({
+  const remoteNames = await resolveGitHubBaseRepositoryRemotes({
     cwd: options.cwd,
     repositoryUrl: parsed.data.repository.url,
+    queriedRepository: options.queriedRepository,
     resolveSshHostname: options.resolveSshHostname,
   });
   return {
     number: pullRequest.number,
     baseRefName: pullRequest.baseRefName,
     headRefName: pullRequest.headRefName,
-    checkoutRefs: [{ remoteName, remoteRef: `refs/pull/${pullRequest.number}/head` }],
+    checkoutRefs: remoteNames.map((remoteName) => ({
+      remoteName,
+      remoteRef: `refs/pull/${pullRequest.number}/head`,
+    })),
     headOwnerLogin: pullRequest.headRepositoryOwner?.login || null,
     headRepositorySshUrl: pullRequest.headRepository?.sshUrl || null,
     headRepositoryUrl: pullRequest.headRepository?.url || null,
@@ -3946,54 +3955,48 @@ async function toPullRequestCheckoutTarget(options: {
   };
 }
 
-async function resolveGitHubBaseRepositoryRemote(options: {
+async function resolveGitHubBaseRepositoryRemotes(options: {
   cwd: string;
   repositoryUrl: string | null | undefined;
+  queriedRepository: { host: string; repo: string };
   resolveSshHostname: (host: string) => Promise<string | null>;
-}): Promise<string> {
-  const baseRepository = await parseGitHubRepositoryRemote(options.repositoryUrl);
-  if (!baseRepository) {
-    // The GraphQL schema allows a missing repository URL, and a token without `repo` scope on a
-    // private GHE instance hits that. Base-repository detection is an improvement over the old
-    // hardcoded "origin", so fall back to it rather than failing a checkout that used to work.
-    return "origin";
+}): Promise<string[]> {
+  const verifiedRepository = await parseGitHubRepositoryRemote(options.repositoryUrl);
+  const baseRepository = verifiedRepository ?? options.queriedRepository;
+
+  // Read the configured URLs before Git applies url.*.insteadOf rules.
+  let stdout: string;
+  try {
+    ({ stdout } = await runGitCommand(["config", "--get-regexp", "^remote\\..+\\.url$"], {
+      cwd: options.cwd,
+      env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
+      timeout: GIT_ORIGIN_URL_READ_TIMEOUT_MS,
+      acceptExitCodes: [0, 1],
+    }));
+  } catch (error) {
+    if (verifiedRepository) throw error;
+    return ["origin"];
   }
 
-  const { stdout } = await runGitCommand(["remote"], { cwd: options.cwd });
-  const remoteNames = stdout
-    .split(/\r?\n/u)
-    .map((remoteName) => remoteName.trim())
-    .filter(Boolean);
-  const matchingRemoteNames: string[] = [];
-
-  for (const remoteName of remoteNames) {
-    // `git remote get-url` applies url.*.insteadOf and can hide the forge identity.
-    const { stdout: urls } = await runGitCommand(
-      ["config", "--get-all", `remote.${remoteName}.url`],
-      { cwd: options.cwd },
-    );
-    if (
-      (
-        await Promise.all(
-          urls
-            .split(/\r?\n/u)
-            .map((url) => parseGitHubRepositoryRemote(url, options.resolveSshHostname)),
-        )
-      ).some(
-        (remote) => remote?.host === baseRepository.host && remote.repo === baseRepository.repo,
-      )
-    ) {
-      matchingRemoteNames.push(remoteName);
+  const matchingRemoteNames = new Set<string>();
+  for (const line of stdout.split(/\r?\n/u)) {
+    const match = /^remote\.(.+)\.url\s+(.+)$/u.exec(line.trim());
+    if (!match) continue;
+    const [, remoteName, url] = match;
+    const remote = await parseGitHubRepositoryRemote(url, options.resolveSshHostname);
+    if (remote?.host === baseRepository.host && remote.repo === baseRepository.repo) {
+      matchingRemoteNames.add(remoteName);
     }
   }
 
-  const remoteName = matchingRemoteNames.includes("origin") ? "origin" : matchingRemoteNames[0];
-  if (!remoteName) {
+  if (matchingRemoteNames.size === 0) {
+    if (!verifiedRepository) return ["origin"];
     throw new Error(
       `No local Git remote matches the pull request base repository ${baseRepository.host}/${baseRepository.repo}`,
     );
   }
-  return remoteName;
+  const preferredRemotes = matchingRemoteNames.delete("origin") ? ["origin"] : [];
+  return [...preferredRemotes, ...matchingRemoteNames];
 }
 
 async function parseGitHubRepositoryRemote(

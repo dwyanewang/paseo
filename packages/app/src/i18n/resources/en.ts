@@ -655,6 +655,24 @@ export const en = {
         invalidUrl: "Invalid browser URL",
         unsupportedProtocol: "Blocked unsupported browser URL: {{protocol}}",
       },
+      routing: {
+        tooltipHost: "Browsing through {{hostName}}. Click to browse locally.",
+        tooltipLocal: "Browsing locally. Click to browse through {{hostName}}.",
+        switchToLocal: "Switch browser routing from {{hostName}} to Local",
+        switchToHost: "Switch browser routing from Local to {{hostName}}",
+      },
+      proxy: {
+        connecting: "Connecting to {{hostName}}...",
+        reconnecting: "Reconnecting to {{hostName}}...",
+        updateTitle: "Update {{hostName}} to browse through this host",
+        updateDescription: "This host does not support browser proxying yet.",
+        routedTitle: "Browser proxy is not available for routed hosts",
+        routedDescription: "Connect directly to this host or browse locally.",
+        offlineTitle: "{{hostName}} is offline",
+        offlineDescription: "Wait for the host to reconnect or browse locally.",
+        errorTitle: "Could not connect browser proxy",
+        browseLocally: "Browse locally",
+      },
     },
     terminal: {
       hostDisconnected: "Host is not connected",
@@ -2433,7 +2451,7 @@ export const en = {
     title: "Settings",
     loading: "Loading settings...",
     groups: {
-      app: "App",
+      app: "This device",
       host: "Host",
     },
     hostPicker: {
@@ -2451,7 +2469,9 @@ export const en = {
     groupInfo: "About {{title}}",
     sections: {
       general: "General",
+      hosts: "Hosts",
       chat: "Chat",
+      chatAndPanes: "Chat & panes",
       appearance: "Appearance",
       sidebar: "Sidebar",
       editor: "Editor",
@@ -2464,6 +2484,16 @@ export const en = {
       permissions: "Permissions",
       diagnostics: "Diagnostics",
       about: "About",
+    },
+    clientHosts: {
+      title: "Saved hosts",
+      info: "Hosts this device connects to. Names, icons, badges, and routes here only affect this device.",
+      backToHosts: "Back to hosts",
+      routesTitle: "How this device connects",
+      routesInfo:
+        "Saved routes this device uses to reach this host. Paseo picks the fastest available route.",
+      addRoute: "Add route",
+      activeRoute: "Active",
     },
     layout: {
       openInSidePane: {
@@ -2578,6 +2608,7 @@ export const en = {
       projects: "Projects",
       connections: "Connections",
       agents: "Agents",
+      tools: "Tools & prompts",
       agentProfiles: "Agent profiles",
       metadata: "Metadata",
       voice: "Voice",
@@ -2587,6 +2618,7 @@ export const en = {
       terminals: "Terminals",
       plugins: "Plugins",
       host: "Overview",
+      daemon: "Daemon",
     },
     plugins: {
       gallery: pluginGallery.en,
@@ -3151,9 +3183,9 @@ export const en = {
         rowTitle: "Pair a device",
       },
       skills: {
-        sectionTitle: "Orchestration skills",
-        title: "Orchestration skills",
-        description: "Teach your agents how to use Paseo tools",
+        sectionTitle: "Skills",
+        title: "Paseo skills",
+        description: "Install bundled help, plugin, and orchestration skills",
         docs: "Skills",
         openDocs: "Open skills documentation",
         unavailable: "Connect to this host to manage orchestration skills",
@@ -3190,6 +3222,10 @@ export const en = {
           update: "Update skill",
           delete: "Delete skill",
         },
+      },
+      tools: {
+        instructionsTitle: "Instructions",
+        toolsTitle: "Agent tools",
       },
       orchestration: {
         title: "Orchestration",
@@ -3317,6 +3353,7 @@ export const en = {
         },
       },
       daemon: {
+        runtimeTitle: "Agent runtime",
         rename: {
           editLabel: "Edit label",
           title: "Rename host",

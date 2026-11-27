@@ -662,6 +662,24 @@ export const fr: TranslationResources = {
         invalidUrl: "URL du navigateur invalide",
         unsupportedProtocol: "URL bloquée, protocole non pris en charge : {{protocol}}",
       },
+      routing: {
+        tooltipHost: "Navigation via {{hostName}}. Cliquez pour naviguer en local.",
+        tooltipLocal: "Navigation locale. Cliquez pour naviguer via {{hostName}}.",
+        switchToLocal: "Basculer le routage du navigateur de {{hostName}} vers Local",
+        switchToHost: "Basculer le routage du navigateur de Local vers {{hostName}}",
+      },
+      proxy: {
+        connecting: "Connexion à {{hostName}}...",
+        reconnecting: "Reconnexion à {{hostName}}...",
+        updateTitle: "Mettez à jour {{hostName}} pour naviguer via cet hôte",
+        updateDescription: "Cet hôte ne prend pas encore en charge le proxy du navigateur.",
+        routedTitle: "Le proxy du navigateur n’est pas disponible pour les hôtes routés",
+        routedDescription: "Connectez-vous directement à cet hôte ou naviguez en local.",
+        offlineTitle: "{{hostName}} est hors ligne",
+        offlineDescription: "Attendez la reconnexion de l’hôte ou naviguez en local.",
+        errorTitle: "Impossible de connecter le proxy du navigateur",
+        browseLocally: "Naviguer en local",
+      },
     },
     terminal: {
       hostDisconnected: "L’hôte n’est pas connecté",
@@ -2458,7 +2476,7 @@ export const fr: TranslationResources = {
     title: "Paramètres",
     loading: "Chargement des paramètres…",
     groups: {
-      app: "Application",
+      app: "Cet appareil",
       host: "Hôte",
     },
     hostPicker: {
@@ -2476,7 +2494,9 @@ export const fr: TranslationResources = {
     groupInfo: "À propos de {{title}}",
     sections: {
       general: "Général",
+      hosts: "Hôtes",
       chat: "Discussion",
+      chatAndPanes: "Chat et panneaux",
       appearance: "Apparence",
       sidebar: "Barre latérale",
       terminal: "Terminal",
@@ -2489,6 +2509,16 @@ export const fr: TranslationResources = {
       permissions: "Autorisations",
       diagnostics: "Diagnostic",
       about: "À propos",
+    },
+    clientHosts: {
+      title: "Hôtes enregistrés",
+      info: "Hôtes auxquels cet appareil se connecte. Les noms, icônes, badges et routes ici ne concernent que cet appareil.",
+      backToHosts: "Retour aux hôtes",
+      routesTitle: "Comment cet appareil se connecte",
+      routesInfo:
+        "Routes enregistrées utilisées par cet appareil pour joindre cet hôte. Paseo choisit la plus rapide disponible.",
+      addRoute: "Ajouter une route",
+      activeRoute: "Active",
     },
     layout: en.settings.layout,
     editor: {
@@ -2567,6 +2597,7 @@ export const fr: TranslationResources = {
       projects: "Projets",
       connections: "Connexions",
       agents: "Agents",
+      tools: "Outils et instructions",
       agentProfiles: "Profils d’agent",
       metadata: "Métadonnées",
       voice: "Voix",
@@ -2576,6 +2607,7 @@ export const fr: TranslationResources = {
       terminals: "Terminaux",
       plugins: "Plugins",
       host: "Aperçu",
+      daemon: "Daemon",
     },
     plugins: pluginSettings.fr,
     metadataGeneration: {
@@ -3126,6 +3158,10 @@ export const fr: TranslationResources = {
           delete: "Supprimer le skill",
         },
       },
+      tools: {
+        instructionsTitle: "Instructions",
+        toolsTitle: "Outils des agents",
+      },
       orchestration: {
         title: "Orchestration",
         unavailable: "Connectez-vous à cet hôte pour gérer l’orchestration",
@@ -3255,6 +3291,7 @@ export const fr: TranslationResources = {
         },
       },
       daemon: {
+        runtimeTitle: "Exécution des agents",
         rename: {
           editLabel: "Modifier le libellé",
           title: "Renommer l’hôte",

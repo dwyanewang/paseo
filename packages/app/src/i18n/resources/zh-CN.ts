@@ -656,6 +656,24 @@ export const zhCN: TranslationResources = {
         invalidUrl: "浏览器 URL 无效",
         unsupportedProtocol: "已阻止不支持的浏览器 URL：{{protocol}}",
       },
+      routing: {
+        tooltipHost: "正在通过 {{hostName}} 浏览。点击切换为本地浏览。",
+        tooltipLocal: "正在本地浏览。点击切换为通过 {{hostName}} 浏览。",
+        switchToLocal: "将浏览器路由从 {{hostName}} 切换为本地",
+        switchToHost: "将浏览器路由从本地切换为 {{hostName}}",
+      },
+      proxy: {
+        connecting: "正在连接到 {{hostName}}...",
+        reconnecting: "正在重新连接到 {{hostName}}...",
+        updateTitle: "请更新 {{hostName}} 以通过此主机浏览",
+        updateDescription: "此主机尚不支持浏览器代理。",
+        routedTitle: "路由主机不支持浏览器代理",
+        routedDescription: "请直接连接到此主机，或改为本地浏览。",
+        offlineTitle: "{{hostName}} 已离线",
+        offlineDescription: "请等待主机重新连接，或改为本地浏览。",
+        errorTitle: "无法连接浏览器代理",
+        browseLocally: "本地浏览",
+      },
     },
     terminal: {
       hostDisconnected: "Host 未连接",
@@ -2378,7 +2396,7 @@ export const zhCN: TranslationResources = {
     title: "设置",
     loading: "正在加载设置...",
     groups: {
-      app: "应用",
+      app: "此设备",
       host: "主机",
     },
     hostPicker: {
@@ -2396,7 +2414,9 @@ export const zhCN: TranslationResources = {
     groupInfo: "关于 {{title}}",
     sections: {
       general: "通用",
+      hosts: "主机",
       chat: "聊天",
+      chatAndPanes: "聊天与面板",
       appearance: "外观",
       sidebar: "侧边栏",
       terminal: "终端",
@@ -2409,6 +2429,15 @@ export const zhCN: TranslationResources = {
       permissions: "权限",
       diagnostics: "诊断",
       about: "关于",
+    },
+    clientHosts: {
+      title: "已保存的主机",
+      info: "此设备连接的主机。这里的名称、图标、徽章和连接路径仅影响此设备。",
+      backToHosts: "返回主机",
+      routesTitle: "此设备的连接方式",
+      routesInfo: "此设备连接到该主机的已保存路径。Paseo 会自动选择最快的可用路径。",
+      addRoute: "添加路径",
+      activeRoute: "当前使用",
     },
     layout: en.settings.layout,
     editor: {
@@ -2484,6 +2513,7 @@ export const zhCN: TranslationResources = {
       projects: "项目",
       connections: "连接",
       agents: "Agents",
+      tools: "工具与提示词",
       agentProfiles: "智能体配置文件",
       metadata: "元数据",
       voice: "语音",
@@ -2493,6 +2523,7 @@ export const zhCN: TranslationResources = {
       terminals: "Terminals",
       plugins: "插件",
       host: "概览",
+      daemon: "守护进程",
     },
     plugins: pluginSettings["zh-CN"],
     metadataGeneration: {
@@ -3023,6 +3054,10 @@ export const zhCN: TranslationResources = {
           delete: "删除 skill",
         },
       },
+      tools: {
+        instructionsTitle: "指令",
+        toolsTitle: "代理工具",
+      },
       orchestration: {
         title: "编排",
         unavailable: "连接到这个 Host 以管理编排",
@@ -3149,6 +3184,7 @@ export const zhCN: TranslationResources = {
         },
       },
       daemon: {
+        runtimeTitle: "代理运行时",
         rename: {
           editLabel: "编辑标签",
           title: "重命名 Host",

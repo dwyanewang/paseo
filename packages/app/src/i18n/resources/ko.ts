@@ -657,6 +657,24 @@ export const ko: TranslationResources = {
         invalidUrl: "잘못된 브라우저 URL",
         unsupportedProtocol: "지원되지 않는 브라우저 URL을 차단했습니다: {{protocol}}",
       },
+      routing: {
+        tooltipHost: "{{hostName}}을(를) 통해 탐색 중입니다. 클릭하여 로컬로 탐색하세요.",
+        tooltipLocal: "로컬로 탐색 중입니다. 클릭하여 {{hostName}}을(를) 통해 탐색하세요.",
+        switchToLocal: "브라우저 라우팅을 {{hostName}}에서 로컬로 전환",
+        switchToHost: "브라우저 라우팅을 로컬에서 {{hostName}}(으)로 전환",
+      },
+      proxy: {
+        connecting: "{{hostName}}에 연결 중...",
+        reconnecting: "{{hostName}}에 다시 연결 중...",
+        updateTitle: "이 호스트를 통해 탐색하려면 {{hostName}}을(를) 업데이트하세요",
+        updateDescription: "이 호스트는 아직 브라우저 프록시를 지원하지 않습니다.",
+        routedTitle: "라우팅된 호스트에서는 브라우저 프록시를 사용할 수 없습니다",
+        routedDescription: "이 호스트에 직접 연결하거나 로컬로 탐색하세요.",
+        offlineTitle: "{{hostName}}이(가) 오프라인입니다",
+        offlineDescription: "호스트가 다시 연결될 때까지 기다리거나 로컬로 탐색하세요.",
+        errorTitle: "브라우저 프록시에 연결할 수 없습니다",
+        browseLocally: "로컬로 탐색",
+      },
     },
     terminal: {
       hostDisconnected: "호스트가 연결되어 있지 않습니다",
@@ -2416,7 +2434,7 @@ export const ko: TranslationResources = {
     title: "설정",
     loading: "설정 불러오는 중...",
     groups: {
-      app: "앱",
+      app: "이 기기",
       host: "호스트",
     },
     hostPicker: {
@@ -2434,7 +2452,9 @@ export const ko: TranslationResources = {
     groupInfo: "{{title}} 정보",
     sections: {
       general: "일반",
+      hosts: "호스트",
       chat: "채팅",
+      chatAndPanes: "채팅 및 패널",
       appearance: "모양",
       sidebar: "사이드바",
       terminal: "터미널",
@@ -2447,6 +2467,16 @@ export const ko: TranslationResources = {
       permissions: "권한",
       diagnostics: "진단",
       about: "정보",
+    },
+    clientHosts: {
+      title: "저장된 호스트",
+      info: "이 기기가 연결하는 호스트입니다. 이름, 아이콘, 배지 및 경로는 이 기기에만 적용됩니다.",
+      backToHosts: "호스트로 돌아가기",
+      routesTitle: "이 기기의 연결 방식",
+      routesInfo:
+        "이 기기가 이 호스트에 연결할 때 사용하는 저장된 경로입니다. Paseo가 가장 빠른 경로를 선택합니다.",
+      addRoute: "경로 추가",
+      activeRoute: "활성",
     },
     layout: en.settings.layout,
     editor: {
@@ -2522,6 +2552,7 @@ export const ko: TranslationResources = {
       projects: "프로젝트",
       connections: "연결",
       agents: "에이전트",
+      tools: "도구 및 프롬프트",
       agentProfiles: "에이전트 프로필",
       metadata: "메타데이터",
       voice: "음성",
@@ -2531,6 +2562,7 @@ export const ko: TranslationResources = {
       terminals: "터미널",
       plugins: "플러그인",
       host: "개요",
+      daemon: "데몬",
     },
     plugins: pluginSettings.ko,
     metadataGeneration: {
@@ -3071,6 +3103,10 @@ export const ko: TranslationResources = {
           delete: "스킬 삭제",
         },
       },
+      tools: {
+        instructionsTitle: "지침",
+        toolsTitle: "에이전트 도구",
+      },
       orchestration: {
         title: "오케스트레이션",
         unavailable: "오케스트레이션을 관리하려면 이 호스트에 연결하세요",
@@ -3198,6 +3234,7 @@ export const ko: TranslationResources = {
         },
       },
       daemon: {
+        runtimeTitle: "에이전트 런타임",
         rename: {
           editLabel: "레이블 편집",
           title: "호스트 이름 변경",
