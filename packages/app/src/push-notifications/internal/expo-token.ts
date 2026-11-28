@@ -13,6 +13,12 @@ function storageKey(serverId: string): string {
 }
 
 function getExpoProjectId(): string | null {
+  if (Platform.OS === "android") {
+    const fromAndroidBuild = ExpoPushTokenSchema.safeParse(
+      Constants.expoConfig?.extra?.androidPushProjectId,
+    );
+    if (fromAndroidBuild.success) return fromAndroidBuild.data;
+  }
   const fromEas = ExpoPushTokenSchema.safeParse(Constants.easConfig?.projectId);
   if (fromEas.success) return fromEas.data;
   const fromExtra = ExpoPushTokenSchema.safeParse(Constants.expoConfig?.extra?.eas?.projectId);
