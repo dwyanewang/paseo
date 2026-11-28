@@ -172,6 +172,18 @@ PASEO_PROFILE_BUILD=1 npm run android:production
 Those markers emit only while a system trace records `sh.paseo` (`perfetto -a sh.paseo ...`);
 they do not produce Downloads files.
 
+## Push notifications in self-built APKs
+
+Register `sh.paseo` in Firebase and save its client configuration to
+`packages/app/.secrets/google-services.prod.json`. Upload a service account key from the same
+Firebase project to the Android FCM V1 credentials in your Expo project.
+
+Save your Expo Project ID (a UUID) as plain text in
+`packages/app/.secrets/expo-android-push-project-id.prod`. Set
+`PASEO_ANDROID_PUSH_PROJECT_ID_FILE` to an absolute path if you keep that file elsewhere.
+The Android production build embeds the ID for push token registration. Both files can stay
+in the local build checkout across rebuilds. Keep the service account key in Expo credentials.
+
 ## Running on an emulator against a worktree daemon
 
 `npm run android` builds and installs the dev client, but two connections have to reach your Mac from inside the emulator — Metro (the JS bundle) and the Paseo daemon — and **the emulator does not share the host's loopback**: `localhost` inside the emulator is the emulator itself. Reach the host at `10.0.2.2` (the standard AVD's host alias) for both:

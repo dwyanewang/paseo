@@ -68,6 +68,21 @@ function resolveSecretFile(params) {
   return undefined;
 }
 
+function resolveAndroidPushProjectId() {
+  if (appVariant !== "production" || isFdroidBuild) return undefined;
+  const file = resolveSecretFile({
+    envKey: "PASEO_ANDROID_PUSH_PROJECT_ID_FILE",
+    fallbackRelativePath: "./.secrets/expo-android-push-project-id.prod",
+  });
+  if (!file) return undefined;
+
+  const projectId = fs.readFileSync(path.resolve(__dirname, file), "utf8").trim();
+  if (!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(projectId)) {
+    throw new Error(`Expected an Expo Project ID (UUID) in ${file}`);
+  }
+  return projectId;
+}
+
 const variants = {
   production: {
     name: "Paseo",
@@ -97,6 +112,7 @@ const variants = {
 
 const variant = variants[appVariant] ?? variants.production;
 const nativeReleaseVersion = getNativeReleaseVersion(pkg.version);
+const androidPushProjectId = resolveAndroidPushProjectId();
 
 export default {
   expo: {
@@ -204,6 +220,7 @@ export default {
       autolinkingModuleResolution: true,
     },
     extra: {
+      ...(androidPushProjectId ? { androidPushProjectId } : {}),
       fdroidBuild: isFdroidBuild,
       profileBuild: isProfileBuild,
       watchdogBuild: isWatchdogBuild,
