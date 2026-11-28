@@ -1,5 +1,6 @@
 import { useDisclosureHold } from "@/agent-stream/disclosure";
 import { MessagePreview, MessageSender } from "@/components/user-message";
+import { useClientForgeHost } from "@/git/client-forge-registry";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { getAgentAttachmentPillContent } from "@/attachments/attachment-pill-content";
 import type { AttachmentMetadata } from "@/attachments/types";
@@ -505,6 +506,7 @@ export const UserMessage = memo(function UserMessage({
   disableOuterSpacing,
 }: UserMessageProps) {
   const isCompact = useIsCompactFormFactor();
+  const clientForgeHost = useClientForgeHost(serverId ?? "");
   const { t } = useTranslation();
   const [isHovered, setIsHovered] = useState(false);
   const [lightboxMetadata, setLightboxMetadata] = useState<AttachmentMetadata | null>(null);
@@ -596,7 +598,7 @@ export const UserMessage = memo(function UserMessage({
             {hasAttachments ? (
               <View style={attachmentPreviewContainerStyle}>
                 {attachments.map((attachment, index) => {
-                  const content = getAgentAttachmentPillContent(attachment, t);
+                  const content = getAgentAttachmentPillContent(attachment, t, clientForgeHost);
                   return (
                     <AttachmentFrame
                       key={`${attachment.type}:${"number" in attachment ? attachment.number : index}`}

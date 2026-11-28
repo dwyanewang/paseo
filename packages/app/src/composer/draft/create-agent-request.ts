@@ -9,6 +9,7 @@ export interface WorkspaceDraftAgentRequest {
   config: AgentSessionConfig;
   text: string;
   clientMessageId: string;
+  labels?: Record<string, string>;
   images?: AttachmentMetadata[];
   attachments?: CreateAgentRequestMessage["attachments"];
 }
@@ -27,6 +28,7 @@ export async function requestWorkspaceDraftAgent(
     config: request.config,
     workspaceId: request.workspaceId,
     clientMessageId: request.clientMessageId,
+    ...(request.labels ? { labels: request.labels } : {}),
     ...(request.text ? { initialPrompt: request.text } : {}),
     ...(mergedAttachments.length > 0 ? { attachments: mergedAttachments } : {}),
   });

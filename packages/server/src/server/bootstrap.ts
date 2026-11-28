@@ -91,7 +91,7 @@ import { VoiceAssistantWebSocketServer, isDaemonOriginAllowed } from "./websocke
 import { WorkspaceSetupRuntime } from "./workspace-setup-runtime.js";
 import { createWorkspaceLabelService } from "./workspace-labels/index.js";
 import { createChangeRequestRouter } from "../services/change-request-router.js";
-import { createForgeService } from "../services/forge-registry.js";
+import { createDefaultForgeRegistry } from "../services/forge-registry.js";
 import { createForgeResolver } from "../services/forge-resolver.js";
 import { createGitHubService } from "../services/github-service.js";
 import { createPaseoWorktree as createRegisteredPaseoWorktree } from "./paseo-worktree-service.js";
@@ -621,6 +621,7 @@ export async function createPaseoDaemon(
   });
   const browserToolsPolicy = new DaemonConfigBrowserToolsPolicy(daemonConfigStore);
   const browserToolsBroker = new BrowserToolsBroker({});
+  const forgeRegistry = createDefaultForgeRegistry();
   const pluginRuntime: PluginService = new PluginService(logger, daemonConfigStore, daemonVersion, {
     usageAgents: {
       hasAgent: (id) => agentManager.getAgent(id) !== null,
@@ -635,6 +636,7 @@ export async function createPaseoDaemon(
     }),
     builtinPlugins: resolveBuiltinPluginLoader(dependencies),
     settingsDirectory: path.join(config.paseoHome, "plugin-settings"),
+    forgeRegistry,
   });
 
   const serverId = getOrCreateServerId(config.paseoHome, { logger });
@@ -919,12 +921,14 @@ export async function createPaseoDaemon(
   });
   const github = createGitHubService();
   const forgeResolver = createForgeResolver({
-    createService: (forge) => (forge === "github" ? github : createForgeService(forge)),
+    registry: forgeRegistry,
+    createService: (forge) => (forge === "github" ? github : forgeRegistry.create(forge)),
   });
   const workspaceGitService = new WorkspaceGitServiceImpl({
     logger,
     paseoHome: config.paseoHome,
     worktreesRoot: config.worktreesRoot,
+    forgeRegistry,
     deps: {
       forgeResolver,
     },
@@ -1002,6 +1006,7 @@ export async function createPaseoDaemon(
     mcpAuthToken: agentMcpAuthToken,
     resolvePaseoToolPolicy: (provider) =>
       resolvePaseoToolPolicy(provider, daemonConfigStore.get().providers),
+    forgeDefinitionLookup: (forge) => forgeRegistry.definitionOrNeutral(forge),
     logger,
   });
   const syncPluginProviders = () => {
@@ -1175,6 +1180,7 @@ export async function createPaseoDaemon(
     emitWorkspaceUpdateForWorkspaceId: async (workspaceId) => {
       await emitWorkspaceUpdatesExternal([workspaceId]);
     },
+    forgeDefinitionLookup: (forge) => forgeRegistry.definitionOrNeutral(forge),
     logger,
   });
 
