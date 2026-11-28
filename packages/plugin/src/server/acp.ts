@@ -7,13 +7,15 @@ import type {
   ProviderCommand,
   ProviderConfigState,
   ProviderMode,
+  ProviderHistoryReadRequest,
+  ProviderHistoryReadResult,
   ProviderNotice,
   ProviderPersistence,
   ProviderRegistration,
   ProviderTimelineItem,
   ProviderToolCallDetail,
 } from "./provider.js";
-import { createAcpProviderConnection } from "./acp-internal/connection.js";
+import { createAcpProviderConnection, readAcpProviderHistory } from "./acp-internal/connection.js";
 
 interface RunAcpProviderBaseOptions {
   id: string;
@@ -204,6 +206,11 @@ export function runAcpProvider(options: RunAcpProviderOptions): ProviderRegistra
         }),
     // Each command-based session spawns its own process, so it can run behind that session's wrap.
     ...(hasCommand ? { launchWrap: true } : {}),
+    async readSessionHistory(
+      request: ProviderHistoryReadRequest,
+    ): Promise<ProviderHistoryReadResult> {
+      return await readAcpProviderHistory(options, request);
+    },
     connect(request) {
       return createAcpProviderConnection(options, request);
     },

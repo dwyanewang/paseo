@@ -6,6 +6,7 @@ import type {
   ProviderCatalogRefreshMode,
   ProviderConnectRequest,
   ProviderEvent,
+  ProviderHistoryReadRequest,
   ProviderInput,
   ProviderInstallationLaunch,
   ProviderStatusRequest,
@@ -27,6 +28,7 @@ export interface PluginProviderMetadata {
   hasCatalogCacheKey?: boolean;
   hasStatus?: boolean;
   installation?: PluginProviderInstallationMetadata;
+  hasHistoryReader?: boolean;
   command?: readonly [string, ...string[]];
   launchWrap?: boolean;
   id: string;
@@ -80,6 +82,12 @@ export type PluginProcessRequest =
       request: { launch?: ProviderInstallationLaunch; installedVersion?: string };
     }
   | { type: "provider.installation.cancel"; requestId: string }
+  | {
+      type: "provider.history";
+      requestId: string;
+      providerId: string;
+      request: ProviderHistoryReadRequest;
+    }
   | {
       type: "initialize";
       pluginId: string;
@@ -201,6 +209,7 @@ const providerMetadataSchema = z
       })
       .strict()
       .optional(),
+    hasHistoryReader: z.boolean().optional(),
     command: z.tuple([z.string().min(1)], z.string()).optional(),
     launchWrap: z.boolean().optional(),
   })
@@ -286,6 +295,24 @@ export const PluginProcessRequestSchema: z.ZodType<PluginProcessRequest> = z.dis
       })
       .strict(),
     z.object({ type: z.literal("provider.installation.cancel"), requestId: z.string() }).strict(),
+    z
+      .object({
+        type: z.literal("provider.history"),
+        requestId: z.string().min(1),
+        providerId: z.string().min(1),
+        request: z
+          .object({
+            persistence: z
+              .object({ version: z.number().int().nonnegative(), data: z.json() })
+              .strip(),
+            cwd: z.string(),
+            env: z.record(z.string(), z.string()).optional(),
+            launch: ProviderLaunchSchema.optional(),
+            wrap: z.tuple([z.string().min(1)], z.string()).optional(),
+          })
+          .strict(),
+      })
+      .strict(),
     z
       .object({
         type: z.literal("initialize"),

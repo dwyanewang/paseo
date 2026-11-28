@@ -4,6 +4,7 @@ import type { ProviderOptions, ToolPolicy } from "@getpaseo/protocol/agent-types
 import type {
   AgentClient,
   AgentCreateConfigUnattendedInput,
+  AgentResumeSessionOptions,
   AgentMode,
   AgentModelDefinition,
   AgentPersistenceHandle,
@@ -538,6 +539,18 @@ function bindClientDirectMethods(inner: AgentClient) {
 // persistent catalog caches store only discovered entries and apply config overlays on load.
 const rawCatalogFetchers = new WeakMap<AgentClient, AgentClient["fetchCatalog"]>();
 
+function wrapHistoryReader(
+  provider: AgentProvider,
+  inner: AgentClient,
+): AgentClient["readSessionHistory"] {
+  const read = inner.readSessionHistory?.bind(inner);
+  if (!read) return undefined;
+  return async (handle, context) => {
+    const result = await read({ ...handle, provider: inner.provider }, context);
+    return { ...result, events: result.events.map((event) => mapStreamEvent(provider, event)) };
+  };
+}
+
 function wrapClientProvider(
   provider: AgentProvider,
   inner: AgentClient,
@@ -581,7 +594,7 @@ function wrapClientProvider(
           { ...options, configuredModelIds },
         ),
       ),
-    resumeSession: async (handle, overrides, launchContext, options) =>
+    resumeSession: async (handle, overrides, launchContext, options?: AgentResumeSessionOptions) =>
       wrapSessionProvider(
         provider,
         await inner.resumeSession(
@@ -598,6 +611,7 @@ function wrapClientProvider(
           { ...options, configuredModelIds },
         ),
       ),
+    readSessionHistory: wrapHistoryReader(provider, inner),
     fetchCatalog: async (options, context) => {
       const catalog = await inner.fetchCatalog(
         { ...options, providerOptions: configuredDefaults() },
