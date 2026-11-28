@@ -204,6 +204,16 @@ const MutableStructuredGenerationProviderSchema = z
 const MutableMetadataGenerationConfigSchema = z
   .object({
     providers: z.array(MutableStructuredGenerationProviderSchema).default([]),
+    // COMPAT(metadataGenerationInstructions): added in v0.18.0, keep optional while older daemons omit it.
+    instructions: z.string().optional(),
+  })
+  .passthrough();
+
+const MutableMetadataGenerationConfigPatchSchema = z
+  .object({
+    providers: z.array(MutableStructuredGenerationProviderSchema).optional(),
+    // COMPAT(metadataGenerationInstructions): added in v0.18.0, keep optional while older daemons omit it.
+    instructions: z.string().optional(),
   })
   .passthrough();
 
@@ -282,7 +292,7 @@ export const MutableDaemonConfigPatchSchema = z
       .record(z.string(), MutableDaemonProviderConfigSchema.partial().passthrough())
       .optional(),
     removeProviders: z.array(z.string().min(1)).optional(),
-    metadataGeneration: MutableMetadataGenerationConfigSchema.partial().optional(),
+    metadataGeneration: MutableMetadataGenerationConfigPatchSchema.optional(),
     autoArchiveAfterMerge: z.boolean().optional(),
     enableTerminalAgentHooks: z.boolean().optional(),
     idleRuntimeCleanup: z.boolean().optional(),
@@ -776,6 +786,14 @@ const ToolCallTimelineItemPayloadSchema: z.ZodType<ToolCallTimelineItem, unknown
     ToolCallCanceledPayloadSchema,
   ]);
 
+export const UploadedImageSchema = z.object({
+  id: z.string(),
+  fileName: z.string(),
+  mimeType: z.string(),
+  size: z.number().int().nonnegative(),
+  path: z.string(),
+});
+
 // zod-aot 0.20.4 miscompiles this as a nested discriminated union by omitting
 // the inner tool_call branch from the generated outer dispatch.
 export const AgentTimelineItemPayloadSchema: z.ZodType<AgentTimelineItem, unknown> = z.union([
@@ -784,6 +802,7 @@ export const AgentTimelineItemPayloadSchema: z.ZodType<AgentTimelineItem, unknow
     text: z.string(),
     messageId: z.string().optional(),
     clientMessageId: z.string().optional(),
+    images: z.array(UploadedImageSchema).optional(),
   }),
   z.object({
     type: z.literal("assistant_message"),
@@ -1328,6 +1347,7 @@ export const UploadedFileAttachmentSchema = z.object({
   mimeType: z.string(),
   size: z.number().int().nonnegative(),
   path: z.string(),
+  role: z.literal("image").optional(),
 });
 
 export const AgentAttachmentSchema = z.discriminatedUnion("type", [
@@ -4116,6 +4136,8 @@ export const ServerInfoStatusPayloadSchema = z
         idleRuntimeCleanupSetting: z.boolean().optional(),
         // COMPAT(restartRecovery): added in v0.14.0, remove gate after 2027-04-28.
         resumeOnStartupSetting: z.boolean().optional(),
+        // COMPAT(metadataGenerationInstructions): added in v0.18.0, remove gate after 2027-06-01.
+        metadataGenerationInstructions: z.boolean().optional(),
         // COMPAT(terminalRestoreModes): added in v0.1.81, remove gate after 2026-11-23.
         "terminal-restore-modes": z.boolean().optional(),
         // COMPAT(terminalInputModeReplay): added in v0.2.6, remove gate after 2027-02-02.
@@ -8312,6 +8334,7 @@ export type AgentAttachment = z.infer<typeof AgentAttachmentSchema>;
 export type ForgeChangeRequestAttachment = z.infer<typeof ForgeChangeRequestAttachmentSchema>;
 export type ForgeIssueAttachment = z.infer<typeof ForgeIssueAttachmentSchema>;
 export type UploadedFileAttachment = z.infer<typeof UploadedFileAttachmentSchema>;
+export type UploadedImage = z.infer<typeof UploadedImageSchema>;
 export type FirstAgentContext = z.infer<typeof FirstAgentContextSchema>;
 export type ReviewAttachment = z.infer<typeof ReviewAttachmentSchema>;
 export type ListProviderModelsRequestMessage = z.infer<

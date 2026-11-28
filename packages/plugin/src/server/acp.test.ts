@@ -10,7 +10,12 @@ import {
   type Agent,
   type SessionUpdate,
 } from "@agentclientprotocol/sdk";
-import type { ProviderConnection, ProviderEvent, ProviderInput } from "./provider.js";
+import type {
+  ProviderConnection,
+  ProviderEvent,
+  ProviderInput,
+  ProviderPermissionResponse,
+} from "./provider.js";
 import { afterEach, describe, expect, it } from "vitest";
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import { AgentTimelineItemPayloadSchema } from "@getpaseo/protocol/messages";
@@ -972,9 +977,9 @@ lines.on("line", (line) => {
     }
   });
 
-  it("still reports initialization failures for workspace-only global discovery", async () => {
+  it("short-circuits workspace-only global discovery with zero spawns", async () => {
     let unavailable = false;
-    const { connector } = connectorHarness({
+    const harness = connectorHarness({
       handleRequest(instance, request) {
         if (unavailable && request.method === "initialize") {
           instance.reject(request, "Bridge unavailable");
@@ -986,20 +991,23 @@ lines.on("line", (line) => {
     const registration = runAcpProvider({
       id: "workspace-acp",
       label: "Workspace ACP",
-      connector,
+      connector: harness.connector,
       acpOptions: { workspaceOnlyCatalog: true },
     });
+    expect(registration.getCatalogCacheKey).toBeUndefined();
     const connection = await registration.connect({ versions: [1], capabilities: [] });
     const events: ProviderEvent[] = [];
     connection.onEvent((event) => events.push(event));
     try {
       unavailable = true;
+      const spawnsBefore = harness.instances.length;
       await connection.send({ type: "catalog", requestId: "global" });
-      expect(await waitForEvent(events, (event) => event.type === "request.failed")).toMatchObject({
+      expect(await waitForEvent(events, (event) => event.type === "catalog")).toEqual({
+        type: "catalog",
         requestId: "global",
-        error: { message: expect.stringContaining("Bridge unavailable") },
+        catalog: { models: [], modes: [] },
       });
-      expect(events.some((event) => event.type === "catalog")).toBe(false);
+      expect(harness.instances.length).toBe(spawnsBefore);
     } finally {
       await connection.close();
     }
@@ -1227,7 +1235,6 @@ lines.on("line", (line) => {
       capabilities: ["prompt.message"],
     });
     expect(harness.instances).toHaveLength(1);
-    expect(harness.instances[0]).toMatchObject({ readsCanceled: true, writesClosed: true });
 
     const events: ProviderEvent[] = [];
     connection.onEvent((event) => events.push(event));
@@ -1236,6 +1243,7 @@ lines.on("line", (line) => {
     await connection.close();
 
     expect(harness.instances).toHaveLength(2);
+    expect(harness.instances[0]).toMatchObject({ readsCanceled: true, writesClosed: true });
     expect(harness.instances[1]).toMatchObject({ readsCanceled: true, writesClosed: true });
   });
 
@@ -2973,7 +2981,7 @@ it("sends extension requests from discovery and configure and preserves JSON-RPC
         (event) => event.type === "catalog" || event.type === "request.failed",
       ),
     ).toMatchObject({ type: "catalog", catalog: { defaultModel: "vendor-model" } });
-    expect(instances[1].requests).toContainEqual(
+    expect(instances[0].requests).toContainEqual(
       expect.objectContaining({
         method: "_example/catalog",
         params: { scope: "all" },
@@ -2988,7 +2996,7 @@ it("sends extension requests from discovery and configure and preserves JSON-RPC
         (event) => event.type === "session.ready" || event.type === "request.failed",
       ),
     ).toMatchObject({ type: "session.ready" });
-    expect(instances[2].requests).toContainEqual(
+    expect(instances[1].requests).toContainEqual(
       expect.objectContaining({
         method: "_example/select",
         params: { model: "vendor-model" },
@@ -7431,7 +7439,11 @@ lines.on("line", (line) => {
         requestId: "open-one",
         error: { message: expect.stringMatching(/ENOENT/u) },
       });
-      expect(spawned.map((child) => child.spawnargs)).toEqual([
+      // Closing the connection's idle capability probe on Windows spawns taskkill.exe.
+      const launchedArgs = spawned
+        .map((child) => child.spawnargs)
+        .filter((args) => args[0]?.toLowerCase() !== "taskkill.exe");
+      expect(launchedArgs).toEqual([
         [missing, "--profile", "a b", process.execPath, fixture.agent],
       ]);
       // The only start of the agent is the connection's capability probe, before the open.
@@ -7453,5 +7465,561 @@ lines.on("line", (line) => {
     });
     expect(connection.capabilities).not.toContain("session.launch_wrap");
     await connection.close();
+  });
+});
+
+describe("respectful ACP probing defaults and hygiene", () => {
+  it("defaults catalogRefresh to on_demand and supplies a global getCatalogCacheKey hashed from launch", async () => {
+    const registration = runAcpProvider({
+      id: "default-acp",
+      label: "Default ACP",
+      command: ["/usr/bin/agent", "acp"],
+    });
+    expect(registration.catalogRefresh).toBe("on_demand");
+    expect(registration.getCatalogCacheKey).toBeTypeOf("function");
+
+    const launchA = { command: "/usr/bin/agent", args: ["acp"], env: { B: "2", A: "1" } };
+    const launchAReorderedEnv = {
+      command: "/usr/bin/agent",
+      args: ["acp"],
+      env: { A: "1", B: "2" },
+    };
+    const launchB = { command: "/usr/bin/agent", args: ["acp", "--v2"], env: { A: "1", B: "2" } };
+    const launchC = { command: "/usr/bin/agent", args: ["acp"], env: { A: "1", B: "3" } };
+
+    const keyGlobal = await registration.getCatalogCacheKey!({
+      scope: "global",
+      launch: launchA,
+    });
+    const keyWorkspace = await registration.getCatalogCacheKey!({
+      scope: "workspace",
+      cwd: "/tmp/ws-1",
+      launch: launchAReorderedEnv,
+    });
+    const keyDifferentArgs = await registration.getCatalogCacheKey!({
+      scope: "global",
+      launch: launchB,
+    });
+    const keyDifferentEnv = await registration.getCatalogCacheKey!({
+      scope: "global",
+      launch: launchC,
+    });
+
+    expect(keyGlobal).toBeTruthy();
+    expect(keyWorkspace).toBe(keyGlobal);
+    expect(keyDifferentArgs).not.toBe(keyGlobal);
+    expect(keyDifferentEnv).not.toBe(keyGlobal);
+
+    const background = runAcpProvider({
+      id: "background-acp",
+      label: "Background ACP",
+      command: ["/usr/bin/agent", "acp"],
+      catalogRefresh: "background",
+    });
+    expect(background.catalogRefresh).toBe("background");
+  });
+
+  it("reuses the initialized capability probe for global discover() (1 spawn total) and cleans up on close", async () => {
+    const harness = connectorHarness();
+    const registration = runAcpProvider({
+      id: "warm-probe-acp",
+      label: "Warm Probe ACP",
+      connector: harness.connector,
+    });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: [],
+      clientInfo: { name: "paseo", title: "Paseo", version: "0.17.5" },
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      expect(harness.instances).toHaveLength(1);
+      await connection.send({ type: "catalog", requestId: "global-catalog" });
+      expect(await waitForEvent(events, (event) => event.type === "catalog")).toMatchObject({
+        type: "catalog",
+        requestId: "global-catalog",
+      });
+      // connect() + global discover() shared the single initialized warmProbe instance.
+      expect(harness.instances).toHaveLength(1);
+      expect(countRequests(harness.instances[0]!, "initialize")).toBe(1);
+      expect(countRequests(harness.instances[0]!, "session/new")).toBe(1);
+      const initReq = harness.instances[0]!.requests.find((req) => req.method === "initialize");
+      expect(initReq?.params).toMatchObject({
+        clientInfo: { name: "paseo", title: "Paseo", version: "0.17.5" },
+      });
+      expect(harness.instances[0]).toMatchObject({ readsCanceled: true, writesClosed: true });
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("closes an unused warmProbe when connection.close() runs without discover()", async () => {
+    const harness = connectorHarness();
+    const registration = runAcpProvider({
+      id: "unused-warm-probe",
+      label: "Unused Warm Probe",
+      connector: harness.connector,
+    });
+    const connection = await registration.connect({ versions: [1], capabilities: [] });
+    expect(harness.instances).toHaveLength(1);
+    await connection.close();
+    expect(harness.instances[0]).toMatchObject({ readsCanceled: true, writesClosed: true });
+  });
+
+  it("omits _meta when no transformer supplies metadata and never sends _meta._paseo", async () => {
+    const harness = connectorHarness();
+    const registration = runAcpProvider({
+      id: "no-paseo-meta",
+      label: "No Paseo Meta",
+      connector: harness.connector,
+    });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    try {
+      await connection.send(openInput());
+      await waitForEvent(events, (event) => event.type === "session.ready");
+      const sessionInstance = harness.instances[1]!;
+      const newSessionReq = sessionInstance.requests.find((req) => req.method === "session/new");
+      expect(newSessionReq?.params).not.toHaveProperty("_meta");
+    } finally {
+      await connection.close();
+    }
+  });
+});
+
+describe("ACP form elicitation", () => {
+  const agySchema = {
+    type: "object",
+    properties: {
+      q1: {
+        type: "string",
+        title: "Pick one:",
+        oneOf: [
+          { const: "1", title: "alpha" },
+          { const: "2", title: "beta" },
+        ],
+      },
+      q1_other: {
+        type: "string",
+        title: "Other",
+        description: "Optional free-form answer",
+      },
+    },
+  };
+
+  type PermissionEvent = Extract<ProviderEvent, { type: "session.permission" }>;
+
+  const formPayload = (overrides: Record<string, unknown> = {}) => ({
+    sessionId: "connector-session",
+    message: "Pick one",
+    mode: "form",
+    requestedSchema: agySchema,
+    ...overrides,
+  });
+
+  const replyPermission = (
+    permissionId: string,
+    response: ProviderPermissionResponse,
+  ): ProviderInput => ({
+    type: "session.permission",
+    sessionId: "session-1",
+    permissionId,
+    response,
+  });
+
+  async function openSession(
+    options: {
+      acpOptions?: Parameters<typeof runAcpProvider>[0]["acpOptions"];
+      configOptions?: ConnectorHarnessOptions["configOptions"];
+      handleRequest?: ConnectorHarnessOptions["handleRequest"];
+      handleMessage?: ConnectorHarnessOptions["handleMessage"];
+      settings?: Record<string, string>;
+    } = {},
+  ) {
+    const harness = connectorHarness({
+      configOptions: options.configOptions,
+      handleRequest: options.handleRequest,
+      handleMessage: options.handleMessage,
+    });
+    const connection = await runAcpProvider({
+      id: "elicit",
+      label: "Elicit",
+      connector: harness.connector,
+      acpOptions: options.acpOptions,
+    }).connect({
+      versions: [1],
+      capabilities: ["prompt.message", "permission", "session.configure"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    await connection.send(openInput(options.settings));
+    await waitForEvent(events, (event) => event.type === "session.ready");
+    return { harness, connection, events };
+  }
+
+  async function openInTurn(options: Parameters<typeof openSession>[0] = {}) {
+    let promptRequest: AcpRequestMessage | null = null;
+    const opened = await openSession({
+      ...options,
+      handleRequest(runtime, request) {
+        if (options.handleRequest?.(runtime, request)) return true;
+        if (request.method === "session/prompt") {
+          promptRequest = request;
+          return true;
+        }
+        return false;
+      },
+    });
+    await opened.connection.send({
+      type: "session.prompt",
+      sessionId: "session-1",
+      prompt: {
+        clientMessageId: "turn-1",
+        delivery: "auto",
+        input: { type: "message", content: [{ type: "text", text: "Ask me" }] },
+      },
+    });
+    await expect.poll(() => promptRequest).not.toBeNull();
+    return {
+      ...opened,
+      finishPrompt(stopReason = "end_turn") {
+        if (promptRequest) {
+          opened.harness.instances[1]!.respond(promptRequest, { stopReason });
+          promptRequest = null;
+        }
+      },
+    };
+  }
+
+  it("advertises elicitation.form on initialize by default", async () => {
+    const { harness, connection } = await openSession();
+    try {
+      const initReq = harness.instances
+        .flatMap((instance) => instance.requests)
+        .find((request) => request.method === "initialize");
+      expect(
+        (initReq?.params as { clientCapabilities?: unknown } | undefined)?.clientCapabilities,
+      ).toEqual({
+        elicitation: { form: {} },
+      });
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("bridges form elicitation to a question card and maps chosen and custom answers", async () => {
+    const { harness, connection, events, finishPrompt } = await openInTurn();
+    try {
+      const agent = harness.instances[1]!;
+      const response = agent.request("elicitation/create", formPayload());
+      const event = (await waitForEvent(
+        events,
+        (e) => e.type === "session.permission",
+      )) as PermissionEvent;
+
+      expect(event.request).toMatchObject({
+        kind: "question",
+        input: {
+          questions: [
+            {
+              id: "q1",
+              header: "Question",
+              question: "Pick one:",
+              options: [{ label: "alpha" }, { label: "beta" }],
+              multiSelect: false,
+              allowOther: true,
+              allowEmpty: false,
+              placeholder: "Optional free-form answer",
+            },
+          ],
+        },
+      });
+
+      await connection.send(
+        replyPermission(event.request.id, {
+          behavior: "allow",
+          updatedInput: { answers: { Question: "beta" } },
+        }),
+      );
+      await expect(response).resolves.toEqual({ action: "accept", content: { q1: "2" } });
+      await waitForEvent(
+        events,
+        (e) => e.type === "session.permission_resolved" && e.permissionId === event.request.id,
+      );
+
+      // Second question answered via custom Other text.
+      const second = agent.request("elicitation/create", formPayload());
+      const secondEvent = (await waitForEvent(
+        events,
+        (e) => e.type === "session.permission" && e.request.id !== event.request.id,
+      )) as PermissionEvent;
+      await connection.send(
+        replyPermission(secondEvent.request.id, {
+          behavior: "allow",
+          updatedInput: { answers: { Question: "gamma" } },
+        }),
+      );
+      await expect(second).resolves.toEqual({ action: "accept", content: { q1_other: "gamma" } });
+      finishPrompt();
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("declines url mode, unsupported schemas, out-of-turn requests, and mismatched sessions", async () => {
+    let duringOpenResult: unknown;
+    const { harness, connection, events } = await openSession({
+      handleRequest(runtime, request) {
+        if (request.method !== "session/new") return false;
+        void runtime.request("elicitation/create", formPayload()).then((result) => {
+          duringOpenResult = result;
+          runtime.respond(request, {
+            sessionId: "connector-session",
+            modes: null,
+            configOptions: [],
+          });
+          return undefined;
+        });
+        return true;
+      },
+    });
+    try {
+      // Out-of-turn during session/new
+      expect(duringOpenResult).toEqual({ action: "decline" });
+
+      // Out-of-turn while idle
+      const agent = harness.instances[1]!;
+      await expect(agent.request("elicitation/create", formPayload())).resolves.toEqual({
+        action: "decline",
+      });
+      expect(events.some((e) => e.type === "session.permission")).toBe(false);
+    } finally {
+      await connection.close();
+    }
+
+    // Active turn: mismatched sessionId, request-scoped, url mode, and number/integer schemas decline.
+    const active = await openInTurn();
+    try {
+      const agent = active.harness.instances[1]!;
+      await expect(
+        agent.request("elicitation/create", formPayload({ sessionId: "other-session" })),
+      ).resolves.toEqual({ action: "decline" });
+      await expect(
+        agent.request("elicitation/create", {
+          requestId: "req-1",
+          mode: "form",
+          message: "Auth",
+          requestedSchema: agySchema,
+        }),
+      ).resolves.toEqual({ action: "decline" });
+      await expect(
+        agent.request("elicitation/create", {
+          sessionId: "connector-session",
+          mode: "url",
+          elicitationId: "e-1",
+          url: "https://example.com",
+          message: "Sign in",
+        }),
+      ).resolves.toEqual({ action: "decline" });
+      await expect(
+        agent.request(
+          "elicitation/create",
+          formPayload({
+            requestedSchema: { type: "object", properties: { n: { type: "integer" } } },
+          }),
+        ),
+      ).resolves.toEqual({ action: "decline" });
+      expect(active.events.some((e) => e.type === "session.permission")).toBe(false);
+      active.finishPrompt();
+    } finally {
+      await active.connection.close();
+    }
+  });
+
+  it("never auto-accepts elicitations in autoAcceptMode", async () => {
+    const { harness, connection, events, finishPrompt } = await openInTurn({
+      configOptions: [
+        {
+          id: "mode",
+          name: "Mode",
+          category: "mode",
+          type: "select",
+          currentValue: "default",
+          options: [{ value: "default", name: "Default" }],
+        },
+      ],
+      acpOptions: {
+        autoAcceptMode: {
+          mode: { id: "full-access", label: "Full access" },
+          nativeMode: "default",
+          default: true,
+        },
+      },
+    });
+    try {
+      const agent = harness.instances[1]!;
+      // Tool permission IS auto-accepted in autoAcceptMode.
+      await expect(
+        agent.request("session/request_permission", {
+          sessionId: "connector-session",
+          toolCall: { toolCallId: "tool-1", title: "Run cmd" },
+          options: [
+            { optionId: "allow", name: "Allow", kind: "allow_once" },
+            { optionId: "reject", name: "Reject", kind: "reject_once" },
+          ],
+        }),
+      ).resolves.toEqual({ outcome: { outcome: "selected", optionId: "allow" } });
+
+      // Form elicitation is NOT auto-accepted — it must surface as a question card.
+      const elicitation = agent.request("elicitation/create", formPayload());
+      const event = (await waitForEvent(
+        events,
+        (e) => e.type === "session.permission",
+      )) as PermissionEvent;
+      expect(event.request.kind).toBe("question");
+
+      await connection.send(replyPermission(event.request.id, { behavior: "deny" }));
+      await expect(elicitation).resolves.toEqual({ action: "decline" });
+      finishPrompt();
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("cancels a pending elicitation when the turn is interrupted", async () => {
+    let stopping = false;
+    let elicitationPromise: Promise<unknown> | null = null;
+    const { connection, events } = await openSession({
+      handleMessage(_runtime, message) {
+        if ("method" in message && message.method === "session/cancel") {
+          stopping = true;
+          return true;
+        }
+        return false;
+      },
+      handleRequest(runtime, request) {
+        if (request.method !== "session/prompt") return false;
+        elicitationPromise = runtime.request("elicitation/create", formPayload());
+        void elicitationPromise.then(() => {
+          if (stopping) runtime.respond(request, { stopReason: "cancelled" });
+          return undefined;
+        });
+        return true;
+      },
+    });
+    try {
+      await connection.send({
+        type: "session.prompt",
+        sessionId: "session-1",
+        prompt: {
+          clientMessageId: "cancel-turn",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "Ask" }] },
+        },
+      });
+      const event = (await waitForEvent(
+        events,
+        (e) => e.type === "session.permission",
+      )) as PermissionEvent;
+      await connection.send({
+        type: "session.interrupt",
+        requestId: "stop-1",
+        sessionId: "session-1",
+      });
+      await expect(elicitationPromise).resolves.toEqual({ action: "cancel" });
+      await waitForEvent(
+        events,
+        (e) => e.type === "session.permission_resolved" && e.permissionId === event.request.id,
+      );
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("cancels a pending elicitation when the turn ends", async () => {
+    const { harness, connection, events, finishPrompt } = await openInTurn();
+    try {
+      const agent = harness.instances[1]!;
+      const elicitation = agent.request("elicitation/create", formPayload());
+      const event = (await waitForEvent(
+        events,
+        (e) => e.type === "session.permission",
+      )) as PermissionEvent;
+      finishPrompt("end_turn");
+      await expect(elicitation).resolves.toEqual({ action: "cancel" });
+      await waitForEvent(
+        events,
+        (e) => e.type === "session.permission_resolved" && e.permissionId === event.request.id,
+      );
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("cancels a pending elicitation when the connection closes", async () => {
+    const { harness, connection, events } = await openInTurn();
+    const agent = harness.instances[1]!;
+    const elicitation = agent.request("elicitation/create", formPayload());
+    await waitForEvent(events, (e) => e.type === "session.permission");
+    await connection.close();
+    await expect(elicitation).resolves.toEqual({ action: "cancel" });
+  });
+
+  it("settles cleanly on unexpected transport close while an elicitation is pending", async () => {
+    const { harness, connection, events } = await openInTurn();
+    try {
+      const agent = harness.instances[1]!;
+      void agent.request("elicitation/create", formPayload());
+      await waitForEvent(events, (e) => e.type === "session.permission");
+      agent.closeFromAgent();
+      await waitForEvent(events, (e) => e.type === "session.runtime_failed");
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("declines cleanly without emitting session.runtime_failed on an invalid elicitation response", async () => {
+    const { harness, connection, events, finishPrompt } = await openInTurn();
+    try {
+      const agent = harness.instances[1]!;
+      const elicitation = agent.request(
+        "elicitation/create",
+        formPayload({
+          requestedSchema: {
+            type: "object",
+            required: ["choice"],
+            properties: {
+              choice: { type: "string", title: "Choice", description: "Pick", enum: ["A", "B"] },
+            },
+          },
+        }),
+      );
+      const event = (await waitForEvent(
+        events,
+        (e) => e.type === "session.permission",
+      )) as PermissionEvent;
+
+      await connection.send(
+        replyPermission(event.request.id, {
+          behavior: "allow",
+          updatedInput: { answers: { Choice: "InvalidOption" } },
+        }),
+      );
+      await expect(elicitation).resolves.toEqual({ action: "decline" });
+      await waitForEvent(
+        events,
+        (e) => e.type === "session.permission_resolved" && e.permissionId === event.request.id,
+      );
+      expect(events.some((e) => e.type === "session.runtime_failed")).toBe(false);
+      finishPrompt();
+      await waitForEvent(events, (e) => e.type === "session.turn" && e.state === "completed");
+    } finally {
+      await connection.close();
+    }
   });
 });

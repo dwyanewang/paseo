@@ -2591,7 +2591,7 @@ export const ar: TranslationResources = {
     metadataGeneration: {
       title: "إنشاء البيانات الوصفية",
       description:
-        "اختر النموذج الذي يستخدمه Paseo لعناوين مساحات العمل وأسماء الفروع ورسائل الالتزام ومسودات طلبات السحب",
+        "اختر النموذج والتعليمات التي يستخدمها Paseo لعناوين مساحات العمل وأسماء الفروع ورسائل الالتزام ومسودات طلبات السحب",
       selection: "اختيار النموذج",
       automatic: "تلقائي",
       preferred: "يدوي",
@@ -2599,6 +2599,10 @@ export const ar: TranslationResources = {
       preferredHint: "اختر النموذج الذي يستخدمه Paseo",
       model: "النموذج",
       modelHint: "يُستخدم هذا النموذج فقط. إذا فشل، لا يجرّب Paseo نموذجًا آخر",
+      instructions: "التعليمات",
+      instructionsHint: "تُطبَّق على جميع البيانات الوصفية المنشأة على هذا المضيف",
+      instructionsPlaceholder:
+        "مثال: اكتب باللغة العربية. حافظ على أسلوب متسق بين العناوين ورسائل الالتزام. لا تستخدم الشرطات الطويلة.",
       docs: "الوثائق",
       saveError: "تعذر تحديث إنشاء البيانات الوصفية",
     },
@@ -3193,6 +3197,8 @@ export const ar: TranslationResources = {
       },
       agentProfiles: {
         sectionTitle: "ملفات تعريف الوكيل",
+        sectionDescription:
+          "احفظ إعدادات الوكيل لاختيارها بسرعة ولكي يستخدمها الوكلاء عند تفويض العمل",
         unavailable: "اتصل بهذا المضيف لإدارة ملفات تعريف الوكيل",
         unsupported: "يشغّل هذا المضيف نسخة Daemon لا تدعم ملفات تعريف الوكيل بعد",
         emptyState: "لا توجد ملفات تعريف بعد. أضف واحدًا لبدء الوكلاء من مزود ونموذج محفوظين.",
@@ -3216,6 +3222,9 @@ export const ar: TranslationResources = {
         featuresLabel: "السمات",
         featureCount: "{{count}} سمة",
         featureCountOne: "{{count}} سمة",
+        systemPromptLabel: "موجه النظام",
+        systemPromptPlaceholder: "ركز على التخطيط وإمكانية الوصول ورموز التصميم.",
+        systemPromptHint: "ينطبق على الوكلاء الجدد فقط",
         notesLabel: "متى يُستخدم",
         notesPlaceholder: "استخدمه لعمل الواجهة — المكونات والتخطيط ورموز التصميم.",
         notesHint: "يساعد الوكلاء على اختيار ملف التعريف هذا عند بدء وكيل آخر.",

@@ -2613,7 +2613,7 @@ export const es: TranslationResources = {
     metadataGeneration: {
       title: "Generación de metadatos",
       description:
-        "Elige el modelo que Paseo usa para títulos de espacios de trabajo, nombres de ramas, mensajes de commit y borradores de pull requests",
+        "Elige el modelo y las instrucciones que Paseo usa para títulos de espacios de trabajo, nombres de ramas, mensajes de commit y borradores de pull requests",
       selection: "Selección de modelo",
       automatic: "Automática",
       preferred: "Manual",
@@ -2621,6 +2621,10 @@ export const es: TranslationResources = {
       preferredHint: "Elige el modelo que usa Paseo",
       model: "Modelo",
       modelHint: "Solo se usa este modelo. Si falla, Paseo no prueba otro modelo",
+      instructions: "Instrucciones",
+      instructionsHint: "Se aplican a todos los metadatos generados en este host",
+      instructionsPlaceholder:
+        "Ejemplo: Escribe en español. Mantén un estilo coherente entre títulos y commits. No uses rayas largas.",
       docs: "Documentación",
       saveError: "No se pudo actualizar la generación de metadatos",
     },
@@ -3226,6 +3230,8 @@ export const es: TranslationResources = {
       },
       agentProfiles: {
         sectionTitle: "Perfiles de agente",
+        sectionDescription:
+          "Guarda configuraciones de agente que puedes elegir rápido y que los agentes pueden usar para delegar trabajo",
         unavailable: "Conéctese a este host para administrar perfiles de agente",
         unsupported: "Este host ejecuta un daemon que aún no admite perfiles de agente",
         emptyState:
@@ -3250,6 +3256,9 @@ export const es: TranslationResources = {
         featuresLabel: "Características",
         featureCount: "{{count}} características",
         featureCountOne: "{{count}} característica",
+        systemPromptLabel: "Aviso del sistema",
+        systemPromptPlaceholder: "Enfócate en el diseño, la accesibilidad y los tokens de diseño.",
+        systemPromptHint: "Solo se aplica a agentes nuevos",
         notesLabel: "Cuándo usarlo",
         notesPlaceholder: "Úselo para trabajo de UI: componentes, diseño y tokens de diseño.",
         notesHint: "Ayuda a los agentes a elegir este perfil al iniciar otro agente.",

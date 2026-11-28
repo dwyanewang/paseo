@@ -1,4 +1,5 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { spawnProcess, terminateProcess } from "../process.js";
 import { Readable, Writable } from "node:stream";
 import {
@@ -9,6 +10,8 @@ import {
   type Client,
   type AgentCapabilities,
   type ContentBlock,
+  type CreateElicitationRequest,
+  type CreateElicitationResponse,
   type NewSessionResponse,
   type RequestPermissionRequest,
   type RequestPermissionResponse,
@@ -32,6 +35,7 @@ import type {
   AcpVendorUpdate,
   RunAcpProviderOptions,
 } from "../acp.js";
+import { AcpFormElicitation } from "./elicitation.js";
 import { standardToolCallDetail } from "./tool-call-detail.js";
 import {
   PROVIDER_PROTOCOL_VERSION,
@@ -41,6 +45,7 @@ import {
   requireProviderCapabilities,
   type ProviderCatalog,
   type ProviderCapability,
+  type ProviderClientInfo,
   type ProviderCommand,
   type ProviderConfigState,
   type ProviderConnectRequest,
@@ -66,6 +71,28 @@ const ADAPTER_CAPABILITIES = [
   "request.cancel",
 ] as const;
 
+const WARM_PROBE_IDLE_MS = 5_000;
+
+function readPluginPackageVersion(): string {
+  try {
+    const manifest = JSON.parse(
+      readFileSync(new URL("../../../package.json", import.meta.url), "utf8"),
+    ) as { version?: unknown };
+    if (typeof manifest.version === "string" && manifest.version.trim().length > 0) {
+      return manifest.version.trim();
+    }
+  } catch {
+    // Bundled or standalone callers without adjacent package.json fall back below.
+  }
+  return "0.0.0";
+}
+
+const DEFAULT_CLIENT_INFO: ProviderClientInfo = {
+  name: "paseo",
+  title: "Paseo",
+  version: readPluginPackageVersion(),
+};
+
 interface AcpBoundarySession {
   runtime: AcpRuntime;
   capabilities: readonly ProviderCapability[];
@@ -79,9 +106,11 @@ export async function createAcpProviderConnection(
   if (!request.versions.includes(PROVIDER_PROTOCOL_VERSION)) {
     throw new Error(`ACP adapter requires provider protocol ${PROVIDER_PROTOCOL_VERSION}`);
   }
+  const clientInfo = request.clientInfo ?? DEFAULT_CLIENT_INFO;
   const probe = await AcpRuntime.start({
     options,
     launch: request.launch,
+    clientInfo,
     boundarySessionId: "capability-probe",
     env: {},
     emit: () => undefined,
@@ -101,7 +130,6 @@ export async function createAcpProviderConnection(
   if (options.acpOptions?.deferTurnOnRunningTools) {
     supportedCapabilities.push("prompt.steer");
   }
-  await probe.close();
   const capabilities = negotiateProviderCapabilities(request.capabilities, supportedCapabilities);
   const listeners = new Set<(event: ProviderEvent) => void>();
   const sessions = new Map<string, AcpBoundarySession>();
@@ -110,6 +138,42 @@ export async function createAcpProviderConnection(
   const cancellable = new Map<string, AbortController>();
   let closed = false;
   let closePromise: Promise<void> | null = null;
+
+  // Keep the initialized capability probe briefly so an immediate global catalog/sessions
+  // request reuses the already-initialized process instead of spawning a second one.
+  let warmProbe: { runtime: AcpRuntime; timer: ReturnType<typeof setTimeout> } | null = null;
+  let warmProbeClose: Promise<void> | null = null;
+  const disposeWarmProbe = (): Promise<void> => {
+    if (warmProbe) {
+      const { runtime, timer } = warmProbe;
+      warmProbe = null;
+      clearTimeout(timer);
+      warmProbeClose = runtime.close().catch(() => undefined);
+    }
+    return warmProbeClose ?? Promise.resolve();
+  };
+  const discardWarmProbe = (): void => {
+    void disposeWarmProbe();
+  };
+  const claimWarmProbe = (binding: {
+    boundarySessionId: string;
+    emit: (event: ProviderEvent) => void;
+  }): AcpRuntime | null => {
+    if (!warmProbe) return null;
+    const { runtime, timer } = warmProbe;
+    warmProbe = null;
+    clearTimeout(timer);
+    if (!runtime.isUsable()) {
+      warmProbeClose = runtime.close().catch(() => undefined);
+      return null;
+    }
+    runtime.rebindRequest(binding);
+    return runtime;
+  };
+  const warmProbeTimer = setTimeout(discardWarmProbe, WARM_PROBE_IDLE_MS);
+  warmProbeTimer.unref?.();
+  warmProbe = { runtime: probe, timer: warmProbeTimer };
+
   const emit = (event: ProviderEvent) => {
     if (closed) return;
     const parsed = ProviderEventSchema.parse(event);
@@ -118,10 +182,13 @@ export async function createAcpProviderConnection(
   const state: AcpConnectionState = {
     options,
     launch: request.launch,
+    clientInfo,
     capabilities,
     sessions,
     emit,
     isClosed: () => closed,
+    claimWarmProbe,
+    discardWarmProbe,
   };
 
   return {
@@ -165,13 +232,17 @@ export async function createAcpProviderConnection(
       if (closePromise) return closePromise;
       closed = true;
       closePromise = (async () => {
+        const closingWarmProbe = disposeWarmProbe();
         for (const controller of cancellable.values()) {
           controller.abort(new Error("ACP provider connection closed"));
         }
         await Promise.all(inFlight);
         const active = [...sessions.values()];
         sessions.clear();
-        await Promise.all(active.map(({ runtime }) => runtime.closeSession()));
+        await Promise.all([
+          closingWarmProbe,
+          ...active.map(({ runtime }) => runtime.closeSession()),
+        ]);
         listeners.clear();
       })();
       return closePromise;
@@ -181,11 +252,17 @@ export async function createAcpProviderConnection(
 
 interface AcpConnectionState {
   launch?: ProviderLaunch;
+  clientInfo: ProviderClientInfo;
   options: RunAcpProviderOptions;
   capabilities: readonly ProviderCapability[];
   sessions: Map<string, AcpBoundarySession>;
   emit(event: ProviderEvent): void;
   isClosed(): boolean;
+  claimWarmProbe(binding: {
+    boundarySessionId: string;
+    emit: (event: ProviderEvent) => void;
+  }): AcpRuntime | null;
+  discardWarmProbe(): void;
 }
 
 function validateAdmission(
@@ -304,9 +381,20 @@ async function withRequestRuntime<Result>(
   },
 ): Promise<void> {
   const { signal } = request;
-  const runtime = await AcpRuntime.start({
+  signal.throwIfAborted();
+  let runtime: AcpRuntime | null = null;
+  if (request.cwd === undefined) {
+    runtime = state.claimWarmProbe({
+      boundarySessionId: request.boundarySessionId,
+      emit: state.emit,
+    });
+  } else {
+    state.discardWarmProbe();
+  }
+  runtime ??= await AcpRuntime.start({
     options: state.options,
     launch: state.launch,
+    clientInfo: state.clientInfo,
     boundarySessionId: request.boundarySessionId,
     cwd: request.cwd,
     env: {},
@@ -331,6 +419,11 @@ async function discover(
   state: AcpConnectionState,
   signal: AbortSignal,
 ): Promise<void> {
+  if (input.cwd === undefined && state.options.acpOptions?.workspaceOnlyCatalog) {
+    state.discardWarmProbe();
+    state.emit({ type: "catalog", requestId: input.requestId, catalog: { models: [], modes: [] } });
+    return;
+  }
   await withRequestRuntime(state, {
     boundarySessionId: "catalog",
     cwd: input.cwd,
@@ -387,9 +480,11 @@ async function openSession(
 ): Promise<void> {
   if (state.sessions.has(input.sessionId))
     throw new Error(`Session already exists: ${input.sessionId}`);
+  state.discardWarmProbe();
   const runtime = await AcpRuntime.start({
     options: state.options,
     launch: state.launch,
+    clientInfo: state.clientInfo,
     boundarySessionId: input.sessionId,
     cwd: input.config.cwd,
     env: input.config.env,
@@ -432,6 +527,7 @@ function requireSession(state: AcpConnectionState, sessionId: string): AcpBounda
 
 interface StartRuntimeOptions {
   launch?: ProviderLaunch;
+  clientInfo?: ProviderClientInfo;
   options: RunAcpProviderOptions;
   boundarySessionId: string;
   cwd?: string;
@@ -443,11 +539,21 @@ interface StartRuntimeOptions {
   onRetired?: () => void;
 }
 
-interface PendingPermission {
+interface PendingToolPermission {
+  kind: "tool";
   request: RequestPermissionRequest;
   turnId: string | undefined;
   resolve(response: RequestPermissionResponse): void;
 }
+
+interface PendingElicitation {
+  kind: "elicitation";
+  form: AcpFormElicitation;
+  turnId: string | undefined;
+  resolve(response: CreateElicitationResponse): void;
+}
+
+type PendingPermission = PendingToolPermission | PendingElicitation;
 
 type DeferredTurnOutcome =
   | { type: "complete"; terminalizeTools: boolean }
@@ -500,6 +606,7 @@ class AcpRuntime {
   private readonly vendorToolCalls = new Map<string, ToolCallTimelineItem>();
   private readonly pendingCompactions = new Set<string>();
   private readonly permissions = new Map<string, PendingPermission>();
+  private elicitationSequence = 0;
   private readonly transformers: readonly AcpTransformer[];
   private configOptions: SessionConfigOption[] = [];
   private modes: NewSessionResponse["modes"] = null;
@@ -593,8 +700,8 @@ class AcpRuntime {
         runtime.call(
           runtime.connection.initialize({
             protocolVersion: PROTOCOL_VERSION,
-            clientCapabilities: {},
-            clientInfo: { name: "paseo", version: "1" },
+            clientCapabilities: { elicitation: { form: {} } },
+            clientInfo: options.clientInfo ?? DEFAULT_CLIENT_INFO,
           }),
         ),
         options.options.acpOptions?.startupTimeoutMs ?? 10_000,
@@ -629,6 +736,7 @@ class AcpRuntime {
     this.transformers = options.options.transformers ?? [];
     const client: Client = {
       requestPermission: (request) => this.requestPermission(request),
+      createElicitation: (request) => this.createElicitation(request),
       sessionUpdate: (notification) => {
         const wireSeq = this.sessionUpdateWireSeqs.shift() ?? ++this.incomingWireSeq;
         return this.enqueueNotification(() => this.sessionUpdate(notification, wireSeq));
@@ -669,6 +777,21 @@ class AcpRuntime {
     });
   }
 
+  isUsable(): boolean {
+    if (this.closing || this.processFailed) return false;
+    if (this.child && (this.child.exitCode !== null || this.child.signalCode !== null))
+      return false;
+    return true;
+  }
+
+  rebindRequest(binding: {
+    boundarySessionId: string;
+    emit: (event: ProviderEvent) => void;
+  }): void {
+    this.options.boundarySessionId = binding.boundarySessionId;
+    this.emit = binding.emit;
+  }
+
   async open(
     input: Extract<ProviderInput, { type: "session.open" }>,
     connectionCapabilities: readonly ProviderCapability[],
@@ -677,14 +800,7 @@ class AcpRuntime {
     const mcpServers = toAcpMcpServers(input.config);
     this.mcpServerNames = mcpServers.map((server) => server.name);
     let nativeSessionId = readNativeSessionId(input.persistence);
-    const metadata: Record<string, unknown> = {
-      _paseo: {
-        systemPrompt: input.config.systemPrompt,
-        providerOptions: input.config.providerOptions,
-        toolPolicy: input.config.toolPolicy,
-        persist: input.config.persist,
-      },
-    };
+    const metadata: Record<string, unknown> = {};
     for (const transformer of this.transformers) {
       const prepared = transformer.sessionOpen?.({
         persistence: input.persistence,
@@ -694,6 +810,7 @@ class AcpRuntime {
       nativeSessionId ??= prepared?.sessionId ?? null;
       Object.assign(metadata, prepared?.metadata);
     }
+    const meta = Object.keys(metadata).length > 0 ? metadata : undefined;
     let response: Pick<NewSessionResponse, "modes" | "configOptions">;
     if (nativeSessionId) {
       // ACP agents replay the loaded session's updates before session/load resolves,
@@ -705,7 +822,7 @@ class AcpRuntime {
           sessionId: nativeSessionId,
           cwd: input.config.cwd,
           mcpServers,
-          _meta: metadata,
+          ...(meta ? { _meta: meta } : {}),
         }),
       );
       await this.drainNotifications();
@@ -715,7 +832,7 @@ class AcpRuntime {
         this.connection.newSession({
           cwd: input.config.cwd,
           mcpServers,
-          _meta: metadata,
+          ...(meta ? { _meta: meta } : {}),
         }),
       );
       response = newSession;
@@ -1018,6 +1135,10 @@ class AcpRuntime {
     if (!pending) return;
     const active = this.activePrompt;
     if (active?.cancelling && pending.turnId === active.turnId) return;
+    if (pending.kind === "elicitation") {
+      this.resolveElicitation(permissionId, pending, pending.form.respond(response));
+      return;
+    }
     const selected = selectPermissionOption(pending.request.options, response);
     if (response.selectedActionId !== undefined && !selected) {
       throw new Error(
@@ -1033,7 +1154,10 @@ class AcpRuntime {
 
   private finishTurnPermissions(turnId: string): void {
     for (const [permissionId, pending] of this.permissions) {
-      if (pending.turnId === turnId) {
+      if (pending.turnId !== turnId) continue;
+      if (pending.kind === "elicitation") {
+        this.resolveElicitation(permissionId, pending, { action: "cancel" });
+      } else {
         this.resolvePermission(permissionId, pending, { outcome: { outcome: "cancelled" } });
       }
     }
@@ -1041,8 +1165,23 @@ class AcpRuntime {
 
   private resolvePermission(
     permissionId: string,
-    pending: PendingPermission,
+    pending: PendingToolPermission,
     response: RequestPermissionResponse,
+  ): void {
+    this.permissions.delete(permissionId);
+    pending.resolve(response);
+    this.emit({
+      type: "session.permission_resolved",
+      sessionId: this.options.boundarySessionId,
+      permissionId,
+    });
+    if (this.activePrompt?.deferred) this.scheduleDeferredSettle();
+  }
+
+  private resolveElicitation(
+    permissionId: string,
+    pending: PendingElicitation,
+    response: CreateElicitationResponse,
   ): void {
     this.permissions.delete(permissionId);
     pending.resolve(response);
@@ -1117,6 +1256,10 @@ class AcpRuntime {
   }
 
   async closeSession(): Promise<void> {
+    if (this.cancelPendingPermissions()) {
+      // Let the ACP SDK flush the cancel response on the wire before closing the session/stream.
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
     if (this.nativeSessionId) {
       await withTimeout(
         this.call(this.connection.closeSession({ sessionId: this.nativeSessionId })),
@@ -1393,7 +1536,12 @@ class AcpRuntime {
     const permissionId = `permission:${request.toolCall.toolCallId}`;
     const { presentation } = this.presentToolCall(request.toolCall);
     return new Promise((resolve) => {
-      this.permissions.set(permissionId, { request, resolve, turnId: this.activePrompt?.turnId });
+      this.permissions.set(permissionId, {
+        kind: "tool",
+        request,
+        resolve,
+        turnId: this.activePrompt?.turnId,
+      });
       if (this.activePrompt?.deferred) this.scheduleDeferredSettle();
       this.emit({
         type: "session.permission",
@@ -1411,6 +1559,54 @@ class AcpRuntime {
             behavior: option.kind.startsWith("allow") ? "allow" : "deny",
           })),
         },
+      });
+    });
+  }
+
+  private async createElicitation(
+    request: CreateElicitationRequest,
+  ): Promise<CreateElicitationResponse> {
+    await this.notificationLane;
+    if (this.closing || this.processFailed || this.activePrompt?.cancelling) {
+      return { action: "cancel" };
+    }
+    // Forms are only answerable during an active turn of this session; declining out-of-turn
+    // or mismatched requests avoids hanging session open, discovery, or idle connections.
+    if (
+      !this.activePrompt ||
+      request.mode !== "form" ||
+      !("sessionId" in request) ||
+      typeof request.sessionId !== "string" ||
+      !this.nativeSessionId ||
+      request.sessionId !== this.nativeSessionId
+    ) {
+      return { action: "decline" };
+    }
+    const toolCallId =
+      "toolCallId" in request && typeof request.toolCallId === "string"
+        ? request.toolCallId
+        : undefined;
+    const toolName = toolCallId ? this.toolCalls.get(toolCallId)?.presentation.name : undefined;
+    const form = AcpFormElicitation.parse(request, { toolName });
+    if (!form) {
+      return { action: "decline" };
+    }
+    const permissionId = toolCallId
+      ? `elicitation:${toolCallId}:${++this.elicitationSequence}`
+      : `elicitation:${++this.elicitationSequence}`;
+    const turnId = this.activePrompt.turnId;
+    return new Promise((resolve) => {
+      this.permissions.set(permissionId, {
+        kind: "elicitation",
+        form,
+        resolve,
+        turnId,
+      });
+      if (this.activePrompt?.deferred) this.scheduleDeferredSettle();
+      this.emit({
+        type: "session.permission",
+        sessionId: this.options.boundarySessionId,
+        request: { id: permissionId, ...form.request },
       });
     });
   }
@@ -1796,11 +1992,21 @@ class AcpRuntime {
     });
   }
 
-  private settlePendingWork(failureMessage?: string): void {
+  private cancelPendingPermissions(): boolean {
+    if (this.permissions.size === 0) return false;
     for (const permission of this.permissions.values()) {
-      permission.resolve({ outcome: { outcome: "cancelled" } });
+      if (permission.kind === "elicitation") {
+        permission.resolve({ action: "cancel" });
+      } else {
+        permission.resolve({ outcome: { outcome: "cancelled" } });
+      }
     }
     this.permissions.clear();
+    return true;
+  }
+
+  private settlePendingWork(failureMessage?: string): void {
+    this.cancelPendingPermissions();
     if (this.activePrompt?.deferred) {
       this.finishDeferredTurn(
         this.activePrompt,

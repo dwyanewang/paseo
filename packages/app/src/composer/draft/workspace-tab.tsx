@@ -22,7 +22,7 @@ import { useCreateFlowStore } from "@/stores/create-flow-store";
 import type { Agent } from "@/stores/session-store";
 import { useWorkspaceFields } from "@/stores/session-store-hooks";
 import { useWorkspaceDraftSubmissionStore } from "@/stores/workspace-draft-submission-store";
-import { encodeImages } from "@/utils/encode-images";
+import { uploadImageAttachments } from "@/attachments/service";
 import { shouldAutoFocusWorkspaceDraftComposer } from "@/screens/workspace/workspace-draft-pane-focus";
 import {
   resolveDraftWorkingDirectory,
@@ -32,13 +32,12 @@ import {
 import { DRAFT_CAPABILITIES } from "@/composer/draft/timeline";
 import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import type { WorkspaceComposerAttachment } from "@/attachments/types";
+import type { AttachmentMetadata, WorkspaceComposerAttachment } from "@/attachments/types";
 import {
   useDraftWorkspaceAttachmentScopeKey,
   useWorkspaceAttachmentScopeKey,
   useWorkspaceAttachmentsStore,
 } from "@/attachments/workspace-attachments-store";
-import type { UserMessageImageAttachment } from "@/types/stream";
 import { COMPACT_CONTENT_WIDTH, useIsCompactFormFactor } from "@/constants/layout";
 import { isWeb } from "@/constants/platform";
 import {
@@ -55,6 +54,7 @@ interface AutoSubmitConfig {
   model: string | null;
   thinkingOptionId: string | null;
   providerOptions: Record<string, unknown>;
+  systemPrompt: string | null;
 }
 
 function resolveAutoSubmitConfig(
@@ -64,6 +64,7 @@ function resolveAutoSubmitConfig(
     model?: string | null;
     thinkingOptionId?: string | null;
     providerOptions?: Record<string, unknown>;
+    systemPrompt?: string | null;
   } | null,
 ): AutoSubmitConfig | null {
   if (!pending) return null;
@@ -73,6 +74,7 @@ function resolveAutoSubmitConfig(
     model: pending.model ?? null,
     thinkingOptionId: pending.thinkingOptionId ?? null,
     providerOptions: pending.providerOptions ?? {},
+    systemPrompt: pending.systemPrompt ?? null,
   };
 }
 
@@ -104,11 +106,41 @@ function resolveDraftModeId(input: {
   return null;
 }
 
+function resolveDraftCreateConfig(input: {
+  provider: string;
+  cwd: string;
+  autoSubmitConfig: AutoSubmitConfig | null;
+  composerState: {
+    effectiveModeId: string;
+    effectiveModelId: string | null;
+    effectiveThinkingOptionId: string | null;
+    selectedSystemPrompt: string;
+    providerOptions: Record<string, unknown> | undefined;
+  };
+}) {
+  const { provider, cwd, autoSubmitConfig, composerState } = input;
+  const modeIdOverride = resolveDraftModeIdOverride({
+    autoSubmitConfig,
+    effectiveModeId: composerState.effectiveModeId,
+  });
+  return buildWorkspaceDraftAgentConfig({
+    provider,
+    cwd,
+    ...modeIdOverride,
+    model: autoSubmitConfig?.model ?? (composerState.effectiveModelId || undefined),
+    thinkingOptionId:
+      autoSubmitConfig?.thinkingOptionId ?? (composerState.effectiveThinkingOptionId || undefined),
+    providerOptions: autoSubmitConfig?.providerOptions ?? composerState.providerOptions,
+    systemPrompt:
+      autoSubmitConfig?.systemPrompt ?? (composerState.selectedSystemPrompt || undefined),
+  });
+}
+
 async function submitDraftCreateRequest(input: {
   draftId: string;
   attempt: { clientMessageId: string };
   text: string;
-  images?: UserMessageImageAttachment[];
+  images?: AttachmentMetadata[];
   attachments?: unknown;
   cwd: string;
   client: DaemonClient | null;
@@ -120,6 +152,7 @@ async function submitDraftCreateRequest(input: {
     effectiveModeId: string;
     effectiveModelId: string | null;
     effectiveThinkingOptionId: string | null;
+    selectedSystemPrompt: string;
     providerOptions: Record<string, unknown> | undefined;
     metadata: Record<string, JsonValue>;
   };
@@ -149,30 +182,23 @@ async function submitDraftCreateRequest(input: {
   if (!provider) {
     throw new Error(input.selectModelMessage);
   }
-  const modeIdOverride = resolveDraftModeIdOverride({
-    autoSubmitConfig,
-    effectiveModeId: composerState.effectiveModeId,
-  });
-  const config = buildWorkspaceDraftAgentConfig({
+  const config = resolveDraftCreateConfig({
     provider,
     cwd,
-    ...modeIdOverride,
-    model: autoSubmitConfig?.model ?? (composerState.effectiveModelId || undefined),
-    thinkingOptionId:
-      autoSubmitConfig?.thinkingOptionId ?? (composerState.effectiveThinkingOptionId || undefined),
-    providerOptions: autoSubmitConfig?.providerOptions ?? composerState.providerOptions,
+    autoSubmitConfig,
+    composerState,
   });
 
-  const attachmentsArray = Array.isArray(attachments) ? attachments : undefined;
-  const imagesData = await encodeImages(images);
+  const attachmentsArray = Array.isArray(attachments) ? attachments : [];
+  const uploadedImageAttachments = await uploadImageAttachments({ client, images });
+  const mergedAttachments = [...attachmentsArray, ...(uploadedImageAttachments ?? [])];
   const request = {
     config,
     workspaceId,
     initialPrompt: text,
     clientMessageId: attempt.clientMessageId,
     ...(Object.keys(composerState.metadata).length > 0 ? { metadata: composerState.metadata } : {}),
-    ...(imagesData && imagesData.length > 0 ? { images: imagesData } : {}),
-    ...(attachmentsArray && attachmentsArray.length > 0 ? { attachments: attachmentsArray } : {}),
+    ...(mergedAttachments.length > 0 ? { attachments: mergedAttachments } : {}),
   };
   const result = await client.createAgent({
     ...request,
@@ -250,6 +276,7 @@ function buildDraftInitialValues(input: {
     modeId: input.initialSetup.modeId,
     model: input.initialSetup.model,
     thinkingOptionId: input.initialSetup.thinkingOptionId,
+    systemPrompt: input.initialSetup.systemPrompt,
   };
 }
 
